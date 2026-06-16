@@ -1,0 +1,54 @@
+site_name: NullRun Docs
+site_description: Enforcement gateway for AI agents — user-facing documentation
+site_url: https://docs.nullrun.io
+repo_url: https://github.com/nullrunio/nullrun
+repo_name: nullrunio/nullrun
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - search.suggest
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/install.md
+      - Quickstart: getting-started/quickstart.md
+      - Configuration: getting-started/configuration.md
+  - Concepts:
+      - Circuit breaker: concepts/circuit-breaker.md
+      - Budgets: concepts/budgets.md
+      - Sensitive tools: concepts/sensitive-tools.md
+      - Workflow context: concepts/workflow.md
+  - How-to:
+      - Protect a LangGraph agent: how-to/langgraph.md
+      - Use with OpenAI Agents: how-to/openai-agents.md
+      - Set a hard cost cap: how-to/cost-cap.md
+  - Reference:
+      - SDK API: reference/sdk-api.md
+      - HTTP API: reference/http-api.md
+      - Error codes: reference/errors.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
