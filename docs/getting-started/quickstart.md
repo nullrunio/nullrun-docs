@@ -24,6 +24,10 @@ print(answer("What does NullRun do?"))
 That's it — every call inside `answer()` is now cost-attributed and
 governed by your workspace policy.
 
+> Without an `api_key`, `init()` raises `NullRunAuthenticationError` at
+> first use. There is no local / offline mode — NullRun has no way to
+> enforce anything without the gateway.
+
 ## What gets tracked
 
 - LLM tokens in and out
@@ -34,16 +38,21 @@ governed by your workspace policy.
 
 ## What can go wrong (and how NullRun reacts)
 
-| Situation | Default behaviour |
-| --- | --- |
-| Workflow exceeds budget | Raise `BudgetExceededError` and stop |
-| Agent in a loop | Raise `LoopDetectedException` and stop |
-| Agent calls a sensitive tool | Require `STRICT` mode or block |
-| Gateway unreachable | Use cached policy (if any) or PERMISSIVE |
-| Sensitive tool + gateway unreachable | **Fail closed** — block the call |
+| Situation | Default behaviour | Exception |
+| --- | --- | --- |
+| Workflow exceeds budget | Halt at next gate call | `NullRunBlockedException` |
+| Agent in a loop | Halt at next gate call | `LoopDetectedException` |
+| Agent calls a sensitive tool | Block (or require approval) | `NullRunBlockedException` / `ApprovalRequired` |
+| Gateway unreachable | Allow (PERMISSIVE fallback) | (none — call proceeds) |
+| Sensitive tool + gateway unreachable | **Fail closed** — block the call | `NullRunBlockedException` |
+| Workflow killed via dashboard | Raise at next gate call | `WorkflowKilledInterrupt` (BaseException) |
+| Workflow paused via dashboard | Raise at next gate call | `WorkflowPausedException` |
+
+See [Errors](../reference/errors.md) for the full exception hierarchy.
 
 ## Next
 
 - [Concepts → Circuit breaker](../concepts/circuit-breaker.md)
+- [Concepts → Control plane](../concepts/control-plane.md)
 - [How-to → Set a hard cost cap](../how-to/cost-cap.md)
 - [How-to → Use with LangGraph](../how-to/langgraph.md)
