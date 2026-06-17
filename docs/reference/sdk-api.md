@@ -25,6 +25,7 @@ from nullrun import init, protect, workflow, span, agent, track_llm, track_tool,
 | --- | --- |
 | `init(api_key=None, *, api_url=None, secret_key=None, debug=False, log_level="INFO", fallback_mode="PERMISSIVE", batch_size=100, flush_interval_ms=5000)` | Initialise the SDK singleton. `api_key` is required; the rest have sensible defaults. |
 | `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. |
+| `@sensitive(tool, reason=None)` | Per-tool fail-CLOSED gate (ADR-008). Blocks the call when the gateway is unreachable, regardless of `NULLRUN_FALLBACK_MODE`. |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. |
 | `span(name=None)` | Context manager for nested trace spans. |
 | `agent(name=None)` | Context manager for agent identity. |

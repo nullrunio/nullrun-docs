@@ -30,10 +30,9 @@ teams ship agents without losing control of cost, scope, or behaviour.
 ## Plans
 
 There is **no time-limited trial**. The **Lite** plan is permanently
-free with hard limits (3 workflows, 500 decisions/month). Pro and
-Enterprise are paid plans with the same surface — no feature gating
-behind a trial state. See `billing.md` in the gateway repo for
-limits.
+free with hard limits (3 workflows, 500 executions/month, 1-day
+history, 1 team seat, no overage). Pro and Enterprise are paid plans
+with the same surface — no feature gating behind a trial state.
 
 ## Where to start
 
