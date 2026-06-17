@@ -35,6 +35,7 @@ nav:
       - Budgets: concepts/budgets.md
       - Sensitive tools: concepts/sensitive-tools.md
       - Workflow context: concepts/workflow.md
+      - Control plane (WebSocket): concepts/control-plane.md
   - How-to:
       - Protect a LangGraph agent: how-to/langgraph.md
       - Use with OpenAI Agents: how-to/openai-agents.md
