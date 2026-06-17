@@ -25,7 +25,7 @@ from nullrun import init, protect, workflow, span, agent, track_llm, track_tool,
 | --- | --- |
 | `init(api_key=None, *, api_url=None, secret_key=None, debug=False, log_level="INFO", fallback_mode="PERMISSIVE", batch_size=100, flush_interval_ms=5000)` | Initialise the SDK singleton. `api_key` is required; the rest have sensible defaults. |
 | `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. |
-| `@sensitive(tool, reason=None)` | Per-tool fail-CLOSED gate (ADR-008). Blocks the call when the gateway is unreachable, regardless of `NULLRUN_FALLBACK_MODE`. |
+| `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check `runtime.execute(...)` before the body runs. Fails CLOSED on transport error (ADR-008), regardless of `NULLRUN_FALLBACK_MODE`. Chain with `@protect` in either order; the recommended form is `@sensitive` outside so `add_sensitive_tool(fn.__name__)` runs before the wrapper is built. |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. |
 | `span(name=None)` | Context manager for nested trace spans. |
 | `agent(name=None)` | Context manager for agent identity. |
@@ -64,7 +64,13 @@ All raised from `nullrun.breaker.exceptions`:
 ```python
 import nullrun
 from nullrun import WorkflowKilledInterrupt, init, protect, workflow
-from nullrun.breaker import NullRunBlockedException
+
+# NullRunBlockedException lives in `nullrun.breaker.exceptions` — the
+# `nullrun.breaker` package re-exports only the base error vocabulary
+# (BreakerError, BreakerTransportError, CostLimitExceeded, ApprovalRequired,
+# BreakerTimeout, CircuitBreaker, CBState). Importing the policy-block
+# exception from `nullrun.breaker` would raise ImportError.
+from nullrun.breaker.exceptions import NullRunBlockedException
 
 init(api_key="nr_live_...")
 
@@ -79,7 +85,7 @@ with workflow("my-agent"):
         raise                    # kill contract — re-raise if you can't resume
     except NullRunBlockedException as exc:
         ...                      # budget / loop / retry / sensitive
-    except nullrun.breaker.RateLimitError as exc:
+    except nullrun.breaker.exceptions.RateLimitError as exc:
         time.sleep(exc.retry_after)
 ```
 

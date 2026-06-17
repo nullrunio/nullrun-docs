@@ -60,7 +60,11 @@ the agent framework modules it can detect in `sys.modules`:
 | `openai-agents` | `instrumentation.auto.patch_openai_agents` |
 | `anthropic` | `instrumentation.auto.patch_anthropic` |
 | `langgraph` / `langchain` | `instrumentation.auto.patch_langgraph_compiled` |
-| `mistralai`, `google.generativeai`, `cohere`, `boto3` (bedrock) | per-vendor extractors |
+| `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock) | per-vendor extractors |
+
+The Gemini vendor extra is `google-genai` (the actively maintained
+package, ≥ 1.0); the older `google.generativeai` package is **not**
+supported. Install with `pip install "nullrun[gemini]"`.
 
 In every case, the call gets `track_llm` events automatically — no
 `@protect` required for cost tracking. `@protect` is the **gate**

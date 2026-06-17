@@ -30,9 +30,16 @@ teams ship agents without losing control of cost, scope, or behaviour.
 ## Plans
 
 There is **no time-limited trial**. The **Lite** plan is permanently
-free with hard limits (3 workflows, 75,000 executions/month, 1-day
-history, 1 team seat, no overage). Pro and Enterprise are paid plans
-with the same surface — no feature gating behind a trial state.
+free with hard limits: 3 workflows, **75,000 executions/month**
+(bumped from the 002_plans seed of 500 by migration 136_plan_rebalance_v2
+in `backend/src/db/mod.rs:3392`), **1-day history retention**
+(`features.history_days = 1` in the same seed), 1 team seat, no
+overage. Note: with `replay: false` and `audit_log: false` on Lite,
+the replay/audit retention collapses to **0 days** — the day-count
+derivation in `PlanContext::from_json_values` (in
+`backend/src/plan/types.rs`) zeros those windows. Pro and Enterprise
+are paid plans with the same surface — no feature gating behind a
+trial state.
 
 ## Where to start
 

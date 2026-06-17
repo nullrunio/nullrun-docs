@@ -65,14 +65,20 @@ a policy is saved. `KeyRotated` is sent when `DELETE
 
 ## When the WebSocket is down
 
-If `NULLRUN_WS_URL` is unset, or the connection drops, the SDK falls
-back to polling: every `@protect` call invokes
-`check_control_plane` synchronously against
+If the connection drops, the SDK falls back to polling: every
+`@protect` call invokes `check_control_plane` synchronously against
 `/api/v1/orgs/{org_id}/status`. This is slower (a few hundred ms per
 gate call) but correct — kills and pauses still land.
 
-Set `NULLRUN_WS_DISABLED=1` to disable the WS path entirely and rely
-on polling.
+To disable the WebSocket path entirely (test / air-gapped setups),
+construct the runtime directly with `polling=False`:
+
+```python
+from nullrun.runtime import NullRunRuntime
+rt = NullRunRuntime(api_key="nr_live_...", polling=False)   # poll-only
+```
+
+This is an internal/test-only knob, not a public env var.
 
 ## See also
 

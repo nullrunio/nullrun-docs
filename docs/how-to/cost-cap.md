@@ -45,10 +45,12 @@ Cumulative cost > 500¢ → `NullRunBlockedException` on the next gate call
 
 ## Per-call
 
-The SDK can project per-call cost from token counts. Configure via
-`NULLRUN_PER_CALL_COST_CENTS` or your workspace policy's per-call cap.
-A single call projected to exceed the cap is rejected before the model
-is invoked.
+The SDK does not project per-call cost on its own — the per-call
+cap is enforced by the workspace policy on the gateway. When the
+policy carries a `max_per_call_cents` limit, the gate rejects any
+single call whose projected cost would exceed the cap *before* the
+model is invoked (see [Budgets](../concepts/budgets.md) for the
+reservation flow).
 
 ## See also
 

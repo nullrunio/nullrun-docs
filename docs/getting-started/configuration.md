@@ -21,13 +21,21 @@ needs the API key — everything else has sensible defaults.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `NULLRUN_TIMEOUT` | `30` | HTTP request timeout (seconds) |
 | `NULLRUN_BATCH_SIZE` | `100` | Event batch size for `/track/batch` |
 | `NULLRUN_FLUSH_INTERVAL_MS` | `5000` | Event flush interval (ms) |
-| `NULLRUN_LOG_LEVEL` | `INFO` | One of `DEBUG` / `INFO` / `WARNING` / `ERROR` |
-| `NULLRUN_FALLBACK_MODE` | `PERMISSIVE` | One of `STRICT` / `PERMISSIVE` / `CACHED` (see [Circuit breaker](../concepts/circuit-breaker.md)) |
-| `NULLRUN_HMAC_REQUIRED` | `true` (prod) / `false` (dev) | When `true`, the gateway rejects unsigned SDK requests with 401. Set to `false` in dev to skip signing. |
-| `NULLRUN_HMAC_MAX_AGE_SECS` | `300` | Reject signatures older than N seconds (replay window) |
+| `NULLRUN_FALLBACK_MODE` | `permissive` | One of `strict` / `permissive` / `cached` (see [Circuit breaker](../concepts/circuit-breaker.md)). Lowercase is required — the SDK reads the value as a string and normalises to lowercase. |
+
+The HTTP request timeout and retry count are **not** configurable from
+the SDK — they are hardcoded to `30s` and `3` retries in
+`nullrun.runtime.NullRunRuntime` (see the docstring there). To change
+them, build a `NullRunRuntime` directly.
+
+The HMAC signature window (`NULLRUN_HMAC_MAX_AGE_SECS`) and
+`NULLRUN_HMAC_REQUIRED` flag are **server-side** settings
+(`backend/src/config.rs`), not SDK env vars. The SDK signs every
+request automatically when `NULLRUN_SECRET_KEY` is set; the server
+rejects unsigned SDK traffic with 401 when `NULLRUN_HMAC_REQUIRED=true`
+(the production default).
 
 ## Test / dev opt-outs
 
@@ -35,10 +43,21 @@ needs the API key — everything else has sensible defaults.
 | --- | --- | --- |
 | `NULLRUN_SKIP_BUDGET_CHECK=1` | Skip the pre-flight `/check` (test only) | Agent may overspend before `/track` sees it |
 | `NULLRUN_SENSITIVE_FAIL_OPEN=1` | Sensitive tools allow when gateway is down (test only) | Sensitive tool runs without policy check |
-| `NULLRUN_WS_DISABLED=1` | Disable WebSocket control plane; fall back to polling | Slower kill/pause propagation |
 
-All three **emit a `RuntimeWarning`** at import time so they can't
-slip into production unnoticed.
+Both **emit a `RuntimeWarning`** at import time so they can't slip
+into production unnoticed.
+
+Disabling the WebSocket control plane is an internal test knob — it
+is **not** a public env var. To turn it off, construct the runtime
+directly with `polling=False`:
+
+```python
+from nullrun.runtime import NullRunRuntime
+rt = NullRunRuntime(api_key=..., polling=False)   # poll-only mode
+```
+
+See `nullrun.__init__` for the rationale ("an internal/test-only
+knob").
 
 ## gRPC transport — frozen
 
