@@ -23,7 +23,7 @@ from nullrun import init, protect, workflow, span, agent, track_llm, track_tool,
 
 | Symbol | Purpose |
 | --- | --- |
-| `init(api_key=None, *, api_url=None, secret_key=None, debug=False, log_level="INFO", fallback_mode="PERMISSIVE", batch_size=100, flush_interval_ms=5000)` | Initialise the SDK singleton. `api_key` is required; the rest have sensible defaults. |
+| `init(api_key=None, *, api_url=None, debug=False)` | Initialise the SDK singleton. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and fallback mode are **not** parameters here — set them via env vars or by constructing `NullRunRuntime` directly. |
 | `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. |
 | `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check `runtime.execute(...)` before the body runs. Fails CLOSED on transport error (ADR-008), regardless of `NULLRUN_FALLBACK_MODE`. Chain with `@protect` in either order; the recommended form is `@sensitive` outside so `add_sensitive_tool(fn.__name__)` runs before the wrapper is built. |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. |

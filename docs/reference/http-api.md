@@ -65,7 +65,7 @@ tokens obtained from `POST /api/v1/auth/login` or the OAuth flow
 | `PATCH` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Update (budget, name, …) |
 | `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/pause` | Pause |
 | `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/resume` | Resume |
-| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/kill` | Kill (broadcasts `StateChanged` over WS) |
+| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/kill` | Kill (broadcasts `StateChange` over WS) |
 
 ## Policies
 

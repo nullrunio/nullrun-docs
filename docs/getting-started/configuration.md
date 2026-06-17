@@ -14,8 +14,7 @@ needs the API key — everything else has sensible defaults.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `NULLRUN_SECRET_KEY` | unset (warns) | HMAC-SHA256 signing secret. Required when the gateway runs with `NULLRUN_HMAC_REQUIRED=true` (the production default). |
-| `NULLRUN_API_URL` | `https://api.nullrun.io` | Gateway REST base URL |
-| `NULLRUN_WS_URL` | `wss://api.nullrun.io/ws/control` | WebSocket control plane URL. Set to empty to disable WS and fall back to polling. |
+| `NULLRUN_API_URL` | `https://api.nullrun.io` | Gateway REST base URL. The WebSocket control plane URL is derived from this — `wss://<api-host>/ws/control` — and is **not** a separate env var. |
 
 ## Behaviour
 

@@ -18,9 +18,10 @@ WSS /ws/control/{org_id}
 
 The handshake is authenticated with an `X-API-Key` + HMAC signature,
 identical to the SDK REST endpoints. The SDK opens the connection
-automatically once both `NULLRUN_API_KEY` and `NULLRUN_SECRET_KEY` are
-set; configure the URL via `NULLRUN_WS_URL` (defaults to
-`wss://api.nullrun.io/ws/control`).
+automatically once both `NULLRUN_API_KEY` and `NULLRUN_SECRET_KEY`
+are set. The control plane URL is **not** a public env var — the
+SDK constructs it from the API base URL (`NULLRUN_API_URL`,
+default `https://api.nullrun.io`) as `wss://<api-host>/ws/control`.
 
 ## Message types
 

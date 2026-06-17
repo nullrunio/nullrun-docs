@@ -16,8 +16,9 @@ Three endpoints work together:
 2. **Reservation `/api/v1/execute`** — synchronously evaluates the
    gate (budget + policy + sensitive tool rules) and **reserves** the
    projected cost. Returns a reservation token. If the budget can't
-   accommodate the projected cost, returns `ReserveError` and the call
-   is blocked.
+   accommodate the projected cost, the gateway returns
+   `unprocessable` (HTTP 422) and the SDK raises
+   `NullRunBlockedException`. The call is blocked before it runs.
 
 3. **`/api/v1/track` after the fact** — when the call completes, the
    SDK reports the actual cost. The gateway either **commits** the

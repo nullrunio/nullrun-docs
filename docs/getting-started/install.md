@@ -27,19 +27,23 @@ Sign in at [nullrun.io](https://nullrun.io), open **Settings
 - `NULLRUN_SECRET_KEY` — HMAC-SHA256 signing secret, shown **once** at
   creation
 
-Pass both to `init()`:
+Pass both to `init()` — the public `init()` surface takes
+`api_key` only; the secret key is read from the `NULLRUN_SECRET_KEY`
+env var, not from a constructor argument:
 
 ```python
+import os
 from nullrun import init
 
-init(
-    api_key="nr_live_...",
-    secret_key="nrs_...",   # optional in dev, required in prod when
-                            # NULLRUN_HMAC_REQUIRED=true
-)
+# Recommended: keep the secret key out of source by reading from env.
+# In dev, the SDK signs with a no-op fallback and emits a
+# RuntimeWarning when the secret is missing.
+os.environ.setdefault("NULLRUN_SECRET_KEY", "nrs_...")
+
+init(api_key="nr_live_...")
 ```
 
-or via env vars:
+or set both via env vars before `init()`:
 
 ```bash
 export NULLRUN_API_KEY=nr_live_...
@@ -79,7 +83,7 @@ layer (budget pre-flight + kill/pause + sensitive-tool decision).
 | `nullrun[openai]` | `openai` |
 | `nullrun[anthropic]` | `anthropic` |
 | `nullrun[mistral]` | `mistralai` |
-| `nullrun[gemini]` | `google-generativeai` |
+| `nullrun[gemini]` | `google-genai` |
 | `nullrun[cohere]` | `cohere` |
 | `nullrun[bedrock]` | `boto3` |
 | `nullrun[autogen]` | `pyautogen` |
