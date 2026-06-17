@@ -1,8 +1,7 @@
 # Error codes
 
-The canonical `ApiErrorCode` enum lives in
-[`nullrunio/nullrun/contracts/errors.ts`](https://github.com/nullrunio/nullrun/blob/master/contracts/errors.ts)
-and is the source of truth. This page maps each code to:
+The canonical `ApiErrorCode` enum is the source of truth for every
+non-2xx response the gateway returns. This page maps each code to:
 
 - the SDK exception the Python SDK raises when it sees that error
 - the HTTP status code the gateway returns

@@ -50,8 +50,6 @@ trial state.
 
 ## Repositories
 
-- [`nullrunio/nullrun`](https://github.com/nullrunio/nullrun) — gateway
-  (Rust, crate `breaker-core`) and frontend (`breaker-dashboard`)
 - [`nullrunio/nullrun-sdk-python`](https://github.com/nullrunio/nullrun-sdk-python) —
   Python SDK (`pip install nullrun`)
 - [`nullrunio/nullrun-examples`](https://github.com/nullrunio/nullrun-examples) —
@@ -60,3 +58,6 @@ trial state.
   this documentation site (https://docs.nullrun.io)
 - [`nullrunio/.github`](https://github.com/nullrunio/.github) — org profile
   + issue templates
+
+The NullRun gateway and dashboard live in a private repository.
+Access is granted on request — see the [self-host guide](getting-started/install.md#gateway-self-host).

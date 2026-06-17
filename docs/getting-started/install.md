@@ -20,7 +20,7 @@ Current version: `0.4.0` (alpha).
 
 ## API key + HMAC secret
 
-Sign in at [app.nullrun.io](https://app.nullrun.io), open **Settings
+Sign in at [nullrun.io](https://nullrun.io), open **Settings
 → API keys**, and create a key. Each key is minted with:
 
 - `NULLRUN_API_KEY` (`nr_live_...`) — public identifier
@@ -95,7 +95,8 @@ pip install "nullrun[all]"
 
 ## Gateway (self-host)
 
-If you want to run the gateway yourself instead of using the hosted
-control plane, see
-[`nullrunio/nullrun`](https://github.com/nullrunio/nullrun) and the
-production deployment guide (`nullrun_vps_prod.md` in that repo).
+The hosted control plane at [nullrun.io](https://nullrun.io) is the
+recommended path for most teams. Self-hosting the gateway is also
+available — see the gateway repository's deployment guide (the repo
+itself is private; access is granted on request via
+[support@nullrun.io](mailto:support@nullrun.io)).

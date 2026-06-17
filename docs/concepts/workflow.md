@@ -53,7 +53,7 @@ called), the gateway broadcasts a `StateChange` over
 
 | Situation | Result |
 | --- | --- |
-| A call is mid-execution | The interrupt is queued and raised at the next yield point as `WorkflowKilledInterrupt` (BaseException — see the [kill contract](https://github.com/nullrunio/nullrun/blob/master/docs/kill-contract.md)) |
+| A call is mid-execution | The interrupt is queued and raised at the next yield point as `WorkflowKilledInterrupt` (BaseException — see the kill contract) |
 | A call has not started | The next `@protect` call raises `WorkflowKilledInterrupt` before the wrapped function runs |
 | The WebSocket is down | The next `@protect` call does a synchronous `check_control_plane` poll and learns about the kill from `/api/v1/orgs/{org_id}/status` |
 

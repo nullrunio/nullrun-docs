@@ -1,8 +1,8 @@
 site_name: NullRun Docs
 site_description: Enforcement gateway for AI agents — user-facing documentation
 site_url: https://docs.nullrun.io
-repo_url: https://github.com/nullrunio/nullrun
-repo_name: nullrunio/nullrun
+repo_url: https://github.com/nullrunio/nullrun-docs
+repo_name: nullrunio/nullrun-docs
 
 theme:
   name: material

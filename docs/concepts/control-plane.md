@@ -84,4 +84,5 @@ This is an internal/test-only knob, not a public env var.
 
 - [HTTP API](../reference/http-api.md#websocket-control-plane)
 - [Workflow context](workflow.md)
-- [Kill contract](https://github.com/nullrunio/nullrun/blob/master/docs/kill-contract.md)
+- Kill contract (internal — available on request via
+  [support@nullrun.io](mailto:support@nullrun.io))

@@ -1,9 +1,8 @@
 # HTTP API
 
-The canonical spec is in
-[`nullrunio/nullrun/contracts/openapi.yaml`](https://github.com/nullrunio/nullrun/blob/master/contracts/openapi.yaml)
-and is validated by CI on every PR. This page summarises the
-endpoints a typical SDK or dashboard user interacts with.
+This page summarises the endpoints a typical SDK or dashboard user
+interacts with. The OpenAPI spec is the source of truth and is
+validated by CI on every PR.
 
 Base URL:
 
@@ -132,6 +131,5 @@ types (`InitialState`, `StateChange`, `PolicyInvalidated`,
 
 ## See also
 
-- [OpenAPI spec](https://github.com/nullrunio/nullrun/blob/master/contracts/openapi.yaml)
 - [Errors](errors.md)
 - [Control plane](../concepts/control-plane.md)
