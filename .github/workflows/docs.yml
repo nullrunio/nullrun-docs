@@ -52,6 +52,18 @@ jobs:
       - name: Build site
         run: mkdocs build --strict
 
+      - name: Add CNAME to artifact root
+        # mkdocs only copies the `docs/` tree into `site/`, so the
+        # CNAME file at the repo root never makes it into the
+        # published artifact. Without it, GitHub Pages has no way to
+        # know that docs.nullrun.io maps to this repo and returns
+        # 404 for every request to the custom domain (the deploy
+        # step succeeds, but the published site is unreachable
+        # under the canonical URL).
+        # Copy it explicitly so /CNAME ends up at site/CNAME in the
+        # Pages artifact.
+        run: cp CNAME site/CNAME
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
