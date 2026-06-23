@@ -39,11 +39,13 @@ nav:
   - How-to:
       - Protect a LangGraph agent: how-to/langgraph.md
       - Use with OpenAI Agents: how-to/openai-agents.md
+      - Use with Anthropic, Mistral, Gemini, Cohere, Bedrock: how-to/auto-instrumented-frameworks.md
       - Set a hard cost cap: how-to/cost-cap.md
   - Reference:
       - SDK API: reference/sdk-api.md
       - HTTP API: reference/http-api.md
       - Error codes: reference/errors.md
+  - Troubleshooting: troubleshooting.md
 
 markdown_extensions:
   - admonition

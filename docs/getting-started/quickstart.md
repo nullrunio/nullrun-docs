@@ -36,19 +36,11 @@ governed by your workspace policy.
 - Tool calls (if you use a framework integration)
 - Loop / retry patterns
 
-## What can go wrong (and how NullRun reacts)
+## What can go wrong
 
-| Situation | Default behaviour | Exception |
-| --- | --- | --- |
-| Workflow exceeds budget | Halt at next gate call | `NullRunBlockedException` |
-| Agent in a loop | Halt at next gate call | `NullRunBlockedException` |
-| Agent calls a sensitive tool | Block the call | `NullRunBlockedException` |
-| Gateway unreachable | Allow (PERMISSIVE fallback) | (none — call proceeds) |
-| Sensitive tool + gateway unreachable | **Fail closed** — block the call | `NullRunBlockedException` |
-| Workflow killed via dashboard | Raise at next gate call | `WorkflowKilledInterrupt` (BaseException) |
-| Workflow paused via dashboard | Raise at next gate call | `WorkflowPausedException` |
-
-See [Errors](../reference/errors.md) for the full exception hierarchy.
+See [Troubleshooting](../troubleshooting.md) for the full table of
+expected behaviours (budget cap, loop, sensitive-tool, gateway down,
+kill/pause, etc.) and recovery steps.
 
 ## Next
 

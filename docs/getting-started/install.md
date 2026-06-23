@@ -32,7 +32,7 @@ import nullrun
 nullrun.init(api_key="nr_live_...")
 ```
 
-For self-hosted gateways, or if you want to skip the auth round-trip,
+For air-gapped setups, or if you want to skip the auth round-trip,
 set both via env vars before `init()`:
 
 ```bash
@@ -91,11 +91,3 @@ pip install "nullrun[all]"
 
 > Note: `nullrun[openai]` is for the raw `openai` SDK — it is **not**
 > the OpenAI Agents SDK. For agents use `nullrun[agents]`.
-
-## Gateway (self-host)
-
-The hosted control plane at [nullrun.io](https://nullrun.io) is the
-recommended path for most teams. Self-hosting the gateway is also
-available — see the gateway repository's deployment guide (the repo
-itself is private; access is granted on request via
-[support@nullrun.io](mailto:support@nullrun.io)).
