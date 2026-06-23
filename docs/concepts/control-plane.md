@@ -3,7 +3,7 @@
 The control plane is a real-time channel between the NullRun gateway
 and connected SDKs. It carries the events that need to land at the
 agent **while it is running** — kill / pause decisions, policy
-changes, key rotations, and replay-required resyncs.
+changes, key rotations, and full-state resyncs.
 
 Without the control plane, the SDK would only learn about a kill when
 the next gate call (`@protect`) does a synchronous `check_control_plane`

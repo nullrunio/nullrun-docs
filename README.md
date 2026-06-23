@@ -31,11 +31,11 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 **Getting started**
 - [Install](docs/getting-started/install.md) · `pip install nullrun`, API key, auto-instrumentation
 - [Quickstart](docs/getting-started/quickstart.md) · `@protect` in 30 lines
-- [Configuration](docs/getting-started/configuration.md) · env vars, fallback modes, gRPC status
+- [Configuration](docs/getting-started/configuration.md) · env vars, transport options, gRPC status
 
 **Concepts**
 - [Circuit breaker](docs/concepts/circuit-breaker.md) · CLOSED / OPEN / HALF_OPEN
-- [Budgets](docs/concepts/budgets.md) · pre-flight `/check` + reservation `/execute`
+- [Budgets](docs/concepts/budgets.md) · pre-flight `/gate` + reservation `/execute`
 - [Sensitive tools](docs/concepts/sensitive-tools.md) · fail-CLOSED, always
 - [Workflow context](docs/concepts/workflow.md) · `nullrun.workflow(...)` and what it does
 - [Control plane (WebSocket)](docs/concepts/control-plane.md) · real-time kill / pause
@@ -53,8 +53,9 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 ## What you need from us
 
 - **API key** — create one in [nullrun.io](https://nullrun.io) → Settings
-  → API keys. You get a `nr_live_…` public identifier and an HMAC
-  secret, shown once.
+  → API keys. You get a `nr_live_…` public identifier. The SDK
+  transparently obtains the HMAC signing secret via
+  `POST /api/v1/auth/verify` on first use.
 - **Python ≥ 3.10** for the SDK.
 - **Nothing else to read the docs** — the site is public.
 

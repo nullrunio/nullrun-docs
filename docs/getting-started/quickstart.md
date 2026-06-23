@@ -41,8 +41,8 @@ governed by your workspace policy.
 | Situation | Default behaviour | Exception |
 | --- | --- | --- |
 | Workflow exceeds budget | Halt at next gate call | `NullRunBlockedException` |
-| Agent in a loop | Halt at next gate call | `LoopDetectedException` |
-| Agent calls a sensitive tool | Block (or require approval) | `NullRunBlockedException` / `ApprovalRequired` |
+| Agent in a loop | Halt at next gate call | `NullRunBlockedException` |
+| Agent calls a sensitive tool | Block the call | `NullRunBlockedException` |
 | Gateway unreachable | Allow (PERMISSIVE fallback) | (none — call proceeds) |
 | Sensitive tool + gateway unreachable | **Fail closed** — block the call | `NullRunBlockedException` |
 | Workflow killed via dashboard | Raise at next gate call | `WorkflowKilledInterrupt` (BaseException) |

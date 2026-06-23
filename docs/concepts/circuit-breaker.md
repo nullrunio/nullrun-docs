@@ -8,9 +8,7 @@ know to stop.
 ## States
 
 - **CLOSED** — normal. Calls flow through.
-- **OPEN** — tripped. Calls are blocked with `NullRunBlockedException`
-  (or a subclass: `LoopDetectedException`, `RetryStormException`,
-  `RateLimitExceededException`).
+- **OPEN** — tripped. Calls are blocked with `NullRunBlockedException`.
 - **HALF_OPEN** — testing recovery. One trial call goes through; if it
   succeeds, the breaker closes again.
 

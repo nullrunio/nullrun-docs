@@ -39,17 +39,11 @@ Defined in
 ```
 BreakerError                          (Exception)
 ├── NullRunTransportError             (transport failures)
-│   ├── RateLimitError                (HTTP 429, carries retry_after)
-│   ├── BreakerTransportError
-│   │   └── InsecureTransportError
+│   └── RateLimitError                (HTTP 429, carries retry_after)
+├── BreakerTransportError
+│   └── InsecureTransportError
 ├── NullRunAuthenticationError        (401 / 403)
-├── CostLimitExceeded                 (local breaker tripped — not gateway)
-├── ApprovalRequired                  (sensitive tool needs approval flow)
-├── BreakerTimeout                    (gateway timeout)
-├── NullRunBlockedException
-│   ├── LoopDetectedException
-│   ├── RetryStormException
-│   └── RateLimitExceededException    (local loop, not gateway 429)
+├── NullRunBlockedException           (policy / budget / loop / sensitive)
 └── WorkflowPausedException           (paused via control plane)
 
 BaseException
@@ -57,6 +51,10 @@ BaseException
     └── WorkflowKilledInterrupt       (kill via control plane — BaseException
                                        per the kill contract; not Exception)
 ```
+
+Removed in SDK 0.4.0: `CostLimitExceeded`, `ApprovalRequired`,
+`BreakerTimeout`, `LoopDetectedException`, `RetryStormException`,
+`RateLimitExceededException` (no remaining callers).
 
 Catch `WorkflowKilledInterrupt` **explicitly and before** any `except
 Exception` — it does not subclass `Exception`.

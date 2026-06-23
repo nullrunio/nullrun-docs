@@ -12,46 +12,37 @@ Verify:
 python -c "from nullrun import protect; print('ok')"
 ```
 
-Current version: `0.4.0` (alpha).
+Current version: `0.6.0` (alpha).
 
 > **No local mode.** If `init()` is called without an API key, the
 > SDK raises `NullRunAuthenticationError` at first use. There is no
 > offline / local-only fallback.
 
-## API key + HMAC secret
+## API key
 
 Sign in at [nullrun.io](https://nullrun.io), open **Settings
-→ API keys**, and create a key. Each key is minted with:
-
-- `NULLRUN_API_KEY` (`nr_live_...`) — public identifier
-- `NULLRUN_SECRET_KEY` — HMAC-SHA256 signing secret, shown **once** at
-  creation
-
-Pass both to `init()` — the public `init()` surface takes
-`api_key` only; the secret key is read from the `NULLRUN_SECRET_KEY`
-env var, not from a constructor argument:
+→ API keys**, and create a key. Each key is minted with a public
+identifier (`nr_live_...`) plus a server-side HMAC secret. The SDK
+transparently obtains the HMAC secret via `POST /api/v1/auth/verify`
+on first use, so you only need to pass the API key:
 
 ```python
-import os
-from nullrun import init
+import nullrun
 
-# Recommended: keep the secret key out of source by reading from env.
-# In dev, the SDK signs with a no-op fallback and emits a
-# RuntimeWarning when the secret is missing.
-os.environ.setdefault("NULLRUN_SECRET_KEY", "nrs_...")
-
-init(api_key="nr_live_...")
+nullrun.init(api_key="nr_live_...")
 ```
 
-or set both via env vars before `init()`:
+For self-hosted gateways, or if you want to skip the auth round-trip,
+set both via env vars before `init()`:
 
 ```bash
 export NULLRUN_API_KEY=nr_live_...
-export NULLRUN_SECRET_KEY=nrs_...
+export NULLRUN_SECRET_KEY=nrs_...   # optional: server-issued HMAC secret
 ```
 
-Without the secret the SDK signs with a no-op fallback and emits a
-`RuntimeWarning` — production deployments require it.
+The public `init()` surface takes `api_key` (and optionally `api_url`,
+`debug`). The HMAC secret is **not** a constructor argument — it is
+read from `NULLRUN_SECRET_KEY` or returned by `/api/v1/auth/verify`.
 
 ## Auto-instrumentation
 
@@ -60,9 +51,9 @@ the agent framework modules it can detect in `sys.modules`:
 
 | Detected | Patcher |
 | --- | --- |
-| `openai` ≥ 1.0 | `instrumentation.auto.patch_openai` (httpx transport) |
+| `openai` ≥ 1.0 | `instrumentation.auto` via the httpx transport hook |
 | `openai-agents` | `instrumentation.auto.patch_openai_agents` |
-| `anthropic` | `instrumentation.auto.patch_anthropic` |
+| `anthropic` | `instrumentation.auto` via the httpx transport hook |
 | `langgraph` / `langchain` | `instrumentation.auto.patch_langgraph_compiled` |
 | `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock) | per-vendor extractors |
 
@@ -78,15 +69,19 @@ layer (budget pre-flight + kill/pause + sensitive-tool decision).
 
 | Extra | Installs |
 | --- | --- |
+| `nullrun[opentelemetry]` | `opentelemetry-api`, `opentelemetry-sdk` |
 | `nullrun[langgraph]` | `langgraph` |
-| `nullrun[agents]` | `openai-agents` |
 | `nullrun[openai]` | `openai` |
 | `nullrun[anthropic]` | `anthropic` |
 | `nullrun[mistral]` | `mistralai` |
 | `nullrun[gemini]` | `google-genai` |
 | `nullrun[cohere]` | `cohere` |
 | `nullrun[bedrock]` | `boto3` |
-| `nullrun[autogen]` | `pyautogen` |
+| `nullrun[agents]` | `openai-agents` |
+| `nullrun[langchain]` | `langchain-core` |
+| `nullrun[llama-index]` | `llama-index-core` |
+| `nullrun[crewai]` | `crewai` |
+| `nullrun[autogen]` | `autogen-agentchat`, `autogen-ext[openai]` |
 | `nullrun[all]` | every vendor extra |
 
 ```bash

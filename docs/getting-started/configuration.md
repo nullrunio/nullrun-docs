@@ -20,9 +20,9 @@ needs the API key — everything else has sensible defaults.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `NULLRUN_BATCH_SIZE` | `100` | Event batch size for `/track/batch` |
+| `NULLRUN_BATCH_SIZE` | `50` | Event batch size for `/track/batch` |
 | `NULLRUN_FLUSH_INTERVAL_MS` | `5000` | Event flush interval (ms) |
-| `NULLRUN_FALLBACK_MODE` | `permissive` | One of `strict` / `permissive` / `cached` (see [Circuit breaker](../concepts/circuit-breaker.md)). Lowercase is required — the SDK reads the value as a string and normalises to lowercase. |
+| `NULLRUN_FALLBACK_MODE` | (deprecated) | Legacy selector — use `on_transport_error` on `Transport.execute()` instead. Emits `DeprecationWarning`, scheduled for removal in 0.5.0. |
 
 The HTTP request timeout and retry count are **not** configurable from
 the SDK — they are hardcoded to `30s` and `3` retries in
