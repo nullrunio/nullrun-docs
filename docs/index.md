@@ -57,9 +57,9 @@ unlimited on every dimension.
 
 | Plan | Workflows | Executions / month | History | Team seats | API keys | Policies | Overage |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Lite** | 3 | 500 | 1 day | 1 | 10 | 1 | not allowed |
-| **Starter** | 10 | 5,000 | 7 days | 3 | 25 | 5 | not allowed |
-| **Growth** | 50 | 50,000 | 30 days | 10 | 100 | 15 | allowed (1.5×) |
+| **Lite** | 3 | 75,000 | 1 day | 1 | 10 | 1 | not allowed |
+| **Starter** | 10 | 250,000 | 7 days | 3 | 25 | 5 | not allowed |
+| **Growth** | 50 | 500,000 | 30 days | 10 | 100 | 15 | allowed (1.5×) |
 | **Scale** | 150 | 1,500,000 | 90 days | 50 | 250 | 100 | not allowed |
 | **Enterprise** | unlimited | unlimited | unlimited | unlimited | unlimited | unlimited | contract |
 
