@@ -51,22 +51,34 @@ real module in the gateway.
 There is **no time-limited trial**. The **Lite** plan is permanently
 free with hard caps; the rest are paid. Plan limits are enforced
 from the `plans` table at runtime — the values below mirror the seed
-rows in migration `002_plans.sql` (with the `060_fix_plan_limits`
-rebalance applied to Lite / Starter / Growth / Scale). Enterprise is
-unlimited on every dimension.
+rows in migration `002_plans.sql` after the full migration chain
+(`060_fix_plan_limits`, `136_plan_rebalance_v2`,
+`137_plan_seats_per_tier`, `159_scale_tier_rebalance`,
+`161_plan_config_defensive_reset`, `170_disable_overage_all_plans`,
+`171_plan_tier_rebalance_2026_06_24`). Enterprise is unlimited on
+every dimension.
 
 | Plan | Workflows | Executions / month | History | Team seats | API keys | Policies | Overage |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Lite** | 3 | 75,000 | 1 day | 1 | 10 | 1 | not allowed |
-| **Starter** | 10 | 250,000 | 7 days | 3 | 25 | 5 | not allowed |
-| **Growth** | 50 | 500,000 | 30 days | 10 | 100 | 15 | allowed (1.5×) |
-| **Scale** | 150 | 1,500,000 | 90 days | 50 | 250 | 100 | not allowed |
-| **Enterprise** | unlimited | unlimited | unlimited | unlimited | unlimited | unlimited | contract |
+| **Lite** | 3 | 75,000 | 3 days | 1 | 10 | 1 | not allowed |
+| **Starter** | 8 | 100,000 | 7 days | 3 | 15 | 3 | not allowed |
+| **Growth** | 50 | 750,000 | 30 days | 10 | 100 | 25 | not allowed |
+| **Scale** | 200 | 2,000,000 | 90 days | 75 | 350 | 150 | not allowed |
+| **Enterprise** | unlimited | unlimited | unlimited | unlimited | unlimited | unlimited | not allowed |
+
+Overage billing is **disabled on every tier** (migration 170,
+2026-06-24). Growth previously allowed overage at 1.5× and Enterprise
+at contract pricing — both flipped to hard caps until the
+metered-overage model is finalized. If you hit a cap, the gateway
+returns 422 `plan_limit_exceeded` (see [Error codes](docs/reference/errors.md)).
 
 > If the database is unreachable, the gateway falls back to the
-> in-code Phase 136 rebalance (75K / 250K / 500K / 1M / unlimited).
+> in-code Phase 136 rebalance (75K / 250K / 500K / 1M / unlimited
+> for Lite / Starter / Growth / Scale / Enterprise — note Scale
+> here is 1M, **not** 2M; the in-code fallback was not updated
+> alongside migration 171, so it lags the DB by one rebalance).
 > On startup `assert_db_matches_code` aborts the process if the DB
-> drifts from this table — see
+> drifts from the in-code `Entitlements` mirror — see
 > [[scale-plan-not-unlimited]](https://github.com/nullrunio/nullrun-docs)
 > in the engineering notes.
 
