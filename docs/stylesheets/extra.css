@@ -253,13 +253,25 @@
   background-color: rgba(251, 250, 244, 0.06);
 }
 
-/* But pre > code shouldn't inherit the tinted bg (it owns its own
-   dark surface). Reset. */
+/* pre > code: don't inherit the inline-code tinted bg + padding
+   + radius that the previous rule applied to ALL `.md-typeset code`.
+   The `.md-typeset pre > code` selector (1 class + 2 types) is
+   more specific than `.md-typeset code` (1 class + 1 type) in the
+   DEFAULT scheme, so every property below wins there. In the
+   SLATE scheme the selector `[data-md-color-scheme="slate"]
+   .md-typeset code` has the same specificity as our pre > code
+   rule but the attribute selector puts it on top — we add an
+   explicit slate rule below to keep the dark surface on the
+   code block instead of the inline-code cream tint. */
 .md-typeset pre > code {
-  background-color: transparent;
+  background-color: var(--md-code-bg-color);
   padding: 0;
   border-radius: 0;
   color: var(--md-code-fg-color);
+}
+
+[data-md-color-scheme="slate"] .md-typeset pre > code {
+  background-color: var(--md-code-bg-color);
 }
 
 /* ----- Admonitions — match frontend's tinted-state look ----- */
