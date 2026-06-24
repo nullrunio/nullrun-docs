@@ -46,10 +46,30 @@
   --md-primary-border-color: rgba(20, 20, 18, 0.10);
 
   /* Code blocks — same near-black surface as dashboard terminal
-     chrome (--term-chrome: 60 4% 6% → #0E0E0C) */
+     chrome (--term-chrome: 60 4% 6% → #0E0E0C). Token colors
+     (--md-code-hl-*) are pinned explicitly so they always have
+     sufficient contrast against the dark surface in light mode —
+     relying on the default `--md-code-hl-name-color: var(--md-code-fg-color)`
+     works for plain text but the inherited `--md-code-hl-operator-color:
+     var(--md-default-fg-color--light)` produces gray-on-dark gray
+     that fails contrast. Explicit overrides below. */
   --md-code-bg-color: #0E0E0C;
   --md-code-fg-color: #FBFAF4;
   --md-code-border-color: rgba(251, 250, 244, 0.08);
+  --md-code-hl-color: #FBFAF4;
+  --md-code-hl-color--light: rgba(251, 250, 244, 0.1);
+  --md-code-hl-name-color: #FBFAF4;
+  --md-code-hl-operator-color: #C8C8C2;
+  --md-code-hl-punctuation-color: #C8C8C2;
+  --md-code-hl-comment-color: #8A8A85;
+  --md-code-hl-string-color: #B6D7A8;
+  --md-code-hl-number-color: #F4A582;
+  --md-code-hl-function-color: #D5A0E8;
+  --md-code-hl-keyword-color: #C5A8E8;
+  --md-code-hl-constant-color: #F4D582;
+  --md-code-hl-special-color: #FFD580;
+  --md-code-hl-variable-color: #C8C8C2;
+  --md-code-hl-generic-color: #8A8A85;
 
   /* Typography */
   --md-text-font: "Inter", "Helvetica Neue", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
@@ -95,6 +115,20 @@
   --md-code-bg-color: #161614;
   --md-code-fg-color: #FBFAF4;
   --md-code-border-color: rgba(251, 250, 244, 0.08);
+  --md-code-hl-color: #FBFAF4;
+  --md-code-hl-color--light: rgba(251, 250, 244, 0.1);
+  --md-code-hl-name-color: #FBFAF4;
+  --md-code-hl-operator-color: #C8C8C2;
+  --md-code-hl-punctuation-color: #C8C8C2;
+  --md-code-hl-comment-color: #8A8A85;
+  --md-code-hl-string-color: #B6D7A8;
+  --md-code-hl-number-color: #F4A582;
+  --md-code-hl-function-color: #D5A0E8;
+  --md-code-hl-keyword-color: #C5A8E8;
+  --md-code-hl-constant-color: #F4D582;
+  --md-code-hl-special-color: #FFD580;
+  --md-code-hl-variable-color: #C8C8C2;
+  --md-code-hl-generic-color: #8A8A85;
 }
 
 /* ----- Body ----- */
