@@ -1,17 +1,25 @@
 # Sensitive tools
 
 A **sensitive tool** is one that should never run unattended or without
-an explicit policy decision. Examples:
+an explicit policy decision. NullRun ships with a built-in list of
+high-risk operation patterns:
 
-- File system operations (`fs.read`, `fs.write`, `fs.delete`)
-- Shell execution (`bash`, `shell.exec`)
-- Database writes (`db.write`, `db.migrate`)
-- Network egress (`http.fetch` to a non-allowlisted host)
-- Code execution (`python.eval`, `node.eval`)
+- Financial operations: `stripe.charge`, `stripe.refund`,
+  `stripe.payout`, `payment.process`
+- Communication: `send_email`, `send_sms`, `send_slack`, `send_discord`
+- Database writes / drops: `db.write`, `db.delete`, `db.drop`,
+  `db.truncate`
+- External API mutations: `api.post`, `api.put`, `api.delete`
+- File / object writes / deletes: `file.write`, `file.delete`,
+  `s3.delete`
+- Admin: `admin.delete`, `admin.create_user`, `admin.disable_user`
 
-Sensitive tools are listed in the workspace policy. The default list
-includes common dangerous operations; you can extend it with
-`runtime.add_sensitive_tool(...)` from the SDK.
+The list is defined in `NullRunRuntime._sensitive_tools` (see
+`src/nullrun/runtime.py`). You can extend it from the SDK with
+`runtime.add_sensitive_tool("my.custom_tool")` or
+`runtime.register_sensitive_tools([...])` — additions are matched
+case-insensitively (a caller passing `"Stripe.Charge"` matches the
+built-in `"stripe.charge"`).
 
 ## Failure mode
 

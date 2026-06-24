@@ -6,10 +6,13 @@ enforcement, and audit.
 
 ## Default vs explicit
 
-By default, the SDK uses an auto-generated workflow ID per `@protect`
-invocation. To attach a policy, budget, or run-time grouping, scope the
-work inside a `nullrun.workflow(...)` context — **`@protect` itself
-takes no kwargs**:
+A **workflow_id** is **not** auto-generated per `@protect` invocation.
+Instead, since Phase 139 every API key is minted bound to exactly one
+workflow, and the SDK reads that binding during `init()` (see
+`NullRunRuntime._authenticate()` in `src/nullrun/runtime.py`). The
+SDK does not invent workflow IDs — if you want a different grouping
+than the API key's binding, scope the work inside a
+`nullrun.workflow(...)` context. **`@protect` itself takes no kwargs**:
 
 ```python
 import nullrun
@@ -23,7 +26,14 @@ with nullrun.workflow("user-123:research-task-456"):
 ```
 
 Every call inside `research()` shares the same workflow and can be
-addressed as one unit in the dashboard.
+addressed as one unit in the dashboard. The explicit
+`workflow("user-123:research-task-456")` contextvar wins over the
+API key's binding for the duration of the block.
+
+Legacy keys minted before Phase 139 carry no `workflow_id` binding —
+for those, the SDK emits a one-time warning at startup and the
+control plane cannot honour KILL/PAUSE for that workflow. Rotate
+the key in the dashboard to enable control-plane enforcement.
 
 ## What the workflow ID does
 

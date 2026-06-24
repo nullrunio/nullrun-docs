@@ -7,18 +7,19 @@ when it isn't.
 
 | Situation | Default behaviour | Exception raised |
 | --- | --- | --- |
-| Workflow exceeds budget | Halt at next `@protect` call | `NullRunBlockedException` |
+| Workflow exceeds budget | Halt at next `@protect` call | `NullRunBlockedException` (or `NullRunBudgetError` for the catalogue code) |
 | Agent stuck in a loop | Halt at next `@protect` call | `NullRunBlockedException` |
-| Agent calls a sensitive tool | Block the call before the function body runs | `NullRunBlockedException` |
+| Agent calls a sensitive tool | Block the call before the function body runs | `NullRunBlockedException` (or `NullRunToolBlockedError`) |
 | Gateway unreachable, normal tool | Allow (PERMISSIVE fallback) | (none — call proceeds) |
 | Gateway unreachable, sensitive tool | **Fail closed** — block the call | `NullRunBlockedException` |
-| Workflow killed via dashboard | Raise at next `@protect` call | `WorkflowKilledInterrupt` (`BaseException`) |
+| Workflow killed via dashboard | Raise at next `@protect` call (or pre-request for in-flight LLM calls) | `WorkflowKilledInterrupt` (`BaseException`) |
 | Workflow paused via dashboard | Raise at next `@protect` call | `WorkflowPausedException` |
-| Missing `api_key` on `init()` | Raise on first SDK call | `NullRunAuthenticationError` |
+| Missing `api_key` on `init()` | Raise at first SDK call | `NullRunAuthenticationError` |
 | HMAC signature missing / stale | Reject the request (401) | `NullRunAuthenticationError` |
-| Plan monthly cap reached | Reject the request (429) | `RateLimitError` |
+| Plan monthly / per-dimension cap reached | Reject the request (**422** with `error=plan_limit_exceeded` or `workflow_limit_reached`; `details.resource` names the dimension) | `NullRunBlockedException` |
+| Per-minute rate cap reached | Reject the request (429 with `Retry-After`) | `RateLimitError` |
 | `workflow_id` paused / killed (WS push) | Apply at next `@protect` call | `WorkflowKilledInterrupt` / `WorkflowPausedException` |
-| `Policy.fetch` fails on first call | Use cached policy → fall back to `Policy.strict_local()` | (none, but budget drops to 0) |
+| `Policy.fetch` fails on first call | Use cached policy → fall back to `Policy.strict_local()` (zero budget, 1-call rate limit) | (none — `track_event` returns the block verdict; no exception) |
 
 > Fail-closed vs fail-open defaults live in `proxy/handlers.rs` and
 > `policy/service.rs`. The full fail-CLOSED / fail-OPEN policy is
@@ -49,8 +50,12 @@ Two usual suspects:
 
 - **Dashboard action** — open the workflow's detail page; the audit
   log shows the actor and timestamp.
-- **Auto-pause on budget threshold** — Lite / Growth have a soft
-  auto-pause at 90 % of monthly cap. Resumable from the dashboard.
+- **Stream-reservation auto-pause** — the per-reservation stream
+  control loop pauses at 80% consumption and cancels at 95%
+  (`StreamControlLoop::pause_threshold` / `cancel_threshold` in
+  `backend/src/billing/reservation.rs`). This is per-stream, not
+  per-plan-monthly — it fires inside a single LLM call once the
+  reservation is mostly consumed. Resumable from the dashboard.
 
 ### "Why is the SDK raising `NullRunAuthenticationError`?"
 

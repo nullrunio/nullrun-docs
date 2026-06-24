@@ -54,7 +54,8 @@ the agent framework modules it can detect in `sys.modules`:
 | `openai` ≥ 1.0 | `instrumentation.auto` via the httpx transport hook |
 | `openai-agents` | `instrumentation.auto.patch_openai_agents` |
 | `anthropic` | `instrumentation.auto` via the httpx transport hook |
-| `langgraph` / `langchain` | `instrumentation.auto.patch_langgraph_compiled` |
+| `langgraph` | `instrumentation.auto.patch_langgraph_compiled` (wraps `Pregel.invoke` / `.stream` / `.ainvoke` / `.astream`) |
+| `langchain` | `instrumentation.auto.patch_langchain_callback` (injects `NullRunCallback` into `BaseCallbackManager.__init__`) |
 | `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock) | per-vendor extractors |
 
 The Gemini vendor extra is `google-genai` (the actively maintained

@@ -45,7 +45,9 @@ After an outage, the breaker transitions `OPEN → HALF_OPEN`. The
 first call is treated as a probe:
 
 - success → close the breaker, resume normal flow.
-- failure → reopen, wait `breaker.cooldown_ms` before retrying.
+- failure → reopen, wait `breaker.recovery_timeout` (default `30s`,
+  not `ms`) before retrying (`CircuitBreaker.__init__` in
+  `src/nullrun/breaker/circuit_breaker.py`).
 
 The SDK surfaces the fallback decision via `NullRunTransportError`
 with `source=BREAKER_OPEN` so operators can alert on it (see

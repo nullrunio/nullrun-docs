@@ -55,6 +55,6 @@ reservation flow).
 ## See also
 
 - [Budgets](../concepts/budgets.md) — reservation lifecycle and the
-  pre-flight `/check` end-to-end
+  pre-flight `/gate` end-to-end
 - [Errors](../reference/errors.md)
 - [Examples → cost cap demo](https://github.com/nullrunio/nullrun-examples/blob/main/examples/cost_cap_demo.py)

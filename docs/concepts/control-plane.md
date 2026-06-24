@@ -25,14 +25,15 @@ default `https://api.nullrun.io`) as `wss://<api-host>/ws/control`.
 
 ## Message types
 
-Server → client:
+Server → client (`WsMessage` enum in `backend/src/proxy/http/ws_control.rs`):
 
 | Type | When |
 | --- | --- |
 | `InitialState` | First message after subscribe; full per-workflow state snapshot |
-| `StateChange` | A workflow was killed, paused, or resumed |
-| `PolicyInvalidated` | A policy in your workspace changed; cached decisions must be re-evaluated |
-| `KeyRotated` | An API key was rotated; cached auth state must be refreshed |
+| `StateChange` | A workflow was killed, paused, or resumed (requires `Ack` for pause/kill) |
+| `PolicyInvalidated` | A policy in your workspace changed (saved via the dashboard); cached decisions must be re-evaluated |
+| `KeyRotated` | The HMAC secret for an API key was rotated; cached auth state must be refreshed |
+| `Subscribed` | Subscription confirmation (sent after the SDK subscribes) |
 | `ResyncRequired` | Server asks the client to drop local state and re-fetch |
 | `Error` | Protocol error |
 | `Pong` | Heartbeat reply |
@@ -41,8 +42,7 @@ Client → server:
 
 | Type | When |
 | --- | --- |
-| `Subscribed` | After receiving `InitialState`, ack the subscription |
-| `Ack` | Generic ack for any server message that requires one |
+| `Ack` | Generic ack for any server message that requires one (carries `message_id` for `StateChange`) |
 
 ## How the SDK reacts
 
@@ -61,22 +61,40 @@ defines which events are recoverable vs terminal.
 
 The dashboard's **Workflows → `<workflow_id>` → Actions** panel sends
 `StateChange` messages. `PolicyInvalidated` is sent automatically when
-a policy is saved. `KeyRotated` is sent when `DELETE
-/api/v1/orgs/{org_id}/api-keys/{key_id}` succeeds.
+a policy is saved (via the `event_bus::WorkflowEventPayload::PolicyInvalidated`
+broadcast). `KeyRotated` is sent when an API key's HMAC secret is
+rotated (via `POST /api/v1/orgs/{org_id}/api-keys/{key_id}/rotate`,
+**not** on key revocation/delete).
 
 ## When the WebSocket is down
 
-If the connection drops, the SDK falls back to polling: every
-`@protect` call invokes `check_control_plane` synchronously against
-`/api/v1/orgs/{org_id}/status`. This is slower (a few hundred ms per
-gate call) but correct — kills and pauses still land.
+The SDK supports two transport modes for the control plane
+(selected via `NULLRUN_TRANSPORT`):
 
-To disable the WebSocket path entirely (test / air-gapped setups),
-construct the runtime directly with `polling=False`:
+- `ws` (default) — WebSocket push to `/ws/control/{org_id}`.
+  Sub-second kill/pause propagation. On disconnect the SDK
+  reconnects with exponential backoff inside
+  `NullRunRuntime._ws_connect_and_serve()`.
+- `http` — 1-second polling fallback (`NullRunRuntime._poll_commands`).
+  Each poll round fetches per-workflow state from
+  `GET /api/v1/orgs/{org_id}/workflows/{workflow_id}` (not
+  `/status` — that route is the legacy pre-Phase-139 path that no
+  longer exists). Use this in environments where the WS endpoint is
+  blocked.
+
+`check_control_plane` (called on every `@protect` gate entry) merges
+the local cached remote state with whatever the transport last
+delivered. A WS push and a `@protect` call can run concurrently —
+both go through the `_remote_state_for` / `_set_remote_state` helpers
+that hold `_states_lock`, so a kill that arrives between two gate
+calls lands before the next call (no lost state window).
+
+To force the HTTP-poll path without the env var (test / air-gapped
+setups), construct the runtime directly with `polling=False`:
 
 ```python
 from nullrun.runtime import NullRunRuntime
-rt = NullRunRuntime(api_key="nr_live_...", polling=False)   # poll-only
+rt = NullRunRuntime(api_key="nr_live_...", polling=False)   # WS-disabled
 ```
 
 This is an internal/test-only knob, not a public env var.

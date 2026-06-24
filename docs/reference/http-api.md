@@ -30,9 +30,13 @@ All SDK-traffic endpoints (`/track`, `/track/batch`, `/gate`,
 | `X-Workflow-Id` *(optional)* | binds the call to a workflow context |
 
 The SDK computes and signs every request automatically once
-`NULLRUN_API_KEY` and `NULLRUN_SECRET_KEY` are set. When
-`NULLRUN_HMAC_REQUIRED=true` (the production default), unsigned SDK
-requests are rejected with 401.
+`NULLRUN_API_KEY` and `NULLRUN_SECRET_KEY` are set. The gateway
+default for `NULLRUN_HMAC_REQUIRED` is `false` for backward
+compatibility — operators must set it explicitly to `true` in
+production (see `backend/src/config.rs::HmacConfig::from_env`). When
+`NULLRUN_HMAC_REQUIRED=true`, unsigned SDK requests are rejected
+with 401 and the SDK-auth middleware emits a per-request WARN so the
+gap is visible in logs.
 
 > SDK requests to `/api/v1/orgs/{org_id}/*` are also checked for
 > org-mismatch: the org claimed in the URL must match the org the
@@ -88,10 +92,13 @@ documents every field.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/api/v1/orgs/{org_id}/policies` | Create |
-| `GET` | `/api/v1/orgs/{org_id}/policies` | List |
-| `GET` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | One policy |
+| `GET` | `/api/v1/orgs/{org_id}/policies` | List (a single policy is not addressable by id — read it from the list response) |
 | `PATCH` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | Update |
 | `DELETE` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | Delete |
+| `POST` | `/api/v1/policies/toggle` | Toggle a policy active/inactive (dashboard PATCH 404 fix) |
+| `GET` | `/api/v1/orgs/{org_id}/policies/templates` | List policy templates |
+| `POST` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}/enable` | Enable a template |
+| `DELETE` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}` | Disable a template |
 
 First-match-wins composition — see ADR-007.
 
@@ -110,13 +117,21 @@ First-match-wins composition — see ADR-007.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET/PATCH` | `/api/v1/orgs/{org_id}` | Org settings |
+| `GET/PATCH/DELETE` | `/api/v1/orgs/{org_id}` | Org settings, update, delete |
 | `GET` | `/api/v1/orgs/{org_id}/api-keys` | List keys |
 | `POST` | `/api/v1/orgs/{org_id}/api-keys` | Mint key |
 | `DELETE` | `/api/v1/orgs/{org_id}/api-keys/{key_id}` | Revoke key |
+| `POST` | `/api/v1/orgs/{org_id}/api-keys/{key_id}/rotate` | Rotate the HMAC secret in place |
+| `GET` | `/api/v1/workflows/{workflow_id}/api-keys` | Per-workflow key listing |
 | `GET` | `/api/v1/orgs/{org_id}/members` | Members |
+| `PATCH` | `/api/v1/orgs/{org_id}/members/{member_id}` | Update member role |
+| `DELETE` | `/api/v1/orgs/{org_id}/members/{member_id}` | Remove member |
 | `POST` | `/api/v1/orgs/{org_id}/invites` | Invite |
-| `DELETE` | `/api/v1/orgs/{org_id}/members/{member_id}` | Remove |
+| `DELETE` | `/api/v1/orgs/{org_id}/invites/{invite_id}` | Revoke invite |
+| `POST` | `/api/v1/orgs/{org_id}/invites/{invite_id}/resend` | Resend invite email |
+| `GET` | `/api/v1/invites/{token}` | Public invite info |
+| `POST` | `/api/v1/invites/{token}/accept` | Public invite accept |
+| `POST` | `/api/v1/invites/{token}/decline` | Public invite decline |
 
 ## Alerts
 
@@ -129,9 +144,18 @@ First-match-wins composition — see ADR-007.
 
 ## Health
 
+Health endpoints are registered on the gateway's top-level router
+(`backend/src/observability/health.rs`) — they are **not** under
+`/api/v1`. They return `200 OK` when healthy, `503` otherwise, with
+a JSON body listing each dependency's status.
+
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/v1/health` | Liveness — `200 OK` if the gateway can reach Postgres + Redis |
+| `GET` | `/health` | Alias for `/health/live` |
+| `GET` | `/healthz` | Alias for `/health/live` (Kubernetes convention) |
+| `GET` | `/health/live` | Liveness — process is up and accepting connections |
+| `GET` | `/health/ready` | Readiness — Postgres + Redis reachable |
+| `GET` | `/health/startup` | Startup — `200` after migrations complete, `503` while booting |
 
 ## WebSocket control plane
 

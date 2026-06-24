@@ -7,18 +7,21 @@ budget is exceeded, the workflow is halted and the agent stops.
 
 Three endpoints work together:
 
-1. **Pre-flight `/api/v1/check`** — on every `@protect`-wrapped call,
+1. **Pre-flight `/api/v1/gate`** — on every `@protect`-wrapped call,
    the SDK asks the gateway "is there any budget left?" with `tokens=1`.
    This is a **binary** pre-flight, not a cost prediction. If the
    workflow has already exceeded its budget, the call is rejected
-   *before* it runs.
+   *before* it runs. (The legacy `/api/v1/check` endpoint still
+   exists for backward compatibility — new code uses `/gate` per
+   `Transport.check()` in `src/nullrun/transport.py`.)
 
 2. **Reservation `/api/v1/execute`** — synchronously evaluates the
    gate (budget + policy + sensitive tool rules) and **reserves** the
    projected cost. Returns a reservation token. If the budget can't
    accommodate the projected cost, the gateway returns
-   `unprocessable` (HTTP 422) and the SDK raises
-   `NullRunBlockedException`. The call is blocked before it runs.
+   `validation_error` / `plan_limit_exceeded` (HTTP 422) and the SDK
+   raises `NullRunBlockedException` (or `NullRunBudgetError` for the
+   budget case). The call is blocked before it runs.
 
 3. **`/api/v1/track` after the fact** — when the call completes, the
    SDK reports the actual cost. The gateway either **commits** the

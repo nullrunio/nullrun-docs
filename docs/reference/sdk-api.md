@@ -29,6 +29,7 @@ from nullrun import init, protect, workflow, span, agent, track_llm, track_tool,
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. |
 | `span(name=None)` | Context manager for nested trace spans. |
 | `agent(name=None)` | Context manager for agent identity. |
+| `on_error(hook)` | Register a global error hook (Layer 2 of "give the user a chance"). Called for every structured SDK failure (subclasses of `NullRunError`) BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Does NOT fire for `WorkflowKilledInterrupt` (BaseException — kill is a non-recoverable signal). Returns an idempotent unregister callable. |
 | `track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` | Manual escape hatch for non-HTTP LLM calls. |
 | `track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool-call tracking. |
 | `track_event(event_type, **kwargs)` | Catch-all for custom events. |
@@ -38,22 +39,42 @@ backend's response (`{"allowed": bool, "actions": [...], ...}`); they
 buffer into the event batch and flush on the next `@protect` call or
 `flush_interval_ms`.
 
+The curated public surface in `dir(nullrun)` is the six core symbols
+above plus `on_error`, plus the structured exception names
+`NullRunError`, `NullRunAuthError`, `NullRunConfigError`,
+`NullRunBackendError`, `NullRunBudgetError`, `NullRunToolBlockedError`,
+and `WorkflowKilledInterrupt` (the kill signal). The legacy names
+(`WorkflowPausedException`, `WorkflowKilledException`,
+`NullRunAuthenticationError`, `NullRunBlockedException`) remain
+importable via `from nullrun import X` for backward compatibility
+but no longer appear in `dir(nullrun)`.
+
 ## Exceptions
 
-All raised from `nullrun.breaker.exceptions`:
+All raised from `nullrun.breaker.exceptions`. Every public SDK
+exception inherits from `NullRunError` and carries four structured
+fields: `error_code` (e.g. `"NR-B004"`), `user_action` (imperative
+hint), `retryable` (bool), `docs_url`. See
+[Errors](errors.md#sdk-exception-hierarchy-python) for the full
+hierarchy diagram.
 
 | Class | When | Notes |
 | --- | --- | --- |
-| `BreakerError` | Base for all SDK errors | Subclass of `Exception` |
-| `NullRunAuthenticationError` | Missing / invalid `X-API-Key`, bad HMAC | 401 / 403 |
-| `NullRunTransportError` | Gateway unreachable | Carries `.source` (`NETWORK_ERROR` / `GATEWAY_ERROR` / `BREAKER_OPEN` / `AUTH_ERROR`) and `.endpoint` |
-| `RateLimitError` | HTTP 429 | Subclass of `NullRunTransportError`; carries `.retry_after`, `.upgrade_url` |
-| `BreakerTransportError` | Transport misconfiguration | Subclass of `BreakerError` |
-| `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError` |
-| `NullRunBlockedException` | Generic policy block | Inspect `.message`, `.details`, `.tool_name` |
-| `WorkflowPausedException` | Paused via control plane | Resume via WS / API, then retry |
-| `WorkflowKilledException` | Killed via control plane | Base class (emits `DeprecationWarning` on construction) |
-| `WorkflowKilledInterrupt` | Kill arrived mid-call | **Subclass of `BaseException`** — catch before `except Exception` |
+| `NullRunError` | Structured base for every user-facing SDK exception | Inherits `BreakerError` |
+| `NullRunConfigError` | SDK misconfigured (e.g. missing `api_key`) | `error_code="NR-C000"`-family. Never retryable. |
+| `NullRunAuthenticationError` | Missing / invalid `X-API-Key`, bad HMAC | 401 / 403. Carries `.message` for backward compat. |
+| `NullRunAuthError` | 401 specifically (key rejected) | Subclass of `NullRunAuthenticationError` (`NR-A003`). |
+| `NullRunTransportError` | Gateway unreachable | Carries `.source` (`NETWORK_ERROR` / `GATEWAY_ERROR` / `BREAKER_OPEN` / `AUTH_ERROR`) and `.endpoint`. Retryable. |
+| `NullRunBackendError` | 5xx from the gateway | Subclass of `NullRunTransportError`. `NR-B002`. Retryable. |
+| `RateLimitError` | HTTP 429 | Subclass of `NullRunTransportError`. Carries `.retry_after`, `.upgrade_url`, `.body`. `NR-R001`. Retryable. |
+| `NullRunBlockedException` | Generic policy block | Inspect `.workflow_id`, `.reason`, `.action`, `.tool_name`, `.details`. **No** `.message` — use `str(exc)`. `NR-X001`. |
+| `NullRunBudgetError` | Budget exhausted | Subclass of `NullRunBlockedException`. `NR-B004`. |
+| `NullRunToolBlockedError` | Tool in block list | Subclass of `NullRunBlockedException`. `NR-T001`. Carries `.tool_name`. |
+| `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
+| `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
+| `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunError`. `NR-W003`. Carries `.workflow_id`, `.reason`, `.resume_after`. |
+| `WorkflowKilledException` | Killed via control plane (parent) | **BaseException**, not `Exception`. Emits `DeprecationWarning` on construction. |
+| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `WorkflowKilledException`. **BaseException** per the kill contract — catch before `except Exception`. |
 
 Removed in 0.4.0: `CostLimitExceeded`, `ApprovalRequired`,
 `BreakerTimeout`, `LoopDetectedException`, `RetryStormException`,
@@ -71,7 +92,11 @@ from nullrun import WorkflowKilledInterrupt, init, protect, workflow
 # older re-exports (CostLimitExceeded, ApprovalRequired, BreakerTimeout,
 # LoopDetectedException, RetryStormException, RateLimitExceededException)
 # were removed in SDK 0.4.0 and are no longer reachable under any path.
-from nullrun.breaker.exceptions import NullRunBlockedException
+from nullrun.breaker.exceptions import (
+    NullRunBlockedException,
+    RateLimitError,
+    WorkflowPausedException,
+)
 
 init(api_key="nr_live_...")
 
@@ -83,12 +108,22 @@ with workflow("my-agent"):
     try:
         step()
     except WorkflowKilledInterrupt:
-        raise                    # kill contract — re-raise if you can't resume
+        raise                    # kill contract — BaseException, not Exception
+    except WorkflowPausedException:
+        raise                    # paused — resume via WS / API, then retry
     except NullRunBlockedException as exc:
         ...                      # budget / loop / retry / sensitive
-    except nullrun.breaker.exceptions.RateLimitError as exc:
+    except RateLimitError as exc:
         time.sleep(exc.retry_after)
 ```
+
+For global observability (Sentry, OpenTelemetry, structured logs),
+register a hook with `nullrun.on_error(...)` instead of wrapping every
+call site. The hook fires for every `NullRunError` subclass BEFORE the
+exception propagates, with the `ErrorContext` describing where the
+failure fired (`stage`, `workflow_id`, `tool_name`, `api_key_prefix`).
+Hook exceptions are caught and DEBUG-logged — a misbehaving hook
+cannot break the SDK.
 
 ## See also
 

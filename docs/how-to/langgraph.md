@@ -51,8 +51,14 @@ from nullrun.toolbox.langgraph import wrapper
 app = wrapper(graph.compile())
 ```
 
-This is preferred over `NullRunCallback()` because it also wires the
-control-plane kill/pause subscription for the wrapped graph.
+`wrapper` wraps the compiled app's `.invoke` and `.stream` methods
+to inject a `NullRunCallback` into the LangChain `config["callbacks"]`
+list per call. The control-plane kill/pause subscription is
+**independent** — it's started automatically by `init()` via
+`NullRunRuntime._start_remote_polling()` (or
+`_start_ws_listener()`), and works for every `@protect` call in
+the process regardless of whether you used `wrapper()` or
+`patch_langgraph_compiled` (the auto-instrumentation path above).
 
 ## See also
 
