@@ -1,0 +1,42 @@
+{#-
+  Override of Material's main.html.
+
+  Changes from upstream:
+   - Adds a `<meta name="theme-color">` so the browser tab / address
+     bar picks up the brand cream (#FBFAF4) instead of Material's
+     default navy. Without this, mobile Safari and Chrome tint
+     the chrome around the page with the wrong color.
+   - Injects extra `<meta property="og:*">` tags beyond what
+     `theme.social_cards` generates — these are page-agnostic
+     (image / twitter:card fallbacks) and don't depend on per-page
+     front-matter.
+   - Drops the upstream `extrahead` content unchanged (kept the
+     block so future site-wide <script> or <link> injections
+     stay diffable).
+
+  Template hierarchy: this file extends Material's `main.html`
+  via Jinja2, which itself extends Material's `base.html`. We
+  override the `block extrahead` slot. Every other block inherits
+  unchanged from the upstream theme.
+-#}
+{% extends "base.html" %}
+
+{# Brand chrome color — cream so mobile Safari/Chrome tint the
+   address bar / tab strip in the brand surface. Without this
+   they fall back to Material's navy primary. #}
+<meta name="theme-color" content="#FBFAF4">
+<meta name="theme-color" content="#0E0E0C" media="(prefers-color-scheme: dark)">
+
+{# Block override: keep upstream content, then append our social
+   fallbacks. `theme.social_cards` already emits og:image /
+   twitter:image when configured; the block below adds image
+   dimensions and a twitter:card type so Slack / Twitter / Discord
+   don't render a tiny preview. #}
+{% block extrahead %}
+  {{ super() }}
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="NullRun — enforcement gateway for AI agents">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image:alt" content="NullRun — enforcement gateway for AI agents">
+{% endblock %}

@@ -4,16 +4,42 @@ site_url: https://docs.nullrun.io
 repo_url: https://github.com/nullrunio/nullrun-docs
 repo_name: nullrunio/nullrun-docs
 
+# Brand assets live in docs/assets/images/. Mkdocs copies the entire
+# docs/assets/ tree to site/assets/ at build time, so image links
+# (`![alt](assets/images/foo.png)`) work without explicit registration.
+extra_css:
+  - stylesheets/extra.css
+extra_javascript:
+  - javascripts/extra.js
+
+# Tier 3: Material template overrides (home.html + main.html).
+# `home.html` replaces the default index layout with a custom hero +
+# Mermaid architecture diagram + screenshot + CTA row.
+# `main.html` extends base.html to inject OG / Twitter social-card
+# metadata + the announcement banner slot.
 theme:
   name: material
+  custom_dir: overrides
+  language: en
+  logo: assets/images/logo.svg
+  favicon: assets/images/favicon.png
   palette:
-    - scheme: default
-      primary: indigo
+    # Brand is monochrome (cream + near-black); `primary: black`
+    # keeps Material links/accents in family with the frontend's
+    # --fg-default (#1A1A18). The cream/dark page surface itself
+    # is painted by extra.css (Material exposes the CSS vars via
+    # --md-primary-fg-color / --md-default-bg-color).
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: grey
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
-    - scheme: slate
-      primary: indigo
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: white
+      accent: grey
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -21,8 +47,22 @@ theme:
     - navigation.tabs
     - navigation.sections
     - navigation.expand
+    - navigation.top
+    - navigation.indexes
     - search.suggest
+    - search.highlight
     - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+    # Tier 2 banner — set via `extra.announcement` block below.
+    - announce.dismiss
+  # Open Graph / Twitter card preview when a doc URL is pasted into
+  # Slack / Twitter / Discord. `image` is the global fallback; per-page
+  # overrides via `image:` front-matter on any Markdown file.
+  social_cards:
+    enabled: true
+    image: assets/images/og-image.svg
 
 nav:
   - Home: index.md
@@ -47,11 +87,58 @@ nav:
       - Error codes: reference/errors.md
   - Troubleshooting: troubleshooting.md
 
+# Tier 2 announcement — rendered as a dismissible top-of-page bar by
+# the `announce.dismiss` Material feature. Empty / unset hides it.
+extra:
+  announcement: |
+    <strong>Plan rebalance 2026-06-24</strong> — Lite/Starter/Growth/Scale caps
+    were rebalanced and overage billing was disabled on every tier.
+    See the <a href="/#plans">Plans table</a> for the new numbers.
+
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/nullrunio/nullrun-docs
+      name: GitHub
+    - icon: fontawesome/solid/book
+      link: https://docs.nullrun.io
+      name: Documentation
+
+# Markdown extensions — every one of these is load-bearing for the
+# docs surface below. Don't remove without checking the pages.
 markdown_extensions:
   - admonition
-  - pymdownx.details
-  - pymdownx.superfences
-  - pymdownx.tabbed:
-      alternate_style: true
+  - attr_list                  # {.class} / {key="value"} on images/links
+  - md_in_html                 # parse Markdown inside <div> blocks
+  - meta                       # front-matter (used by home.html + social cards)
+  - tables
   - toc:
       permalink: true
+  - pymdownx.details
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      # Tier 1: inline architecture diagrams render in-browser via
+      # the bundled Mermaid runtime (no server roundtrip). Used by
+      # index.md and concepts/control-plane.md.
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      check_paths: true
+
+plugins:
+  # Built-in search is sufficient for the doc size. If we later need
+  # API reference indexing or cross-repo search, swap in mkdocs-material[full]
+  # and add `plugins: [search, gen-files]` here.
+  - search

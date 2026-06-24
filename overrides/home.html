@@ -1,0 +1,158 @@
+{#-
+  Override of Material's home.html — replaces the default landing
+  page (index.md) with a brand-styled hero + architecture diagram +
+  feature grid + CTAs.
+
+  Inheritance: extends `main.html`, which extends Material's
+  `base.html`. We override `block hero` to inject the custom hero
+  block (defined in this file) and `block content` to add the
+  sections below the hero.
+
+  The hero, sections, and feature grid use CSS classes from
+  `docs/stylesheets/extra.css` (.nr-hero, .nr-section, .nr-features,
+  .nr-feature, .nr-hero__cta, etc.) — those classes are not in
+  Material's defaults, so extra.css is required for the page to
+  look right.
+-#}
+{% extends "main.html" %}
+
+{# Brand hero — title, subtitle, screenshot, CTA buttons. #}
+{% block hero %}
+<section class="nr-hero md-grid md-typeset">
+  <div>
+    <h1 class="nr-hero__title">Enforcement for AI agents</h1>
+    <p class="nr-hero__subtitle">
+      Circuit-breakers, budget gates, and sensitive-tool blocks
+      for every LLM call your agent makes — without rewriting your
+      code.
+    </p>
+    <div class="nr-hero__cta">
+      <a class="primary" href="getting-started/quickstart/">Get started →</a>
+      <a class="secondary" href="https://nullrun.io">Get an API key</a>
+      <a class="secondary" href="concepts/circuit-breaker/">How the breaker works</a>
+    </div>
+  </div>
+  <div>
+    <a href="assets/images/screenshots/dashboard.png" target="_blank" rel="noopener">
+      <img class="nr-hero__screenshot"
+           src="assets/images/screenshots/dashboard.png"
+           alt="NullRun dashboard screenshot showing the workflow control panel">
+    </a>
+  </div>
+</section>
+{% endblock %}
+
+{# Below-the-fold content — sits in place of the default
+   `index.md` rendering. We don't render the markdown body of
+   `index.md`; the home page is fully HTML here so we can pin
+   every section. The markdown index.md is still useful as a
+   long-form page if we later drop the override (the file
+   remains, just hidden). #}
+{% block content %}
+<section class="nr-section md-grid md-typeset">
+  <h2 class="nr-section__title">How it fits together</h2>
+  <div class="mermaid">
+flowchart LR
+  Agent["Your agent<br/>(Python SDK)"] -->|"@protect"| Gate
+  Gate -->|"budget pre-flight<br/>policy fetch"| Gateway["NullRun gateway"]
+  Gateway -->|"plan limit<br/>rate limit<br/>sensitive tool check"| Decision{"allow?"}
+  Decision -->|"yes"| Body["wrapped function runs"]
+  Decision -->|"no"| Block["raise NullRunBlockedException"]
+  Gateway -.->|"control plane<br/>(WebSocket)"| Kill["kill / pause<br/>from dashboard"]
+  </div>
+</section>
+
+<section class="nr-section md-grid md-typeset">
+  <h2 class="nr-section__title">What you get out of the box</h2>
+  <div class="nr-features">
+    <div class="nr-feature">
+      <div class="nr-feature__icon">⏱</div>
+      <div class="nr-feature__title">Budget gate</div>
+      <div class="nr-feature__body">
+        Set a per-workflow cap in cents. The SDK asks the gateway
+        "any budget left?" before every <code>@protect</code>
+        call — no round-trip cost when the answer is "yes".
+      </div>
+    </div>
+    <div class="nr-feature">
+      <div class="nr-feature__icon">🛑</div>
+      <div class="nr-feature__title">Circuit breaker</div>
+      <div class="nr-feature__body">
+        Auto-halt on runaway loops, retry storms, and budget
+        blowups. Defaults to <code>PERMISSIVE</code> on outage
+        for non-sensitive tools — sensitive tools always fail
+        closed.
+      </div>
+    </div>
+    <div class="nr-feature">
+      <div class="nr-feature__icon">🛰</div>
+      <div class="nr-feature__title">Real-time kill / pause</div>
+      <div class="nr-feature__body">
+        A WebSocket control plane pushes KILL and PAUSE to every
+        connected SDK in milliseconds. <code>WorkflowKilledInterrupt</code>
+        is a <code>BaseException</code> so it reaches the top
+        of the agent loop, not a swallowed <code>except Exception</code>.
+      </div>
+    </div>
+    <div class="nr-feature">
+      <div class="nr-feature__icon">🔐</div>
+      <div class="nr-feature__title">Sensitive-tool guard</div>
+      <div class="nr-feature__body">
+        Mark any function <code>@sensitive</code> and it must
+        pass the gateway's pre-execution check before the body
+        runs. Stripe charges, email sends, file deletes — all
+        gate-able.
+      </div>
+    </div>
+    <div class="nr-feature">
+      <div class="nr-feature__icon">🔁</div>
+      <div class="nr-feature__title">Auto-instrumentation</div>
+      <div class="nr-feature__body">
+        <code>nullrun.init()</code> patches OpenAI, Anthropic,
+        LangGraph, OpenAI Agents, Mistral, Gemini, Cohere, Bedrock,
+        LlamaIndex, CrewAI, and AutoGen — cost tracking without
+        <code>@protect</code>.
+      </div>
+    </div>
+    <div class="nr-feature">
+      <div class="nr-feature__icon">📜</div>
+      <div class="nr-feature__title">Decision history</div>
+      <div class="nr-feature__body">
+        Every gate decision (allow / block / flag / require-approval)
+        is logged with the policy version, the projected cost,
+        and the call context — auditable for SOC 2 and HIPAA
+        workflows.
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="nr-section md-grid md-typeset">
+  <h2 class="nr-section__title">Wire it up in 30 lines</h2>
+  <div class="mermaid">
+sequenceDiagram
+  participant U as Your code
+  participant SDK as nullrun SDK
+  participant G as NullRun gateway
+  participant DB as Dashboard
+
+  U->>SDK: from nullrun import init, protect
+  U->>SDK: init(api_key="nr_live_...")
+  Note over SDK: fetches HMAC secret via /auth/verify
+
+  U->>SDK: with workflow("user-123"):<br/>  @protect<br/>  def step(): ...
+
+  loop every @protect call
+    U->>SDK: step()
+    SDK->>G: POST /api/v1/gate (tokens=1)
+    G-->>SDK: {decision: "allow"}
+    SDK->>SDK: run wrapped function
+    SDK->>G: POST /api/v1/track (actual cost)
+  end
+
+  DB->>G: operator clicks Kill
+  G-->>SDK: WS push: StateChange(killed)
+  SDK->>U: raise WorkflowKilledInterrupt
+  </div>
+</section>
+{% endblock %}
