@@ -39,4 +39,15 @@
   <meta property="og:image:alt" content="NullRun — enforcement gateway for AI agents">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image:alt" content="NullRun — enforcement gateway for AI agents">
+  {# Material injects an inline `:root{--md-text-font: "Roboto"; ...}`
+     in <head> after our external stylesheet to defeat FOUC, which
+     would otherwise stomp our brand Inter / JetBrains-Mono stack.
+     Re-declare the variables here so they win by cascade order
+     (this <style> block appears after Material's inline style). #}
+  <style>
+    :root {
+      --md-text-font: "Inter", "Helvetica Neue", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      --md-code-font: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+    }
+  </style>
 {% endblock %}

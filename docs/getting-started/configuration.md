@@ -66,20 +66,6 @@ rt = NullRunRuntime(api_key=..., polling=False)   # poll-only mode
 See `nullrun.__init__` for the rationale ("an internal/test-only
 knob").
 
-## gRPC transport — frozen
-
-The gRPC transport exists as an internal scaffold (see
-`backend/src/proxy/grpc/`) but is **not available to SDK or dashboard
-clients**:
-
-- `grpc-server` reflection is behind a feature flag.
-- Production builds fail-fast if the gRPC listener is enabled.
-- No SDK generates a gRPC client; the public surface is HTTP only.
-
-If you need lower-latency SDK transport, monitor the changelog — the
-frozen status is a deliberate "do not adopt" signal until HMAC parity,
-proto extensions, and cost-pipeline parity are proven.
-
 ## See also
 
 - [HTTP API](../reference/http-api.md)

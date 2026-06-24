@@ -79,7 +79,18 @@ nav:
   - How-to:
       - Protect a LangGraph agent: how-to/langgraph.md
       - Use with OpenAI Agents: how-to/openai-agents.md
-      - Use with Anthropic, Mistral, Gemini, Cohere, Bedrock: how-to/auto-instrumented-frameworks.md
+      - LLM frameworks:
+          - Auto-instrumentation overview: how-to/auto-instrumented-frameworks.md
+          - Anthropic: how-to/anthropic.md
+          - Mistral: how-to/mistral.md
+          - Gemini (Google GenAI): how-to/gemini.md
+          - Cohere: how-to/cohere.md
+          - AWS Bedrock: how-to/bedrock.md
+          - LangChain: how-to/langchain.md
+          - LlamaIndex: how-to/llama-index.md
+          - CrewAI: how-to/crewai.md
+          - AutoGen: how-to/autogen.md
+          - Raw openai SDK: how-to/raw-openai.md
       - Set a hard cost cap: how-to/cost-cap.md
   - Reference:
       - SDK API: reference/sdk-api.md
