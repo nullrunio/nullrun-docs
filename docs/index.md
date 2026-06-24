@@ -70,7 +70,7 @@ Overage billing is **disabled on every tier** (migration 170,
 2026-06-24). Growth previously allowed overage at 1.5× and Enterprise
 at contract pricing — both flipped to hard caps until the
 metered-overage model is finalized. If you hit a cap, the gateway
-returns 422 `plan_limit_exceeded` (see [Error codes](docs/reference/errors.md)).
+returns 422 `plan_limit_exceeded` (see [Error codes](reference/errors.md)).
 
 > If the database is unreachable, the gateway falls back to the
 > in-code Phase 136 rebalance (75K / 250K / 500K / 1M / unlimited
