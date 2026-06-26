@@ -446,6 +446,64 @@
   color: #6B6A63;                    /* fg-muted — operators / punctuation */
 }
 
+/* Dark scheme Python syntax — same set of Pygments classes, but
+   soft PASTEL colors that pop on the dark `#0A0A08` body. The
+   light-mode rules above use deep brand state colors; the dark
+   counterparts use their `state-allow` light / `state-flag` light
+   variants (--nr-* already defined in the slate block) so the
+   brand identity carries across schemes. */
+[data-md-color-scheme="slate"] .md-typeset .kn,
+[data-md-color-scheme="slate"] .md-typeset .kc,
+[data-md-color-scheme="slate"] .md-typeset .kp,
+[data-md-color-scheme="slate"] .md-typeset .kr,
+[data-md-color-scheme="slate"] .md-typeset .kt {
+  color: #C5A8E8;                    /* soft lilac — keywords */
+}
+[data-md-color-scheme="slate"] .md-typeset .n,
+[data-md-color-scheme="slate"] .md-typeset .nc,
+[data-md-color-scheme="slate"] .md-typeset .ne,
+[data-md-color-scheme="slate"] .md-typeset .nf,
+[data-md-color-scheme="slate"] .md-typeset .nn,
+[data-md-color-scheme="slate"] .md-typeset .nx,
+[data-md-color-scheme="slate"] .md-typeset .py {
+  color: #EDEBE0;                    /* cream — base identifier */
+}
+[data-md-color-scheme="slate"] .md-typeset .s,
+[data-md-color-scheme="slate"] .md-typeset .s1,
+[data-md-color-scheme="slate"] .md-typeset .s2,
+[data-md-color-scheme="slate"] .md-typeset .sb,
+[data-md-color-scheme="slate"] .md-typeset .sc,
+[data-md-color-scheme="slate"] .md-typeset .sd,
+[data-md-color-scheme="slate"] .md-typeset .se,
+[data-md-color-scheme="slate"] .md-typeset .sh,
+[data-md-color-scheme="slate"] .md-typeset .si,
+[data-md-color-scheme="slate"] .md-typeset .sx {
+  color: #A8C97F;                    /* state-allow light — strings */
+}
+[data-md-color-scheme="slate"] .md-typeset .m,
+[data-md-color-scheme="slate"] .md-typeset .mb,
+[data-md-color-scheme="slate"] .md-typeset .mf,
+[data-md-color-scheme="slate"] .md-typeset .mh,
+[data-md-color-scheme="slate"] .md-typeset .mi,
+[data-md-color-scheme="slate"] .md-typeset .mo {
+  color: #E0A85F;                    /* state-flag light — numbers */
+}
+[data-md-color-scheme="slate"] .md-typeset .c,
+[data-md-color-scheme="slate"] .md-typeset .c1,
+[data-md-color-scheme="slate"] .md-typeset .ch,
+[data-md-color-scheme="slate"] .md-typeset .cm,
+[data-md-color-scheme="slate"] .md-typeset .cp,
+[data-md-color-scheme="slate"] .md-typeset .cpf,
+[data-md-color-scheme="slate"] .md-typeset .cs {
+  color: #5F5E58;                    /* fg-subtle dark — comments */
+  font-style: italic;
+}
+[data-md-color-scheme="slate"] .md-typeset .o,
+[data-md-color-scheme="slate"] .md-typeset .ow,
+[data-md-color-scheme="slate"] .md-typeset .p {
+  color: #9A9890;                    /* fg-muted dark — operators / punctuation */
+}
+
 /* ============================================================================
    Code blocks — TerminalWindow chrome (dashboard parity)
    ----------------------------------------------------------------------------
@@ -663,12 +721,17 @@
    the button's `color`).
 
    We pin the nav INTO the dark chrome strip above the code body.
-   Button surface: a SOLID cream pill (`#FBFAF4`) with the icon in
-   INK (`#1A1A18`) — fully inverted, so the dark-strip background,
-   the cream pill, and the dark icon all have unambiguous contrast
-   (≥ 12:1). Earlier tinted-cream-on-dark (12%, 20%) collapsed the
-   icon (cream) into the bg (cream) and the button became invisible
-   despite opacity:1. Solid colors fix it. */
+   Button surface: a SOLID cream pill with the icon in INK — fully
+   inverted, so the dark-strip background, the cream pill, and the
+   dark icon all have unambiguous contrast (≥ 12:1).
+
+   IMPORTANT: we use FIXED hex values here, NOT the brand tokens
+   `var(--nr-cream)` / `var(--nr-ink)`. In dark mode, both brand
+   tokens resolve to the same cream color (`#EDEBE0`) — using them
+   for bg + icon would make the button cream-on-cream (invisible).
+   Fixed hex values (`#FBFAF4` / `#1A1A18`) work in BOTH color
+   schemes: the cream pill is high-contrast on the dark strip in
+   both modes, and the dark icon is high-contrast on the cream pill. */
 .md-typeset .md-code__button {
   display: inline-flex;
   align-items: center;
@@ -681,9 +744,9 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--nr-ink);                 /* dark icon on cream pill */
-  background-color: var(--nr-cream);    /* solid cream pill */
-  border: 1px solid var(--nr-cream);
+  color: #1A1A18;                       /* dark icon — fixed, works in both modes */
+  background-color: #FBFAF4;            /* solid cream pill — fixed, high contrast on any dark strip */
+  border: 1px solid #FBFAF4;
   border-radius: var(--md-border-radius--sm);
   cursor: pointer;
   opacity: 1;
@@ -706,15 +769,17 @@
   z-index: 4;
 }
 
-/* On hover, swap the pill to ink-on-cream: button bg becomes ink,
-   icon becomes cream. Inverts the contrast, signals the click
-   affordance unambiguously. */
+/* On hover, invert: dark pill with cream icon. In light mode the
+   pill blends with the dark strip into a "pressed" look; in dark
+   mode the pill darkens further (toward the page bg) so the icon
+   pops. We use the brand's term-chrome (`#0E0E0C`) as the hover
+   pill in BOTH modes so the swap is consistent. */
 .md-typeset .highlight:hover .md-code__button,
 .md-typeset .md-code__button:hover,
 .md-typeset .md-code__button:focus-visible {
-  background-color: var(--nr-ink);
-  border-color: var(--nr-ink);
-  color: var(--nr-cream);
+  background-color: #0E0E0C;
+  border-color: #0E0E0C;
+  color: #FBFAF4;
 }
 
 /* Force the icon size — Material defaults to 1.2rem svg which clips. */
