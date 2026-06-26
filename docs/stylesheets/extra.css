@@ -322,6 +322,55 @@
 }
 
 /* ============================================================================
+   Python-specific code-block formatting
+   ----------------------------------------------------------------------------
+   Pygments emits language-specific CSS classes inside the `<code>` spans.
+   For fenced Python blocks the wrapper has `.language-python` (set by
+   Material), so we can scope per-language tweaks here. Inline code from
+   backticks does NOT carry a language marker — there's no CSS-only way to
+   tell whether a `<code>` fragment is Python, so the inline-code rules above
+   are language-agnostic.
+
+   What we style:
+     - REPL prompts (`>>>` / `...`, Pygments class `.gp`). Pygments only
+       emits `.gp` inside REPL transcripts, so it's safe to scope to
+       `.language-python`. Default Material mapping pushes these to
+       `--md-code-hl-generic-color` (muted gray) which makes the prompts
+       blend into the code. We lift them to a brand accent so the eye
+       reads "this line is the user typing" vs "this line is output".
+     - Decorators (`@protect`, `@sensitive`, class `.nd`). Default lilac
+       from `--md-code-hl-keyword-color` works but reads as another keyword.
+       Switch to `--nr-state-flag` (amber) so decorators stand apart from
+       language keywords (`def`, `class`, `return`).
+
+   Trade-off: keeping the rules language-scoped means we don't have to
+   maintain a per-language stylesheet — Python is the only language in
+   the docs that needs this treatment today.
+   ============================================================================ */
+.md-typeset .language-python .gp {
+  /* REPL prompts. Bold + brand-allow (green) — same accent as h3, so the
+     "go-ahead / interactive" semantic carries across the page. */
+  color: var(--nr-state-allow);
+  font-weight: 600;
+  user-select: none;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .language-python .gp {
+  color: var(--nr-state-allow);  /* --nr-state-allow is already light green in dark */
+}
+
+.md-typeset .language-python .nd {
+  /* Decorators. Brand-flag (amber) so they don't blend with `def`/`class`
+     keywords (lilac). @protect / @sensitive / @sentry_sdk.trace, etc. */
+  color: var(--nr-state-flag);
+  font-weight: 600;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .language-python .nd {
+  color: var(--nr-state-flag);
+}
+
+/* ============================================================================
    Code blocks — TerminalWindow chrome (dashboard parity)
    ----------------------------------------------------------------------------
    The anatomy we replicate from `components/ui/terminal-window.tsx`:
