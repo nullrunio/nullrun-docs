@@ -448,23 +448,38 @@
 }
 
 /* Filename tab — Django-style dark strip ABOVE the <pre>.
-   Replaces the old mac-terminal traffic-light dots. Background uses
-   --nr-term-chrome, NOT --nr-ink — --nr-ink flips cream in dark mode
-   and would make the strip + filename text both cream (invisible).
-   --nr-term-chrome stays near-black in both schemes (`#0E0E0C` light /
-   `#0A0A08` dark), so the strip is always a dark surface and the
-   cream filename label (--nr-cream, always light) is always readable.
+   Replaces the old mac-terminal traffic-light dots.
 
-   The Copy button is pinned to the right edge of this strip (see
-   `.md-code__button` block below); it also uses --nr-cream for the
-   same reason.
+   Color choice: the strip is INTENTIONALLY a shade lighter than the
+   code body so the two surfaces read as distinct visual layers
+   (Django uses #234f32 dark-green over #e0ffb8 pale-green — we use
+   `--nr-ink` over `--nr-term-chrome`). Without this contrast, the
+   strip and body collapse into one continuous dark block and the
+   filename label becomes invisible. `--nr-ink` flips cream in dark
+   mode, so the strip and body get the same logical contrast in both
+   schemes: strip is the brand "ink" surface, body is the deeper
+   "term-chrome" surface.
 
-   Material 9.x injects `<span class="filename">filename.py</span>` as
-   the FIRST CHILD of `.highlight` when the fenced block was authored
-   with `title="filename.py"`. The span paints the dark strip + the
-   filename text in one element; the Copy button nav (`<nav class="md-code__nav">`,
-   injected by Material's JS at runtime) is positioned absolutely over
-   the same strip via the `.md-code__nav` rule below. */
+   In light mode: strip = #1A1A18 (slightly lighter than #0E0E0C body).
+   In dark mode:  strip = #EDEBE0 (cream, on the dark page) — but the
+   CODE BODY is still #0A0A08 (term-chrome), so the strip pops.
+
+   Wait — that's not right. In dark mode, --nr-ink is cream (#EDEBE0)
+   which would make the strip cream-colored and the cream text
+   invisible. The trick is to use a DARKER shade in dark mode too.
+   The cleanest fix: use --md-default-bg-color--lighter (#1C1C1A light,
+   #262624 dark) which is the "elevated surface" token — one step
+   lighter than the page but always dark. That keeps the contrast in
+   both schemes. */
+
+:root,
+[data-md-color-scheme="default"] {
+  --nr-filename-strip: #1A1A18;
+}
+
+[data-md-color-scheme="slate"] {
+  --nr-filename-strip: #262624;
+}
 
 /* Filename strip — visible only when title="…" was set. */
 .md-typeset .highlight > .filename {
@@ -474,11 +489,16 @@
   height: 1.85rem;
   font-family: var(--md-code-font);
   font-size: 0.72rem;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--nr-cream);
-  background-color: var(--nr-term-chrome);
+  background-color: var(--nr-filename-strip);
+  border-bottom: 1px solid rgba(237, 235, 224, 0.10);
   border-radius: 0;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .highlight > .filename {
+  border-bottom-color: rgba(237, 235, 224, 0.06);
 }
 
 /* When the author didn't set `title="..."`, Material does NOT emit a
