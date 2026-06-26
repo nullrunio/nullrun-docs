@@ -472,6 +472,13 @@
    dotted underline gives the same visual weight without the chip
    breaking prose rhythm.
 
+   IMPORTANT: Material's default `.md-typeset code` rule sets
+   `background-color: var(--md-code-bg-color)` (near-black in light,
+   near-black in dark), `padding`, and `border-radius` — i.e. it
+   paints a dark chip behind every inline `<code>`. We must EXPLICITLY
+   reset those three properties, otherwise the chip wins by default
+   and inline code reads as "painted black on the page".
+
    Excluded contexts (no underline + monospace only, no pill):
      - code inside <pre>: pre has its own dark surface, pill would
        be invisible against the ink strip
@@ -482,6 +489,11 @@
   font-size: 0.86em;
   color: var(--md-default-fg-color);
   white-space: nowrap;
+  /* Reset Material's chip defaults so inline code doesn't render
+     as a black-filled rectangle on the cream page. */
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
 }
 
 /* Standalone inline code — monospace + dotted underline. */
