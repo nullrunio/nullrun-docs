@@ -32,8 +32,7 @@ never returned again — losing them means rotating the key.
 
 !!! warning "Plan quota"
     `plan_limits.api_keys_limit` caps how many keys an org can hold.
-    Creating one over the cap returns `429 plan_limit_exceeded`. See
-    the [Plans table](../index.md#plans) for per-plan numbers.
+    Creating one over the cap returns `429 plan_limit_exceeded`.
 
 ## Scopes
 

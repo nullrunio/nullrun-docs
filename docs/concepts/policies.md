@@ -19,8 +19,8 @@ Three policy types exist (`PolicyType` enum in
 | `ToolBlock` | Glob match on tool names — blocks / requires approval | `tool_pattern`, `blocked_tools`, or `tools` (array of strings ≤ 4096 bytes) |
 
 `RateLimit` and `BudgetLimit` are core controls available on every
-plan. `ToolBlock` requires the `CustomPolicies` entitlement
-(Growth+; see the [Plans table](../index.md#plans)).
+plan. `ToolBlock` requires the `CustomPolicies` entitlement (Growth
+and above).
 
 ### Per-policy fields outside `config`
 
