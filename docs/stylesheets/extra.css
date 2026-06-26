@@ -568,21 +568,29 @@
   background-color: transparent;
 }
 
-/* ── Copy button (Material's `content.code.copy`) ──────────────────
-   Material injects a `<button class="md-clipboard md-icon">` inside
-   .md-typeset .highlight. We pull it OUT of the body (where it floats
-   over the code by default) and pin it into the chrome bar's
-   top-right corner. The clipboard.js hook is preserved — we only
-   restyle + reposition, never remove.
+/* ── Copy button — Material `content.code.copy` (both APIs) ────────
+   Material renders the copy button in one of two DOM shapes depending
+   on theme version:
+     • OLD (< 9.x): `<button class="md-clipboard md-icon">` lives
+       inside `<pre>` and floats top-right by default.
+     • NEW (≥ 9.x): `<nav class="md-code__nav"><button class="md-code__button"></button></nav>`
+       lives inside `<pre>` (often BEFORE `<code>`), exposing a copy
+       affordance that is NOT styled by Material's defaults — without
+       intervention it sits inline in the pre, overlapping the first
+       line of code.
 
-   Colour uses --nr-cream (always light) because the button sits on
-   the dark filename strip (--nr-term-chrome). Using --md-default-fg-
-   color (which flips per theme) would make the button invisible on
-   the strip in either scheme. */
-.md-typeset .md-clipboard {
-  position: absolute;
-  top: 0.42rem;
-  right: 0.55rem;
+   Django docs don't have this problem because Sphinx doesn't ship a
+   per-block copy button at all. We borrow Material's button (and its
+   `data-md-state="done"` confirmation toggle) but pin it INTO the dark
+   chrome strip above the code body — same treatment as the rest of
+   the filename-bar chrome.
+
+   The selector list below covers BOTH APIs so theme upgrades don't
+   silently re-break this. `--nr-cream` (always light) keeps the
+   button readable on the dark `--nr-term-chrome` strip in both
+   light + dark schemes. */
+.md-typeset .md-clipboard,
+.md-typeset .md-code__button {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
@@ -600,19 +608,47 @@
   cursor: pointer;
   opacity: 0;
   transition: opacity 120ms ease, background-color 120ms ease, border-color 120ms ease;
-  z-index: 2;
+}
+
+/* OLD-API positioning — copy button is a direct child of `.highlight`
+   (or one of its descendants). Pin it to the chrome strip top-right. */
+.md-typeset .md-clipboard {
+  position: absolute;
+  top: 0.22rem;
+  right: 0.55rem;
+  z-index: 4;
+}
+
+/* NEW-API positioning — `<nav class="md-code__nav">` is the container,
+   `<button class="md-code__button">` is the actual control. Pull the
+   nav OUT of pre's flow (it sits at position 0 inside pre, which would
+   otherwise eat vertical space above the first code line) and pin it
+   to the chrome strip top-right corner. */
+.md-typeset .md-code__nav {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  height: 1.85rem;
+  padding: 0 0.55rem;
+  margin: 0;
+  z-index: 4;
 }
 
 /* Reveal on hover of the whole code block, with a subtle cream tint
    so the button reads as a clickable surface. */
 .md-typeset .highlight:hover .md-clipboard,
-.md-typeset .md-clipboard:focus-visible {
+.md-typeset .highlight:hover .md-code__button,
+.md-typeset .md-clipboard:focus-visible,
+.md-typeset .md-code__button:focus-visible {
   opacity: 1;
   background-color: rgba(237, 235, 224, 0.10);
 }
 
 /* Force the icon size — Material defaults to 1.2rem svg which clips. */
-.md-typeset .md-clipboard svg {
+.md-typeset .md-clipboard svg,
+.md-typeset .md-code__button svg {
   width: 0.85rem;
   height: 0.85rem;
   fill: currentColor;
@@ -626,8 +662,10 @@
   display: none !important;
 }
 
-/* After-click feedback — class is set by clipboard.js. */
-.md-typeset .md-clipboard[data-md-state="done"] {
+/* After-click feedback — `data-md-state="done"` is set by Material's
+   clipboard handler (both APIs use the same attribute). */
+.md-typeset .md-clipboard[data-md-state="done"],
+.md-typeset .md-code__button[data-md-state="done"] {
   opacity: 1;
   border-color: var(--nr-state-allow);
   color: var(--nr-state-allow);
