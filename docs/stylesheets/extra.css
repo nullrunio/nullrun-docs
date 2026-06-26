@@ -208,6 +208,40 @@
   border-bottom-color: rgba(237, 235, 224, 0.08);
 }
 
+/* ── h3 — colour-only differentiation from h2. Django paints h3 in
+   a muted brand colour so the eye lands on it as a subsection, not
+   a top-level section. We use --nr-state-allow (dark green) in
+   light and a lighter green in dark. The brand palette already
+   carries the "state-allow = OK / safe" semantic, so green reads
+   as "go deeper here" — not just a decorative choice. */
+.md-typeset h3 {
+  color: var(--nr-state-allow);
+}
+
+[data-md-color-scheme="slate"] .md-typeset h3 {
+  color: #7FB048;
+}
+
+/* ── Header permalinks (mkdocs.yml `toc.permalink: true`) ─────────
+   Django fades the ¶ in on hover (`opacity: 0 → 1`). Brand-faithful
+   variant: keep it visible at 0.25 by default, fade to 1 on hover
+   or focus. The ¶ glyph reads as a chain-link in our chosen font,
+   so we don't swap it for a custom icon. */
+.md-typeset .headerlink {
+  opacity: 0.25;
+  transition: opacity 120ms ease;
+  text-decoration: none;
+  font-family: var(--md-code-font);
+}
+
+.md-typeset h1:hover .headerlink,
+.md-typeset h2:hover .headerlink,
+.md-typeset h3:hover .headerlink,
+.md-typeset h4:hover .headerlink,
+.md-typeset .headerlink:focus {
+  opacity: 1;
+}
+
 .md-typeset a {
   text-decoration: underline;
   text-decoration-color: rgba(20, 20, 18, 0.25);
@@ -243,32 +277,52 @@
 /* ============================================================================
    Tables — dense list look (dashboard parity)
    ============================================================================ */
+/* ── Tables — Django-style: horizontal-only rules, no full border ─
+   Drops the 1px frame, thead uppercase, and ghost background. The
+   header row gets a 2px bottom border (Django's heavier rule) so
+   it reads as a visual anchor; body rows get 1px dividers; the
+   last row's bottom border is dropped. */
 .md-typeset table:not([class]) {
-  font-size: 0.74rem;
-  border: 1px solid var(--nr-ink-soft);
-  border-radius: var(--md-border-radius--sm);
+  font-size: 0.78rem;
+  border: none;
+  border-bottom: 2px solid var(--nr-ink-soft);
+  border-radius: 0;
   overflow: hidden;
 }
 
 [data-md-color-scheme="slate"] .md-typeset table:not([class]) {
-  border-color: rgba(237, 235, 224, 0.08);
+  border-bottom-color: rgba(237, 235, 224, 0.10);
 }
 
 .md-typeset table:not([class]) th {
-  background-color: var(--nr-ink-ghost);
+  background-color: transparent;
   font-weight: 600;
-  letter-spacing: 0.01em;
-  text-transform: uppercase;
-  font-size: 0.66rem;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 0.74rem;
+  color: var(--md-default-fg-color);
+  border-bottom: 2px solid var(--nr-ink-soft);
 }
 
 [data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
-  background-color: rgba(237, 235, 224, 0.04);
+  border-bottom-color: rgba(237, 235, 224, 0.12);
 }
 
 .md-typeset table:not([class]) td,
 .md-typeset table:not([class]) th {
-  padding: 0.55rem 0.8rem;
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--nr-ink-faint);
+}
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) td,
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
+  border-bottom-color: rgba(237, 235, 224, 0.05);
+}
+
+/* Drop the last row's bottom border — the table wrapper already
+   has its own 2px bottom rule (the "outer" anchor). */
+.md-typeset table:not([class]) tr:last-child td {
+  border-bottom: none;
 }
 
 /* ============================================================================
@@ -293,17 +347,26 @@
    brand pill. The original Material hook (clipboard.js) is preserved.
    ============================================================================ */
 
-/* Outer "metal frame" — dark border around the whole code surface. */
+/* ── Code-block wrapper — Django-style: borders only on top + bottom ──
+   Material renders the fenced code as `.highlight > pre > code` (or
+   `.highlight > .highlighttable` when line numbers are on). We keep
+   the top + bottom 1px rules for visual separation but drop the side
+   borders — Django does the same. The "frame" now comes from the
+   ink-coloured filename tab above + the dark body below. */
 .md-typeset .highlight,
 .md-typeset .highlighttable {
   position: relative;
   margin: 1.25rem 0;
-  border-radius: var(--md-border-radius);
-  /* No outer border here — the chrome bar + body provide the framed
-     look via their own borders. The "metal frame" effect comes from
-     the chrome bar's `bg-bg-surface` against the page bg + the body's
-     near-black term-chrome. */
+  border-top: 1px solid var(--nr-ink-soft);
+  border-bottom: 1px solid var(--nr-ink-soft);
+  border-radius: 0;
   overflow: hidden;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .highlight,
+[data-md-color-scheme="slate"] .md-typeset .highlighttable {
+  border-top-color: rgba(237, 235, 224, 0.10);
+  border-bottom-color: rgba(237, 235, 224, 0.10);
 }
 
 /* ── Chrome bar — pseudo-element because <pre> has no header slot ──
@@ -311,20 +374,23 @@
    Markdown source. The label defaults to "code" unless the page sets
    a data-attribute via attr_list (used by individual snippets). */
 .md-typeset .highlight pre {
-  /* Lift the body 1px so the chrome bar's bottom-border doesn't bleed
-     onto the same baseline as the body's top edge. */
   position: relative;
   margin: 0;
-  padding: 1rem 1.1rem;
-  /* Generous left padding so gutter line-numbers (when present via
-     `pymdownx.highlight.line_spans: __span`) sit comfortably. */
+  padding: 0.85rem 1.1rem;
   background-color: var(--md-code-bg-color);
   color: var(--md-code-fg-color);
   font-family: var(--md-code-font);
   font-size: 0.82em;
   line-height: 1.65;
   letter-spacing: 0;
-  border-radius: 0 0 var(--md-border-radius) var(--md-border-radius);
+  border-radius: 0;
+  /* Django-style: long lines wrap inside the box instead of producing
+     a horizontal scroll. overflow-wrap prevents the wrap from
+     happening mid-character where possible — Python indentation
+     stays intact. opt-out below for `pre` blocks the author marked
+     with `nowrap` via pymdownx details, e.g. ASCII diagrams. */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
 [data-md-color-scheme="slate"] .md-typeset .highlight pre {
@@ -338,51 +404,48 @@
   content: attr(data-lang) " ";
 }
 
-/* Build the chrome bar directly on the .highlight wrapper. The dots +
-   filename + Copy button row lives ABOVE the <pre>. */
+/* Filename tab — Django-style ink strip ABOVE the <pre>.
+   Replaces the old mac-terminal traffic-light dots. The strip is
+   solid --nr-ink (the brand's near-black) in light mode and the
+   same cream-on-ink in dark mode, so the filename label reads as
+   inverted text. The Copy button is pinned to the right edge of
+   this strip (see `.md-clipboard` block below). */
 .md-typeset .highlight::before {
   content: "";
   display: block;
-  height: 2.25rem;
-  background-color: var(--md-default-bg-color);   /* bg-surface */
-  border-bottom: 1px solid var(--nr-ink-soft);
-  border-radius: var(--md-border-radius) var(--md-border-radius) 0 0;
-  /* Three traffic-light dots via background-image. */
-  background-image:
-    radial-gradient(circle at 14px 50%, var(--nr-state-block) 4px, transparent 5px),
-    radial-gradient(circle at 30px 50%, var(--nr-state-flag) 4px, transparent 5px),
-    radial-gradient(circle at 46px 50%, var(--nr-state-allow) 4px, transparent 5px);
-  background-repeat: no-repeat;
-  background-size: 60px 2.25rem;
-  background-position: 12px 0;
+  height: 1.85rem;
+  background-color: var(--nr-ink);
+  border-radius: 0;
 }
 
 [data-md-color-scheme="slate"] .md-typeset .highlight::before {
-  background-color: var(--md-default-bg-color);
-  border-bottom-color: rgba(237, 235, 224, 0.10);
+  background-color: var(--nr-ink);
 }
 
 /* Filename label — set via `data-label="filename.py"` on a fenced block
    using the attr_list syntax: ```python title="filename.py"`.
-   attr_list puts it on the <code> element, so we look there. */
+   attr_list puts it on the <code> element, so we look there.
+
+   Sits IN the new ink-coloured strip above. Negative margin pulls it
+   back up into the strip zone; cream-on-ink colour reads as inverted
+   text against --nr-ink. */
 .md-typeset .highlight pre > code::before {
   content: attr(data-title);
   display: block;
-  margin: -1rem -1.1rem 0.85rem;
-  padding: 0.65rem 1.1rem 0;
+  margin: -0.85rem -1.1rem 0.85rem;
+  padding: 0.55rem 1.1rem 0;
   font-family: var(--md-code-font);
-  font-size: 0.66rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--md-default-fg-color--light);
-  border-top: 1px solid var(--nr-ink-soft);
-  /* Nudge so the filename sits in the chrome bar zone we drew above. */
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--nr-cream);
+  border-top: none;
   position: relative;
-  top: -0.65rem;
+  top: -0.55rem;
 }
 
-/* If the page author didn't set `title="..."`, hide the empty header slot. */
+/* If the page author didn't set `title="..."`, fall back to the
+   language label so the strip never looks empty. */
 .md-typeset .highlight pre > code:not([data-title])::before {
   content: attr(data-lang);
 }
@@ -393,24 +456,52 @@
 
 /* `data-lang` should always be present from Pygments — make sure
    the default is lowercase, not "Python" etc. The Material renderer
-   provides data-lang. */
+   provides data-lang. Drop the old uppercase: the new strip is
+   denser and uppercase + monospace reads as shouting. */
 .md-typeset .highlight pre > code:not([data-title])::before {
   text-transform: lowercase;
+  font-weight: 400;
 }
 
-/* ── Inline code (NOT inside <pre>) — cream-tinted chip ──────────── */
+/* ── Inline code (NOT inside <pre>) — Django `.literal` style ─────
+   Django's `.literal` rule is just `color + monospace + nowrap` —
+   no background pill, no border. On a cream/ink brand surface a
+   dotted underline gives the same visual weight without the chip
+   breaking prose rhythm.
+
+   Excluded contexts (no underline + monospace only, no pill):
+     - code inside <pre>: pre has its own dark surface, pill would
+       be invisible against the ink strip
+     - code inside <a>: the link already provides emphasis
+     - code inside <kbd>: keyboard-key surface, kept distinct */
 .md-typeset code {
-  background-color: var(--nr-ink-ghost);
-  padding: 0.12em 0.4em;
-  border-radius: var(--md-border-radius--sm);
-  color: var(--md-default-fg-color);
   font-family: var(--md-code-font);
-  font-size: 0.85em;
-  /* Inline code should not inherit a header. Reset any pre-side rules. */
+  font-size: 0.86em;
+  color: var(--md-default-fg-color);
+  white-space: nowrap;
 }
 
-[data-md-color-scheme="slate"] .md-typeset code {
-  background-color: rgba(237, 235, 224, 0.06);
+/* Standalone inline code — monospace + dotted underline. */
+.md-typeset :not(pre) > :not(table) > code {
+  border-bottom: 1px dotted var(--nr-ink-soft);
+  padding-bottom: 0.05em;
+}
+
+[data-md-color-scheme="slate"] .md-typeset :not(pre) > :not(table) > code {
+  border-bottom-color: rgba(237, 235, 224, 0.18);
+}
+
+/* Code inside a link — drop the dotted underline so it doesn't
+   stack on top of the link's own underline. */
+.md-typeset a code {
+  border-bottom: none;
+  color: inherit;
+}
+
+/* Code inside <kbd> — already has its own chip styling below. */
+.md-typeset kbd > code {
+  border-bottom: none;
+  background-color: transparent;
 }
 
 /* ── Copy button (Material's `content.code.copy`) ──────────────────
