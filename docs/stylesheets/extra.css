@@ -20,8 +20,9 @@
      --state-allow    #3B6D11
      --state-flag     #854F0B
      --state-block    #A32D2D
-     --term-chrome    #0E0E0C  → --md-code-bg-color (code body)
-     --term-dots      #403F3D  → (filename header traffic-lights)
+     --term-chrome    #0E0E0C  → --nr-filename-strip (filename header)
+                                    (the code body is now cream — Django-style
+                                    light body with dark strip above)
 
    dark :root.dark              → docs [data-md-color-scheme="slate"]
      --bg-base        #0E0E0C
@@ -70,27 +71,37 @@
   --md-primary-bg-color--dark: rgba(251, 250, 244, 0.3);
   --md-primary-border-color: rgba(20, 20, 18, 0.10);
 
-  /* ── Code surface (kept dark on light page for legibility) ────────── */
-  --md-code-bg-color: #0E0E0C;             /* term-chrome */
-  --md-code-fg-color: #EDEBE0;             /* cream-on-dark text */
-  --md-code-border-color: rgba(237, 235, 224, 0.08);
-  --md-code-hl-color: #EDEBE0;
-  --md-code-hl-color--light: rgba(237, 235, 224, 0.10);
+  /* ── Code surface (Django-style: light body on the cream page) ──────
+     Body = --bg-base (cream), dark ink text. The filename strip
+     above uses --nr-term-chrome (near-black) with cream text — the
+     same dark/cream inversion Django does with its dark-green
+     strip over pale-green body. This is the maximum-contrast
+     layout for cream pages: dark strip on light body, both with
+     brand-faithful colours. */
+  --md-code-bg-color: #F2F0E8;             /* bg-base cream — Django body */
+  --md-code-fg-color: #1A1A18;             /* ink-on-cream text */
+  --md-code-border-color: rgba(20, 20, 18, 0.08);
+  --md-code-hl-color: #1A1A18;
+  --md-code-hl-color--light: rgba(20, 20, 18, 0.10);
 
-  /* Syntax tokens (terminal palette, modelled on the brand's Recharts/
-     TerminalPrompt color set: muted greens, warm ambers, soft purples). */
-  --md-code-hl-name-color: #EDEBE0;        /* base identifier */
-  --md-code-hl-operator-color: #B8B6AE;
-  --md-code-hl-punctuation-color: #B8B6AE;
-  --md-code-hl-comment-color: #6B6A63;     /* fg-muted — quiet but readable */
-  --md-code-hl-string-color: #A8C97F;      /* state-allow light variant */
-  --md-code-hl-number-color: #E0A85F;      /* state-flag light variant */
-  --md-code-hl-function-color: #C5A8E8;    /* soft lilac */
-  --md-code-hl-keyword-color: #D5A0E8;     /* slightly stronger lilac */
-  --md-code-hl-constant-color: #F4D582;    /* warm gold */
-  --md-code-hl-special-color: #FFD580;     /* amber accent */
-  --md-code-hl-variable-color: #B8B6AE;
-  --md-code-hl-generic-color: #6B6A63;
+  /* Syntax tokens — DEEPER variants of the brand state colours so
+     they read on cream. The previous "soft pastel" set was designed
+     for a dark body and collapsed to ~2:1 contrast on cream. The
+     dark variants (state-allow, state-flag, deeper lilac/gold) hold
+     ~5–7:1 contrast against #F2F0E8, which is the WCAG AA target
+     for code. */
+  --md-code-hl-name-color: #1A1A18;        /* ink — base identifier */
+  --md-code-hl-operator-color: #6B6A63;
+  --md-code-hl-punctuation-color: #6B6A63;
+  --md-code-hl-comment-color: #9A9890;     /* fg-subtle — quiet, italic look */
+  --md-code-hl-string-color: #3B6D11;      /* state-allow — dark green */
+  --md-code-hl-number-color: #854F0B;      /* state-flag — dark amber */
+  --md-code-hl-function-color: #5D3F8C;    /* deeper lilac */
+  --md-code-hl-keyword-color: #5D3F8C;     /* deeper lilac */
+  --md-code-hl-constant-color: #7A5C0F;    /* deeper gold */
+  --md-code-hl-special-color: #A32D2D;     /* state-block, red — rare */
+  --md-code-hl-variable-color: #6B6A63;
+  --md-code-hl-generic-color: #9A9890;
 
   /* ── Typography ─────────────────────────────────────────────────────
      Google Sans Flex (OFL 1.1) replaces Inter / JetBrains Mono — same
@@ -466,12 +477,12 @@
 
 :root,
 [data-md-color-scheme="default"] {
-  --nr-filename-strip: #1C1C1A;             /* elevated dark — light mode */
-  --nr-filename-border: rgba(237, 235, 224, 0.18);
+  --nr-filename-strip: #0E0E0C;             /* term-chrome — dark strip on light body */
+  --nr-filename-border: rgba(20, 20, 18, 0.12);
 }
 
 [data-md-color-scheme="slate"] {
-  --nr-filename-strip: #262624;             /* elevated dark — dark mode */
+  --nr-filename-strip: #262624;             /* elevated dark — dark mode body stays dark */
   --nr-filename-border: rgba(237, 235, 224, 0.10);
 }
 
