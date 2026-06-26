@@ -450,55 +450,46 @@
 /* Filename tab — Django-style dark strip ABOVE the <pre>.
    Replaces the old mac-terminal traffic-light dots.
 
-   Color choice: the strip is INTENTIONALLY a shade lighter than the
-   code body so the two surfaces read as distinct visual layers
-   (Django uses #234f32 dark-green over #e0ffb8 pale-green — we use
-   `--nr-ink` over `--nr-term-chrome`). Without this contrast, the
-   strip and body collapse into one continuous dark block and the
-   filename label becomes invisible. `--nr-ink` flips cream in dark
-   mode, so the strip and body get the same logical contrast in both
-   schemes: strip is the brand "ink" surface, body is the deeper
-   "term-chrome" surface.
+   The strip must read as a DISTINCT surface from the code body —
+   not just a tinted row. Django uses #234f32 dark-green over
+   #e0ffb8 pale-green, which is ~80% lightness contrast. We don't
+   have Django's two-tone palette, so we lift the strip into the
+   "elevated surface" zone (--md-default-bg-color--lighter): one
+   step lighter than the page, always dark in both schemes.
 
-   In light mode: strip = #1A1A18 (slightly lighter than #0E0E0C body).
-   In dark mode:  strip = #EDEBE0 (cream, on the dark page) — but the
-   CODE BODY is still #0A0A08 (term-chrome), so the strip pops.
+   Light mode: strip = #1C1C1A, body = #0E0E0C → 14/255 lightness
+   step, the strip is unmistakably a different layer.
+   Dark mode:  strip = #262624, body = #0A0A08 → same delta.
 
-   Wait — that's not right. In dark mode, --nr-ink is cream (#EDEBE0)
-   which would make the strip cream-colored and the cream text
-   invisible. The trick is to use a DARKER shade in dark mode too.
-   The cleanest fix: use --md-default-bg-color--lighter (#1C1C1A light,
-   #262624 dark) which is the "elevated surface" token — one step
-   lighter than the page but always dark. That keeps the contrast in
-   both schemes. */
+   Plus a 1px hairline border-bottom at higher opacity so the line
+   between strip and body is clearly visible even at a glance. */
 
 :root,
 [data-md-color-scheme="default"] {
-  --nr-filename-strip: #1A1A18;
+  --nr-filename-strip: #1C1C1A;             /* elevated dark — light mode */
+  --nr-filename-border: rgba(237, 235, 224, 0.18);
 }
 
 [data-md-color-scheme="slate"] {
-  --nr-filename-strip: #262624;
+  --nr-filename-strip: #262624;             /* elevated dark — dark mode */
+  --nr-filename-border: rgba(237, 235, 224, 0.10);
 }
 
 /* Filename strip — visible only when title="…" was set. */
 .md-typeset .highlight > .filename {
-  display: block;
+  display: flex;
+  align-items: center;
   margin: 0;
-  padding: 0.55rem 1.1rem;
-  height: 1.85rem;
+  padding: 0 1.1rem;
+  height: 2rem;
   font-family: var(--md-code-font);
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--nr-cream);
   background-color: var(--nr-filename-strip);
-  border-bottom: 1px solid rgba(237, 235, 224, 0.10);
+  border-bottom: 1px solid var(--nr-filename-border);
   border-radius: 0;
-}
-
-[data-md-color-scheme="slate"] .md-typeset .highlight > .filename {
-  border-bottom-color: rgba(237, 235, 224, 0.06);
 }
 
 /* When the author didn't set `title="..."`, Material does NOT emit a
@@ -515,7 +506,7 @@
   right: 0;
   display: flex;
   align-items: center;
-  height: 1.85rem;
+  height: 2rem;
   padding: 0 0.55rem;
   margin: 0;
   z-index: 4;
