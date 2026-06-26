@@ -2,79 +2,104 @@
    NullRun Docs — brand overrides
    ----------------------------------------------------------------------------
    Paints Material's component layer onto the brand's "Geometric Mono +
-   Monochrome" surface (cream light / near-black dark). Tokens mirror
-   frontend/app/globals.css so the docs and dashboard read as the same
-   product.
+   Monochrome" surface. Hex tokens mirror `frontend/app/globals.css`
+   verbatim (HSL values flattened to hex for Material's CSS-var surface)
+   so the docs and dashboard read as the same product.
+
+   Palette crosswalk
+   -----------------
+   light :root                  → docs [data-md-color-scheme="default"]
+     --bg-base        #F2F0E8  → --md-default-bg-color--light
+     --bg-surface     #FBFAF4  → --md-default-bg-color
+     --bg-elevated    #FFFFFF  → --md-default-bg-color--lighter
+     --bg-inset       #E8E5DA  → (hero CTA / card hover)
+     --fg-default     #1A1A18  → --md-default-fg-color
+     --fg-muted       #6B6A63  → --md-default-fg-color--light
+     --fg-subtle      #9A9890  → --md-default-fg-color--lighter
+     --fg-inverse     #FBFAF4  → --md-primary-bg-color
+     --state-allow    #3B6D11
+     --state-flag     #854F0B
+     --state-block    #A32D2D
+     --term-chrome    #0E0E0C  → --md-code-bg-color (code body)
+     --term-dots      #403F3D  → (filename header traffic-lights)
+
+   dark :root.dark              → docs [data-md-color-scheme="slate"]
+     --bg-base        #0E0E0C
+     --bg-surface     #161614
+     --bg-elevated    #1C1C1A
+     --bg-inset       #0A0A08
+     --fg-default     #EDEBE0  (note: not #FBFAF4 — slightly warmer)
+     --fg-muted       #9A9890
+     --fg-subtle      #5F5E58
+     --fg-inverse     #0E0E0C
+     --state-allow    #A8C97F
+     --state-flag     #E0A85F
+     --state-block    #E08080
+     --term-chrome    #0E0E0C  → --md-code-bg-color (still near-black in dark
+                                  for the code surface — Material's `slate`
+                                  scheme flips the page but not the code)
    ============================================================================ */
 
 :root,
 [data-md-color-scheme="default"] {
-  /* Brand surface (cream) — matches --bg-base / --bg-surface from
-     frontend/app/globals.css (HSL → hex). */
-  --md-default-bg-color: #FBFAF4;
-  --md-default-bg-color--light: #F2F0E8;
-  --md-default-bg-color--lighter: #FFFFFF;
+  /* ── Surface scale ────────────────────────────────────────────────── */
+  --md-default-bg-color: #FBFAF4;          /* bg-surface (cream) */
+  --md-default-bg-color--light: #F2F0E8;   /* bg-base */
+  --md-default-bg-color--lighter: #FFFFFF; /* bg-elevated */
   --md-default-bg-color--lightest: #FFFFFF;
 
-  /* Foreground (near-black) */
-  --md-default-fg-color: #1A1A18;
-  --md-default-fg-color--light: #6B6A63;
-  --md-default-fg-color--lighter: #9A9890;
+  /* ── Foreground scale ─────────────────────────────────────────────── */
+  --md-default-fg-color: #1A1A18;          /* fg-default (ink) */
+  --md-default-fg-color--light: #6B6A63;   /* fg-muted */
+  --md-default-fg-color--lighter: #9A9890; /* fg-subtle */
   --md-default-fg-color--lightest: #B8B6AE;
 
-  /* Accent (links / hovers) — use a slightly muted ink that still reads
-     as a link against cream. */
-  --md-accent-fg-color: #1A1A18;
-  --md-accent-bg-color: #E8E5DA;
+  /* ── Accent (links / hover) ───────────────────────────────────────── */
+  --md-accent-fg-color: #1A1A18;           /* matches fg-default */
+  --md-accent-bg-color: #E8E5DA;           /* bg-inset */
   --md-accent-border-color: #1A1A18;
 
-  /* Primary — Material convention (counter-intuitive):
-       --md-primary-fg-color = the FILL of the primary surface
-                                (the header / nav-tabs bar background)
-       --md-primary-bg-color = the TEXT color on the primary surface
-     We want a dark strip on a cream page (light) and a cream strip on
-     a dark page (dark) — opposite of the body, so the header is always
-     a visible contrasting band. The --light / --dark variants feed
-     nav__source, search placeholder, and other secondary surfaces;
-     we override them too so they flip with the scheme. */
-  --md-primary-fg-color: #1A1A18;            /* light: dark header strip */
-  --md-primary-fg-color--light: #3A3A36;    /* lighter dark — hover/secondary */
-  --md-primary-fg-color--dark: #0A0A08;     /* deeper dark — pressed */
-  --md-primary-bg-color: #FBFAF4;            /* light: cream text on it */
-  --md-primary-bg-color--light: rgba(251, 250, 244, 0.7);  /* dimmer text */
-  --md-primary-bg-color--dark: rgba(251, 250, 244, 0.3);   /* disabled */
+  /* ── Primary surface (header bar) ───────────────────────────────────
+     Light scheme: dark strip on cream page (contrast band).
+     --md-primary-fg-color = FILL of the strip; --md-primary-bg-color = TEXT. */
+  --md-primary-fg-color: #1A1A18;
+  --md-primary-fg-color--light: #3A3A36;
+  --md-primary-fg-color--dark: #0A0A08;
+  --md-primary-bg-color: #FBFAF4;          /* fg-inverse */
+  --md-primary-bg-color--light: rgba(251, 250, 244, 0.7);
+  --md-primary-bg-color--dark: rgba(251, 250, 244, 0.3);
   --md-primary-border-color: rgba(20, 20, 18, 0.10);
 
-  /* Code blocks — same near-black surface as dashboard terminal
-     chrome (--term-chrome: 60 4% 6% → #0E0E0C). Token colors
-     (--md-code-hl-*) are pinned explicitly so they always have
-     sufficient contrast against the dark surface in light mode —
-     relying on the default `--md-code-hl-name-color: var(--md-code-fg-color)`
-     works for plain text but the inherited `--md-code-hl-operator-color:
-     var(--md-default-fg-color--light)` produces gray-on-dark gray
-     that fails contrast. Explicit overrides below. */
-  --md-code-bg-color: #0E0E0C;
-  --md-code-fg-color: #FBFAF4;
-  --md-code-border-color: rgba(251, 250, 244, 0.08);
-  --md-code-hl-color: #FBFAF4;
-  --md-code-hl-color--light: rgba(251, 250, 244, 0.1);
-  --md-code-hl-name-color: #FBFAF4;
-  --md-code-hl-operator-color: #C8C8C2;
-  --md-code-hl-punctuation-color: #C8C8C2;
-  --md-code-hl-comment-color: #8A8A85;
-  --md-code-hl-string-color: #B6D7A8;
-  --md-code-hl-number-color: #F4A582;
-  --md-code-hl-function-color: #D5A0E8;
-  --md-code-hl-keyword-color: #C5A8E8;
-  --md-code-hl-constant-color: #F4D582;
-  --md-code-hl-special-color: #FFD580;
-  --md-code-hl-variable-color: #C8C8C2;
-  --md-code-hl-generic-color: #8A8A85;
+  /* ── Code surface (kept dark on light page for legibility) ────────── */
+  --md-code-bg-color: #0E0E0C;             /* term-chrome */
+  --md-code-fg-color: #EDEBE0;             /* cream-on-dark text */
+  --md-code-border-color: rgba(237, 235, 224, 0.08);
+  --md-code-hl-color: #EDEBE0;
+  --md-code-hl-color--light: rgba(237, 235, 224, 0.10);
 
-  /* Typography */
-  --md-text-font: "Inter", "Helvetica Neue", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  --md-code-font: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
-  --md-typeset-font-size: 0.78rem;            /* 15px at 20px base */
+  /* Syntax tokens (terminal palette, modelled on the brand's Recharts/
+     TerminalPrompt color set: muted greens, warm ambers, soft purples). */
+  --md-code-hl-name-color: #EDEBE0;        /* base identifier */
+  --md-code-hl-operator-color: #B8B6AE;
+  --md-code-hl-punctuation-color: #B8B6AE;
+  --md-code-hl-comment-color: #6B6A63;     /* fg-muted — quiet but readable */
+  --md-code-hl-string-color: #A8C97F;      /* state-allow light variant */
+  --md-code-hl-number-color: #E0A85F;      /* state-flag light variant */
+  --md-code-hl-function-color: #C5A8E8;    /* soft lilac */
+  --md-code-hl-keyword-color: #D5A0E8;     /* slightly stronger lilac */
+  --md-code-hl-constant-color: #F4D582;    /* warm gold */
+  --md-code-hl-special-color: #FFD580;     /* amber accent */
+  --md-code-hl-variable-color: #B8B6AE;
+  --md-code-hl-generic-color: #6B6A63;
+
+  /* ── Typography ─────────────────────────────────────────────────────
+     Google Sans Flex (OFL 1.1) replaces Inter / JetBrains Mono — same
+     family used in the dashboard. Declared in `overrides/main.html`
+     via @font-face. The "Geometric Mono" UI look is the same family
+     at a heavier weight + tracking, not a separate typeface. */
+  --md-text-font: "Google Sans Flex", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --md-code-font: "Google Sans Flex", ui-monospace, system-ui, monospace;
+  --md-typeset-font-size: 0.78rem;          /* 15px at 20px base */
   --md-typeset-line-height: 1.65;
   --md-typeset-h1-font-size: 2.25rem;
   --md-typeset-h2-font-size: 1.5rem;
@@ -83,57 +108,86 @@
   --md-typeset-h2-weight: 600;
   --md-typeset-h3-weight: 600;
 
-  /* Radii — match --radius-sm/md/lg from frontend */
+  /* ── Radii — match --radius-sm/md/lg from frontend ───────────────── */
   --md-border-radius: 4px;
   --md-border-radius--sm: 2px;
   --md-border-radius--lg: 6px;
+
+  /* ── Brand extras consumed by overrides/home.html + code chrome ───── */
+  --nr-cream:        #FBFAF4;
+  --nr-ink:          #1A1A18;
+  --nr-ink-soft:     rgba(20, 20, 18, 0.10);
+  --nr-ink-faint:    rgba(20, 20, 18, 0.06);
+  --nr-ink-ghost:    rgba(20, 20, 18, 0.04);
+  --nr-term-chrome:  #0E0E0C;
+  --nr-term-dots:    #403F3D;
+  --nr-state-allow:  #3B6D11;
+  --nr-state-flag:   #854F0B;
+  --nr-state-block:  #A32D2D;
 }
 
 [data-md-color-scheme="slate"] {
-  --md-default-bg-color: #0E0E0C;
-  --md-default-bg-color--light: #161614;
-  --md-default-bg-color--lighter: #1F1F1D;
+  /* ── Surface (dark) ───────────────────────────────────────────────── */
+  --md-default-bg-color: #0E0E0C;          /* bg-base (ink) */
+  --md-default-bg-color--light: #161614;   /* bg-surface */
+  --md-default-bg-color--lighter: #1C1C1A; /* bg-elevated */
   --md-default-bg-color--lightest: #262624;
 
-  --md-default-fg-color: #FBFAF4;
-  --md-default-fg-color--light: #B8B6AE;
-  --md-default-fg-color--lighter: #9A9890;
-  --md-default-fg-color--lightest: #6B6A63;
+  /* ── Foreground (dark) ────────────────────────────────────────────── */
+  --md-default-fg-color: #EDEBE0;          /* fg-default (warm cream) */
+  --md-default-fg-color--light: #9A9890;   /* fg-muted */
+  --md-default-fg-color--lighter: #5F5E58; /* fg-subtle */
+  --md-default-fg-color--lightest: #403F3D;
 
-  --md-accent-fg-color: #FBFAF4;
-  --md-accent-bg-color: #262624;
+  --md-accent-fg-color: #EDEBE0;
+  --md-accent-bg-color: #1C1C1A;
 
-  /* Dark mode: invert the header strip — cream on near-black body. */
-  --md-primary-fg-color: #FBFAF4;            /* dark: cream header strip */
-  --md-primary-fg-color--light: #D6D4CA;    /* lighter cream — hover/secondary */
-  --md-primary-fg-color--dark: #FFFFFF;     /* pure cream — pressed */
-  --md-primary-bg-color: #1A1A18;            /* dark: near-black text on it */
-  --md-primary-bg-color--light: rgba(26, 26, 24, 0.7);  /* dimmer text */
-  --md-primary-bg-color--dark: rgba(26, 26, 24, 0.3);   /* disabled */
-  --md-primary-border-color: rgba(251, 250, 244, 0.10);
+  /* Dark: invert the header strip — cream on near-black body. */
+  --md-primary-fg-color: #EDEBE0;
+  --md-primary-fg-color--light: #D6D4CA;
+  --md-primary-fg-color--dark: #FFFFFF;
+  --md-primary-bg-color: #1A1A18;          /* fg-inverse (ink) */
+  --md-primary-bg-color--light: rgba(26, 26, 24, 0.7);
+  --md-primary-bg-color--dark: rgba(26, 26, 24, 0.3);
+  --md-primary-border-color: rgba(237, 235, 224, 0.10);
 
-  --md-code-bg-color: #161614;
-  --md-code-fg-color: #FBFAF4;
-  --md-code-border-color: rgba(251, 250, 244, 0.08);
-  --md-code-hl-color: #FBFAF4;
-  --md-code-hl-color--light: rgba(251, 250, 244, 0.1);
-  --md-code-hl-name-color: #FBFAF4;
-  --md-code-hl-operator-color: #C8C8C2;
-  --md-code-hl-punctuation-color: #C8C8C2;
-  --md-code-hl-comment-color: #8A8A85;
-  --md-code-hl-string-color: #B6D7A8;
-  --md-code-hl-number-color: #F4A582;
-  --md-code-hl-function-color: #D5A0E8;
-  --md-code-hl-keyword-color: #C5A8E8;
+  /* ── Code surface stays dark in dark scheme (term-chrome) ────────── */
+  --md-code-bg-color: #0A0A08;             /* one notch darker than page */
+  --md-code-fg-color: #EDEBE0;
+  --md-code-border-color: rgba(237, 235, 224, 0.08);
+  --md-code-hl-color: #EDEBE0;
+  --md-code-hl-color--light: rgba(237, 235, 224, 0.10);
+  --md-code-hl-name-color: #EDEBE0;
+  --md-code-hl-operator-color: #B8B6AE;
+  --md-code-hl-punctuation-color: #B8B6AE;
+  --md-code-hl-comment-color: #9A9890;
+  --md-code-hl-string-color: #A8C97F;
+  --md-code-hl-number-color: #E0A85F;
+  --md-code-hl-function-color: #C5A8E8;
+  --md-code-hl-keyword-color: #D5A0E8;
   --md-code-hl-constant-color: #F4D582;
   --md-code-hl-special-color: #FFD580;
-  --md-code-hl-variable-color: #C8C8C2;
-  --md-code-hl-generic-color: #8A8A85;
+  --md-code-hl-variable-color: #B8B6AE;
+  --md-code-hl-generic-color: #9A9890;
+
+  /* Brand extras (dark) */
+  --nr-cream:        #EDEBE0;
+  --nr-ink:          #EDEBE0;
+  --nr-ink-soft:     rgba(237, 235, 224, 0.10);
+  --nr-ink-faint:    rgba(237, 235, 224, 0.06);
+  --nr-ink-ghost:    rgba(237, 235, 224, 0.04);
+  --nr-term-chrome:  #0A0A08;
+  --nr-term-dots:    #403F3D;
+  --nr-state-allow:  #A8C97F;
+  --nr-state-flag:   #E0A85F;
+  --nr-state-block:  #E08080;
 }
 
-/* ----- Body ----- */
+/* ============================================================================
+   Body type
+   ============================================================================ */
 .md-typeset {
-  font-feature-settings: "ss01", "cv11", "tnum";   /* Geometric Mono cues */
+  font-feature-settings: "ss01", "cv11", "tnum";
   letter-spacing: -0.005em;
 }
 
@@ -145,13 +199,13 @@
 }
 
 .md-typeset h2 {
-  border-bottom: 1px solid rgba(20, 20, 18, 0.08);
+  border-bottom: 1px solid var(--nr-ink-soft);
   padding-bottom: 0.35rem;
   margin-top: 2.5rem;
 }
 
 [data-md-color-scheme="slate"] .md-typeset h2 {
-  border-bottom-color: rgba(251, 250, 244, 0.08);
+  border-bottom-color: rgba(237, 235, 224, 0.08);
 }
 
 .md-typeset a {
@@ -164,17 +218,16 @@
   text-decoration-color: var(--md-accent-fg-color);
 }
 
-/* ----- Header bar — let Material drive bg from --md-primary-fg-color
-   (which flips between dark in light mode and cream in dark mode).
-   We only override the border-bottom so the strip doesn't show a
-   double-edge against the body. ----- */
+/* ============================================================================
+   Header bar — brand chrome strip
+   ============================================================================ */
 .md-header {
-  border-bottom: 1px solid rgba(20, 20, 18, 0.06);
+  border-bottom: 1px solid var(--nr-ink-faint);
   box-shadow: none;
 }
 
 [data-md-color-scheme="slate"] .md-header {
-  border-bottom: 1px solid rgba(251, 250, 244, 0.06);
+  border-bottom: 1px solid rgba(237, 235, 224, 0.06);
 }
 
 .md-header__button.md-logo img,
@@ -182,33 +235,27 @@
   height: 1.5rem;
 }
 
-/* Search placeholder: Material's default uses
-   `--md-primary-bg-color--light` (cream at 70% opacity in light mode
-   / near-black at 70% in dark), which sits at the same color as the
-   search-pill bg (`--md-default-bg-color`). Override to a darker
-   placeholder so it actually reads against the pill. */
+/* Search placeholder */
 .md-search__form .md-search__input::placeholder {
   color: var(--md-default-fg-color--lighter);
 }
 
-[data-md-color-scheme="slate"] .md-search__form .md-search__input::placeholder {
-  color: var(--md-default-fg-color--lighter);
-}
-
-/* ----- Tables — match the dashboard's dense list look ----- */
+/* ============================================================================
+   Tables — dense list look (dashboard parity)
+   ============================================================================ */
 .md-typeset table:not([class]) {
   font-size: 0.74rem;
-  border: 1px solid rgba(20, 20, 18, 0.08);
+  border: 1px solid var(--nr-ink-soft);
   border-radius: var(--md-border-radius--sm);
   overflow: hidden;
 }
 
 [data-md-color-scheme="slate"] .md-typeset table:not([class]) {
-  border-color: rgba(251, 250, 244, 0.08);
+  border-color: rgba(237, 235, 224, 0.08);
 }
 
 .md-typeset table:not([class]) th {
-  background-color: rgba(20, 20, 18, 0.04);
+  background-color: var(--nr-ink-ghost);
   font-weight: 600;
   letter-spacing: 0.01em;
   text-transform: uppercase;
@@ -216,7 +263,7 @@
 }
 
 [data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
-  background-color: rgba(251, 250, 244, 0.04);
+  background-color: rgba(237, 235, 224, 0.04);
 }
 
 .md-typeset table:not([class]) td,
@@ -224,91 +271,348 @@
   padding: 0.55rem 0.8rem;
 }
 
-/* ----- Code blocks — terminal aesthetic ----- */
-.md-typeset pre > code,
-.md-typeset code {
-  font-family: var(--md-code-font);
-  font-size: 0.78em;
-  line-height: 1.55;
-}
+/* ============================================================================
+   Code blocks — TerminalWindow chrome (dashboard parity)
+   ----------------------------------------------------------------------------
+   The anatomy we replicate from `components/ui/terminal-window.tsx`:
 
-.md-typeset pre {
+       ┌─ border: --term-chrome (always near-black, "the metal frame") ─┐
+       │  ┌─ chrome bar: bg-surface + border-b + 10% ink divider ──┐    │
+       │  │  ●●●  filename.py                  [ Copy ]            │    │
+       │  └────────────────────────────────────────────────────────┘    │
+       │  ┌─ body: bg-bg-elevated, dark text on cream/dark surface ─┐    │
+       │  │  line-number │  $  command --flag                       │    │
+       │  │  line-number │  $  second line                          │    │
+       │  │  ...                                                       │
+       │  └────────────────────────────────────────────────────────┘    │
+       └────────────────────────────────────────────────────────────────┘
+
+   Material's `content.code.copy` feature injects `<button class="md-clipboard">`
+   in the top-right corner of every <pre>. We re-position it INTO the chrome
+   bar (so it lines up with the filename + dots row) and restyle it as a
+   brand pill. The original Material hook (clipboard.js) is preserved.
+   ============================================================================ */
+
+/* Outer "metal frame" — dark border around the whole code surface. */
+.md-typeset .highlight,
+.md-typeset .highlighttable {
+  position: relative;
+  margin: 1.25rem 0;
   border-radius: var(--md-border-radius);
-  border: 1px solid rgba(20, 20, 18, 0.06);
+  /* No outer border here — the chrome bar + body provide the framed
+     look via their own borders. The "metal frame" effect comes from
+     the chrome bar's `bg-bg-surface` against the page bg + the body's
+     near-black term-chrome. */
+  overflow: hidden;
 }
 
-[data-md-color-scheme="slate"] .md-typeset pre {
-  border-color: rgba(251, 250, 244, 0.06);
+/* ── Chrome bar — pseudo-element because <pre> has no header slot ──
+   Insert before the <code> via ::before so we don't have to alter the
+   Markdown source. The label defaults to "code" unless the page sets
+   a data-attribute via attr_list (used by individual snippets). */
+.md-typeset .highlight pre {
+  /* Lift the body 1px so the chrome bar's bottom-border doesn't bleed
+     onto the same baseline as the body's top edge. */
+  position: relative;
+  margin: 0;
+  padding: 1rem 1.1rem;
+  /* Generous left padding so gutter line-numbers (when present via
+     `pymdownx.highlight.line_spans: __span`) sit comfortably. */
+  background-color: var(--md-code-bg-color);
+  color: var(--md-code-fg-color);
+  font-family: var(--md-code-font);
+  font-size: 0.82em;
+  line-height: 1.65;
+  letter-spacing: 0;
+  border-radius: 0 0 var(--md-border-radius) var(--md-border-radius);
 }
 
-/* Inline code gets a tinted bg to stand out from the cream body */
+[data-md-color-scheme="slate"] .md-typeset .highlight pre {
+  background-color: var(--md-code-bg-color);
+}
+
+/* Chrome bar = pseudo-element on the .highlight wrapper. */
+.md-typeset .highlight > .highlighttable-wrapper::before,
+.md-typeset .highlight > pre::before,
+.md-typeset .highlight::before {
+  content: attr(data-lang) " ";
+}
+
+/* Build the chrome bar directly on the .highlight wrapper. The dots +
+   filename + Copy button row lives ABOVE the <pre>. */
+.md-typeset .highlight::before {
+  content: "";
+  display: block;
+  height: 2.25rem;
+  background-color: var(--md-default-bg-color);   /* bg-surface */
+  border-bottom: 1px solid var(--nr-ink-soft);
+  border-radius: var(--md-border-radius) var(--md-border-radius) 0 0;
+  /* Three traffic-light dots via background-image. */
+  background-image:
+    radial-gradient(circle at 14px 50%, var(--nr-state-block) 4px, transparent 5px),
+    radial-gradient(circle at 30px 50%, var(--nr-state-flag) 4px, transparent 5px),
+    radial-gradient(circle at 46px 50%, var(--nr-state-allow) 4px, transparent 5px);
+  background-repeat: no-repeat;
+  background-size: 60px 2.25rem;
+  background-position: 12px 0;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .highlight::before {
+  background-color: var(--md-default-bg-color);
+  border-bottom-color: rgba(237, 235, 224, 0.10);
+}
+
+/* Filename label — set via `data-label="filename.py"` on a fenced block
+   using the attr_list syntax: ```python title="filename.py"`.
+   attr_list puts it on the <code> element, so we look there. */
+.md-typeset .highlight pre > code::before {
+  content: attr(data-title);
+  display: block;
+  margin: -1rem -1.1rem 0.85rem;
+  padding: 0.65rem 1.1rem 0;
+  font-family: var(--md-code-font);
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--md-default-fg-color--light);
+  border-top: 1px solid var(--nr-ink-soft);
+  /* Nudge so the filename sits in the chrome bar zone we drew above. */
+  position: relative;
+  top: -0.65rem;
+}
+
+/* If the page author didn't set `title="..."`, hide the empty header slot. */
+.md-typeset .highlight pre > code:not([data-title])::before {
+  content: attr(data-lang);
+}
+
+.md-typeset .highlight pre > code:not([data-title]):not([data-lang])::before {
+  content: "code";
+}
+
+/* `data-lang` should always be present from Pygments — make sure
+   the default is lowercase, not "Python" etc. The Material renderer
+   provides data-lang. */
+.md-typeset .highlight pre > code:not([data-title])::before {
+  text-transform: lowercase;
+}
+
+/* ── Inline code (NOT inside <pre>) — cream-tinted chip ──────────── */
 .md-typeset code {
-  background-color: rgba(20, 20, 18, 0.05);
-  padding: 0.1em 0.35em;
+  background-color: var(--nr-ink-ghost);
+  padding: 0.12em 0.4em;
   border-radius: var(--md-border-radius--sm);
   color: var(--md-default-fg-color);
+  font-family: var(--md-code-font);
+  font-size: 0.85em;
+  /* Inline code should not inherit a header. Reset any pre-side rules. */
 }
 
 [data-md-color-scheme="slate"] .md-typeset code {
-  background-color: rgba(251, 250, 244, 0.06);
+  background-color: rgba(237, 235, 224, 0.06);
 }
 
-/* pre > code: don't inherit the inline-code tinted bg + padding
-   + radius that the previous rule applied to ALL `.md-typeset code`.
-   The `.md-typeset pre > code` selector (1 class + 2 types) is
-   more specific than `.md-typeset code` (1 class + 1 type) in the
-   DEFAULT scheme, so every property below wins there. In the
-   SLATE scheme the selector `[data-md-color-scheme="slate"]
-   .md-typeset code` has the same specificity as our pre > code
-   rule but the attribute selector puts it on top — we add an
-   explicit slate rule below to keep the dark surface on the
-   code block instead of the inline-code cream tint. */
-.md-typeset pre > code {
-  background-color: var(--md-code-bg-color);
-  padding: 0;
-  border-radius: 0;
-  color: var(--md-code-fg-color);
+/* ── Copy button (Material's `content.code.copy`) ──────────────────
+   Material injects a `<button class="md-clipboard md-icon">` inside
+   .md-typeset .highlight. We pull it OUT of the body (where it floats
+   over the code by default) and pin it into the chrome bar's
+   top-right corner. The clipboard.js hook is preserved — we only
+   restyle + reposition, never remove. */
+.md-typeset .md-clipboard {
+  position: absolute;
+  top: 0.42rem;
+  right: 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  height: 1.4rem;
+  padding: 0 0.55rem;
+  font-family: var(--md-text-font);
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--md-default-fg-color);
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--md-border-radius--sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease, border-color 120ms ease;
+  z-index: 2;
 }
 
-[data-md-color-scheme="slate"] .md-typeset pre > code {
-  background-color: var(--md-code-bg-color);
+[data-md-color-scheme="slate"] .md-clipboard {
+  color: var(--md-default-fg-color);
 }
 
-/* ----- Admonitions — match frontend's tinted-state look ----- */
+/* Reveal on hover of the whole code block. */
+.md-typeset .highlight:hover .md-clipboard,
+.md-typeset .md-clipboard:focus-visible {
+  opacity: 1;
+}
+
+/* Force the icon size — Material defaults to 1.2rem svg which clips. */
+.md-typeset .md-clipboard svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  fill: currentColor;
+}
+
+/* Hide the "Copied!" tooltip that Material injects — it conflicts with
+   our pinned button and was clipped on the old offset. */
+.md-typeset .md-clipboard__message {
+  /* Keep Material's hide-on-default behavior; the visual confirmation
+     is now the button label flipping to "Copied". */
+  display: none !important;
+}
+
+/* After-click feedback — class is set by clipboard.js. */
+.md-typeset .md-clipboard[data-md-state="done"] {
+  opacity: 1;
+  border-color: var(--nr-state-allow);
+  color: var(--nr-state-allow);
+}
+
+/* ── Inline `<kbd>` ──────────────────────────────────────────────── */
+.md-typeset kbd {
+  font-family: var(--md-code-font);
+  font-size: 0.78em;
+  padding: 0.1em 0.4em;
+  border-radius: var(--md-border-radius--sm);
+  border: 1px solid var(--nr-ink-soft);
+  background-color: var(--md-default-bg-color);
+  color: var(--md-default-fg-color);
+  box-shadow: 0 1px 0 var(--nr-ink-soft);
+}
+
+/* ── Tabbed code blocks (pymdownx.tabbed) ────────────────────────── */
+.md-typeset .tabbed-set {
+  margin: 1.25rem 0;
+  border-radius: var(--md-border-radius);
+  overflow: hidden;
+  border: 1px solid var(--nr-ink-soft);
+}
+
+[data-md-color-scheme="slate"] .md-typeset .tabbed-set {
+  border-color: rgba(237, 235, 224, 0.08);
+}
+
+.md-typeset .tabbed-labels {
+  background-color: var(--md-default-bg-color);
+  border-bottom: 1px solid var(--nr-ink-soft);
+  padding: 0 0.5rem;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .tabbed-labels {
+  background-color: var(--md-default-bg-color);
+  border-bottom-color: rgba(237, 235, 224, 0.08);
+}
+
+.md-typeset .tabbed-labels > label {
+  font-family: var(--md-code-font);
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 0.6rem 0.8rem;
+  color: var(--md-default-fg-color--light);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.md-typeset .tabbed-labels > label:hover {
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset .tabbed-labels > .tabbed-control:checked + label {
+  color: var(--md-default-fg-color);
+  border-bottom-color: var(--md-default-fg-color);
+}
+
+/* ── Line numbers (pymdownx.highlight anchor_linenums + line_spans) ── */
+.md-typeset .highlighttable {
+  display: block;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.md-typeset .highlighttable .linenos,
+.md-typeset .highlighttable .code {
+  display: table-cell;
+  padding: 1rem 0;
+  vertical-align: top;
+}
+
+.md-typeset .highlighttable .linenos {
+  width: 3rem;
+  padding-left: 1rem;
+  padding-right: 0.5rem;
+  user-select: none;
+  font-family: var(--md-code-font);
+  font-size: 0.82em;
+  line-height: 1.65;
+  color: var(--md-default-fg-color--lighter);
+  text-align: right;
+  border-right: 1px solid rgba(237, 235, 224, 0.06);
+  background-color: rgba(237, 235, 224, 0.02);
+}
+
+.md-typeset .highlighttable .code {
+  padding-left: 1rem;
+  padding-right: 1.1rem;
+}
+
+/* ============================================================================
+   Admonitions — `note`/`warning`/`danger` map to state-allow/flag/block
+   ============================================================================ */
 .md-typeset .admonition,
 .md-typeset details {
   border-radius: var(--md-border-radius);
   border-left-width: 3px;
   font-size: 0.85em;
+  padding: 0.85rem 1rem;
 }
 
 .md-typeset .admonition.note,
 .md-typeset details.note {
-  border-left-color: #1A1A18;
+  border-left-color: var(--md-default-fg-color);
+  background-color: var(--nr-ink-ghost);
 }
+
 .md-typeset .admonition.warning,
 .md-typeset details.warning {
-  border-left-color: #854F0B;
+  border-left-color: var(--nr-state-flag);
   background-color: rgba(133, 79, 11, 0.06);
 }
+
 .md-typeset .admonition.danger,
 .md-typeset details.danger {
-  border-left-color: #A32D2D;
+  border-left-color: var(--nr-state-block);
   background-color: rgba(163, 45, 45, 0.06);
 }
 
-/* ----- Home hero (consumed by overrides/home.html) ----- */
+/* Admonition title — tighter, brand-weight */
+.md-typeset .admonition-title,
+.md-typeset summary {
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+/* ============================================================================
+   Hero (consumed by overrides/home.html)
+   ============================================================================ */
 .nr-hero {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
   gap: 3rem;
   align-items: center;
   padding: 3rem 0 4rem;
-  border-bottom: 1px solid rgba(20, 20, 18, 0.08);
+  border-bottom: 1px solid var(--nr-ink-soft);
 }
 
 [data-md-color-scheme="slate"] .nr-hero {
-  border-bottom-color: rgba(251, 250, 244, 0.08);
+  border-bottom-color: rgba(237, 235, 224, 0.08);
 }
 
 @media (max-width: 920px) {
@@ -362,25 +666,27 @@
 
 .nr-hero__screenshot {
   border-radius: var(--md-border-radius--lg);
-  border: 1px solid rgba(20, 20, 18, 0.10);
+  border: 1px solid var(--nr-ink-soft);
   box-shadow: 0 12px 32px -16px rgba(20, 20, 18, 0.25);
   max-width: 100%;
   height: auto;
 }
 
 [data-md-color-scheme="slate"] .nr-hero__screenshot {
-  border-color: rgba(251, 250, 244, 0.10);
+  border-color: rgba(237, 235, 224, 0.10);
   box-shadow: 0 12px 32px -16px rgba(0, 0, 0, 0.6);
 }
 
-/* ----- Sections in home.html ----- */
+/* ============================================================================
+   Sections + feature grid
+   ============================================================================ */
 .nr-section {
   padding: 3rem 0;
-  border-bottom: 1px solid rgba(20, 20, 18, 0.08);
+  border-bottom: 1px solid var(--nr-ink-soft);
 }
 
 [data-md-color-scheme="slate"] .nr-section {
-  border-bottom-color: rgba(251, 250, 244, 0.08);
+  border-bottom-color: rgba(237, 235, 224, 0.08);
 }
 
 .nr-section__title {
@@ -390,7 +696,6 @@
   letter-spacing: -0.015em;
 }
 
-/* Three-column feature grid */
 .nr-features {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -406,14 +711,14 @@
 
 .nr-feature {
   padding: 1.25rem;
-  border: 1px solid rgba(20, 20, 18, 0.10);
+  border: 1px solid var(--nr-ink-soft);
   border-radius: var(--md-border-radius);
   background-color: var(--md-default-bg-color--light);
 }
 
 [data-md-color-scheme="slate"] .nr-feature {
   background-color: var(--md-default-bg-color--light);
-  border-color: rgba(251, 250, 244, 0.10);
+  border-color: rgba(237, 235, 224, 0.10);
 }
 
 .nr-feature__icon {
@@ -435,24 +740,28 @@
   line-height: 1.55;
 }
 
-/* ----- Mermaid diagrams blend with cream ----- */
+/* ============================================================================
+   Mermaid diagrams blend with cream
+   ============================================================================ */
 .mermaid {
   background-color: var(--md-default-bg-color--light);
-  border: 1px solid rgba(20, 20, 18, 0.08);
+  border: 1px solid var(--nr-ink-soft);
   border-radius: var(--md-border-radius);
   padding: 1rem;
 }
 
 [data-md-color-scheme="slate"] .mermaid {
   background-color: var(--md-default-bg-color--light);
-  border-color: rgba(251, 250, 244, 0.08);
+  border-color: rgba(237, 235, 224, 0.08);
 }
 
-/* ----- Announcement banner — brand cream, not Material blue ----- */
+/* ============================================================================
+   Announcement banner — brand cream
+   ============================================================================ */
 .md-banner {
   background-color: var(--md-default-bg-color--light);
   color: var(--md-default-fg-color);
-  border-bottom: 1px solid rgba(20, 20, 18, 0.10);
+  border-bottom: 1px solid var(--nr-ink-soft);
   font-size: 0.85rem;
 }
 
@@ -461,7 +770,9 @@
   text-decoration: underline;
 }
 
-/* ----- Side nav: subtle, not the loud default ----- */
+/* ============================================================================
+   Side nav / TOC
+   ============================================================================ */
 .md-nav--primary .md-nav__link--active,
 .md-nav--primary .md-nav__link--active code {
   color: var(--md-default-fg-color);
@@ -472,7 +783,6 @@
   font-size: 0.78rem;
 }
 
-/* ----- Right-side TOC: quieter spacing ----- */
 .md-sidebar--secondary .md-nav__link {
   font-size: 0.7rem;
 }
