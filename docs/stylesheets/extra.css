@@ -381,6 +381,71 @@
   color: var(--nr-state-flag);
 }
 
+/* ── Pygments token colors (belt-and-suspenders) ─────────────────────
+   Material's main.css maps Pygments classes (`.kn`, `.n`, `.s2`, etc.)
+   to `var(--md-code-hl-*)` variables, which we override in the
+   `:root, [data-md-color-scheme="default"]` block above. The
+   variable-override path works in every test, but if a future
+   Material upgrade or a cache miss re-introduces the dark pastel
+   palette, the syntax formatting will appear muted on the cream
+   body. These explicit rules re-state the brand colors as direct
+   class → color mappings, so syntax highlighting is robust to
+   Material's own cascade.
+
+   Light mode: deep brand state colours (5–7:1 contrast on cream).
+   Dark mode:  unchanged from Material's defaults. */
+[data-md-color-scheme="default"] .md-typeset .kn,
+[data-md-color-scheme="default"] .md-typeset .kc,
+[data-md-color-scheme="default"] .md-typeset .kp,
+[data-md-color-scheme="default"] .md-typeset .kr,
+[data-md-color-scheme="default"] .md-typeset .kt {
+  color: #5D3F8C;                    /* deeper lilac — keywords */
+}
+[data-md-color-scheme="default"] .md-typeset .n,
+[data-md-color-scheme="default"] .md-typeset .nc,
+[data-md-color-scheme="default"] .md-typeset .ne,
+[data-md-color-scheme="default"] .md-typeset .nf,
+[data-md-color-scheme="default"] .md-typeset .nn,
+[data-md-color-scheme="default"] .md-typeset .nx,
+[data-md-color-scheme="default"] .md-typeset .py {
+  color: #1A1A18;                    /* ink — base identifier */
+}
+[data-md-color-scheme="default"] .md-typeset .s,
+[data-md-color-scheme="default"] .md-typeset .s1,
+[data-md-color-scheme="default"] .md-typeset .s2,
+[data-md-color-scheme="default"] .md-typeset .sb,
+[data-md-color-scheme="default"] .md-typeset .sc,
+[data-md-color-scheme="default"] .md-typeset .sd,
+[data-md-color-scheme="default"] .md-typeset .se,
+[data-md-color-scheme="default"] .md-typeset .sh,
+[data-md-color-scheme="default"] .md-typeset .si,
+[data-md-color-scheme="default"] .md-typeset .sx {
+  color: #3B6D11;                    /* state-allow — strings */
+}
+[data-md-color-scheme="default"] .md-typeset .m,
+[data-md-color-scheme="default"] .md-typeset .mb,
+[data-md-color-scheme="default"] .md-typeset .mf,
+[data-md-color-scheme="default"] .md-typeset .mh,
+[data-md-color-scheme="default"] .md-typeset .mi,
+[data-md-color-scheme="default"] .md-typeset .mo {
+  color: #854F0B;                    /* state-flag — numbers */
+}
+[data-md-color-scheme="default"] .md-typeset .c,
+[data-md-color-scheme="default"] .md-typeset .c1,
+[data-md-color-scheme="default"] .md-typeset .ch,
+[data-md-color-scheme="default"] .md-typeset .cm,
+[data-md-color-scheme="default"] .md-typeset .cp,
+[data-md-color-scheme="default"] .md-typeset .cpf,
+[data-md-color-scheme="default"] .md-typeset .cs {
+  color: #9A9890;                    /* fg-subtle — comments */
+  font-style: italic;
+}
+[data-md-color-scheme="default"] .md-typeset .o,
+[data-md-color-scheme="default"] .md-typeset .ow,
+[data-md-color-scheme="default"] .md-typeset .p {
+  color: #6B6A63;                    /* fg-muted — operators / punctuation */
+}
+
 /* ============================================================================
    Code blocks — TerminalWindow chrome (dashboard parity)
    ----------------------------------------------------------------------------
@@ -595,26 +660,28 @@
    block. We pin the nav INTO the dark chrome strip above the code
    body — same treatment as the rest of the filename-bar chrome.
 
-   `--nr-cream` (always light) keeps the button readable on the dark
-   `--nr-term-chrome` strip in both light + dark schemes. */
+   The button is ALWAYS visible (not hidden until hover) with a
+   semi-transparent cream tint that lifts on hover. This way the
+   "Copy" affordance is discoverable without forcing a mouse
+   sweep, and the contrast against the dark strip is unambiguous. */
 .md-typeset .md-code__button {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  height: 1.4rem;
-  padding: 0 0.55rem;
+  height: 1.5rem;
+  padding: 0 0.6rem;
   font-family: var(--md-text-font);
   font-size: 0.66rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--nr-cream);
-  background-color: transparent;
-  border: 1px solid transparent;
+  background-color: rgba(237, 235, 224, 0.12);
+  border: 1px solid rgba(237, 235, 224, 0.20);
   border-radius: var(--md-border-radius--sm);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms ease, background-color 120ms ease, border-color 120ms ease;
+  opacity: 1;
+  transition: background-color 120ms ease, border-color 120ms ease;
 }
 
 /* `<nav class="md-code__nav">` is the container, `<button class="md-code__button">`
@@ -624,12 +691,13 @@
    for untitled blocks. No unscoped `.md-code__nav` rule here — it
    would conflict with both scoped variants. */
 
-/* Reveal on hover of the whole code block, with a subtle cream tint
-   so the button reads as a clickable surface. */
+/* Lift the cream tint on hover so the button reads as a clickable
+   surface without the opacity transition. */
 .md-typeset .highlight:hover .md-code__button,
+.md-typeset .md-code__button:hover,
 .md-typeset .md-code__button:focus-visible {
-  opacity: 1;
-  background-color: rgba(237, 235, 224, 0.10);
+  background-color: rgba(237, 235, 224, 0.22);
+  border-color: rgba(237, 235, 224, 0.35);
 }
 
 /* Force the icon size — Material defaults to 1.2rem svg which clips. */

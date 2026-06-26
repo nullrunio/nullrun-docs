@@ -53,10 +53,10 @@ flowchart LR
     K --> T
     K --> V
 
-    K -. "\"*\" wildcard" .-> G
-    K -. "\"*\" wildcard" .-> E
-    K -. "\"*\" wildcard" .-> T
-    K -. "\"*\" wildcard" .-> V
+    K -. '"*" wildcard' .-> G
+    K -. '"*" wildcard' .-> E
+    K -. '"*" wildcard' .-> T
+    K -. '"*" wildcard' .-> V
 ```
 
 | Scope | Endpoint | Purpose |
