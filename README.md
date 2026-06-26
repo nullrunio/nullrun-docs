@@ -39,6 +39,12 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 - [Sensitive tools](docs/concepts/sensitive-tools.md) · fail-CLOSED, always
 - [Workflow context](docs/concepts/workflow.md) · `nullrun.workflow(...)` and what it does
 - [Control plane (WebSocket)](docs/concepts/control-plane.md) · real-time kill / pause
+- [API keys](docs/concepts/api-keys.md) · scopes, `expires_at`, rotation, revocation
+- [Policies](docs/concepts/policies.md) · RateLimit / BudgetLimit / ToolBlock, org vs workflow, aggregation
+- [Tool policies](docs/concepts/tool-policies.md) · glob match, 4 KB cap, union across scopes
+- [Loop detection](docs/concepts/loop-detection.md) · window-based exact-match, trips the breaker
+- [Anomaly detection](docs/concepts/anomaly-detection.md) · `mean + N·σ`, Lite / Moderate / Strict
+- [Human approval](docs/concepts/human-approval.md) · pause + Slack/Email/Webhook fanout
 
 **How-to**
 - [Protect a LangGraph agent](docs/how-to/langgraph.md)

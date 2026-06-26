@@ -76,6 +76,12 @@ nav:
       - Sensitive tools: concepts/sensitive-tools.md
       - Workflow context: concepts/workflow.md
       - Control plane (WebSocket): concepts/control-plane.md
+      - API keys: concepts/api-keys.md
+      - Policies: concepts/policies.md
+      - Tool policies: concepts/tool-policies.md
+      - Loop detection: concepts/loop-detection.md
+      - Anomaly detection: concepts/anomaly-detection.md
+      - Human approval: concepts/human-approval.md
   - How-to:
       - Protect a LangGraph agent: how-to/langgraph.md
       - Use with OpenAI Agents: how-to/openai-agents.md

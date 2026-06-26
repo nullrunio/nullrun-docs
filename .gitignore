@@ -7,3 +7,5 @@ venv/
 .idea/
 .vscode/
 site/
+.claude-flow/data/
+.gitignore
