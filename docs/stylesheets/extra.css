@@ -210,16 +210,12 @@
 
 /* ── h3 — colour-only differentiation from h2. Django paints h3 in
    a muted brand colour so the eye lands on it as a subsection, not
-   a top-level section. We use --nr-state-allow (dark green) in
-   light and a lighter green in dark. The brand palette already
-   carries the "state-allow = OK / safe" semantic, so green reads
-   as "go deeper here" — not just a decorative choice. */
+   a top-level section. We use --nr-state-allow, which is already
+   a light/dark pair: `#3B6D11` (dark green) on cream in light,
+   `#A8C97F` (light green) on ink in dark. No extra override needed
+   — the brand tokens carry the dark-scheme variant. */
 .md-typeset h3 {
   color: var(--nr-state-allow);
-}
-
-[data-md-color-scheme="slate"] .md-typeset h3 {
-  color: #7FB048;
 }
 
 /* ── Header permalinks (mkdocs.yml `toc.permalink: true`) ─────────
@@ -404,31 +400,38 @@
   content: attr(data-lang) " ";
 }
 
-/* Filename tab — Django-style ink strip ABOVE the <pre>.
-   Replaces the old mac-terminal traffic-light dots. The strip is
-   solid --nr-ink (the brand's near-black) in light mode and the
-   same cream-on-ink in dark mode, so the filename label reads as
-   inverted text. The Copy button is pinned to the right edge of
-   this strip (see `.md-clipboard` block below). */
+/* Filename tab — Django-style dark strip ABOVE the <pre>.
+   Replaces the old mac-terminal traffic-light dots. Background uses
+   --nr-term-chrome, NOT --nr-ink — --nr-ink flips cream in dark mode
+   and would make the strip + filename text both cream (invisible).
+   --nr-term-chrome stays near-black in both schemes (`#0E0E0C` light /
+   `#0A0A08` dark), so the strip is always a dark surface and the
+   cream filename label (--nr-cream, always light) is always readable.
+
+   The Copy button is pinned to the right edge of this strip (see
+   `.md-clipboard` block below); it also uses --nr-cream for the
+   same reason. */
 .md-typeset .highlight::before {
   content: "";
   display: block;
   height: 1.85rem;
-  background-color: var(--nr-ink);
+  background-color: var(--nr-term-chrome);
   border-radius: 0;
 }
 
-[data-md-color-scheme="slate"] .md-typeset .highlight::before {
-  background-color: var(--nr-ink);
-}
+/* The dark-mode override is intentionally a no-op: --nr-term-chrome
+   is already dark in slate mode. Kept commented for documentation. */
+/* [data-md-color-scheme="slate"] .md-typeset .highlight::before {
+  background-color: var(--nr-term-chrome);
+} */
 
 /* Filename label — set via `data-label="filename.py"` on a fenced block
    using the attr_list syntax: ```python title="filename.py"`.
    attr_list puts it on the <code> element, so we look there.
 
-   Sits IN the new ink-coloured strip above. Negative margin pulls it
-   back up into the strip zone; cream-on-ink colour reads as inverted
-   text against --nr-ink. */
+   Sits IN the dark strip above. Negative margin pulls it back up
+   into the strip zone; --nr-cream colour stays light in both schemes
+   so the filename is always readable against --nr-term-chrome. */
 .md-typeset .highlight pre > code::before {
   content: attr(data-title);
   display: block;
@@ -509,7 +512,12 @@
    .md-typeset .highlight. We pull it OUT of the body (where it floats
    over the code by default) and pin it into the chrome bar's
    top-right corner. The clipboard.js hook is preserved — we only
-   restyle + reposition, never remove. */
+   restyle + reposition, never remove.
+
+   Colour uses --nr-cream (always light) because the button sits on
+   the dark filename strip (--nr-term-chrome). Using --md-default-fg-
+   color (which flips per theme) would make the button invisible on
+   the strip in either scheme. */
 .md-typeset .md-clipboard {
   position: absolute;
   top: 0.42rem;
@@ -524,7 +532,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--md-default-fg-color);
+  color: var(--nr-cream);
   background-color: transparent;
   border: 1px solid transparent;
   border-radius: var(--md-border-radius--sm);
@@ -534,14 +542,12 @@
   z-index: 2;
 }
 
-[data-md-color-scheme="slate"] .md-clipboard {
-  color: var(--md-default-fg-color);
-}
-
-/* Reveal on hover of the whole code block. */
+/* Reveal on hover of the whole code block, with a subtle cream tint
+   so the button reads as a clickable surface. */
 .md-typeset .highlight:hover .md-clipboard,
 .md-typeset .md-clipboard:focus-visible {
   opacity: 1;
+  background-color: rgba(237, 235, 224, 0.10);
 }
 
 /* Force the icon size — Material defaults to 1.2rem svg which clips. */
