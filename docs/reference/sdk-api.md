@@ -4,7 +4,7 @@ The Python SDK lives in
 [`nullrunio/nullrun-sdk-python`](https://github.com/nullrunio/nullrun-sdk-python).
 Package name on PyPI: **`nullrun`**.
 
-```bash
+```bash title="shell"
 pip install nullrun            # core only
 pip install "nullrun[langgraph]"
 pip install "nullrun[agents]"  # openai-agents
@@ -17,7 +17,7 @@ see [Auto-instrumentation](../getting-started/install.md#auto-instrumentation).
 
 ## Top-level
 
-```python
+```python title="public_surface.py"
 from nullrun import init, protect, workflow, span, agent, track_llm, track_tool, track_event
 ```
 
@@ -83,7 +83,7 @@ and are no longer reachable under any import path.
 
 ## Catch-all pattern
 
-```python
+```python title="catch_all_pattern.py"
 import nullrun
 from nullrun import WorkflowKilledInterrupt, init, protect, workflow
 

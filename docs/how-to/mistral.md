@@ -2,11 +2,11 @@
 
 Install:
 
-```bash
+```bash title="shell"
 pip install "nullrun[mistral]"
 ```
 
-```python
+```python title="mistral_client.py"
 import nullrun
 from mistralai import Mistral
 

@@ -3,7 +3,7 @@
 Wrap any function with `@protect` to track its cost, tools, and
 behaviour, and let NullRun halt it when it goes off the rails.
 
-```python
+```python title="app.py"
 from openai import OpenAI
 from nullrun import init, protect
 

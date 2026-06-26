@@ -14,7 +14,7 @@ SDK does not invent workflow IDs — if you want a different grouping
 than the API key's binding, scope the work inside a
 `nullrun.workflow(...)` context. **`@protect` itself takes no kwargs**:
 
-```python
+```python title="workflow_scoped_agent.py"
 import nullrun
 from nullrun import init, protect
 

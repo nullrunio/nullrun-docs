@@ -2,11 +2,11 @@
 
 Install:
 
-```bash
+```bash title="shell"
 pip install "nullrun[autogen]"
 ```
 
-```python
+```python title="autogen_assistant.py"
 import nullrun
 from autogen_agentchat.agents import AssistantAgent
 from autogen_ext.models.openai import OpenAIChatCompletionClient

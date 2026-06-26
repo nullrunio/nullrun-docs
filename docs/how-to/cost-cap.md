@@ -13,7 +13,7 @@ your budget. It works at two levels:
 In the dashboard, open the workflow and set the budget. Or via the
 HTTP API:
 
-```bash
+```bash title="set_budget.sh"
 curl -X PATCH https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/$WORKFLOW_ID \
   -H "X-API-Key: $NULLRUN_API_KEY" \
   -H "X-Signature: $(compute_hmac)" \
@@ -29,7 +29,7 @@ curl -X PATCH https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/$WORKFLOW_ID 
 
 Then in the SDK:
 
-```python
+```python title="budgeted_run.py"
 import nullrun
 from nullrun import init, protect
 

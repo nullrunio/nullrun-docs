@@ -2,11 +2,11 @@
 
 Install:
 
-```bash
+```bash title="shell"
 pip install "nullrun[cohere]"
 ```
 
-```python
+```python title="cohere_client.py"
 import nullrun
 import cohere
 

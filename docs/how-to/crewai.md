@@ -2,11 +2,11 @@
 
 Install:
 
-```bash
+```bash title="shell"
 pip install "nullrun[crewai]"
 ```
 
-```python
+```python title="crewai_crew.py"
 import nullrun
 from crewai import Agent, Crew, Task
 

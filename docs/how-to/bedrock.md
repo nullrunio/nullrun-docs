@@ -2,11 +2,11 @@
 
 Install:
 
-```bash
+```bash title="shell"
 pip install "nullrun[bedrock]"
 ```
 
-```python
+```python title="bedrock_converse.py"
 import nullrun
 import boto3
 

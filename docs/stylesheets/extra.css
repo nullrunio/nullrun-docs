@@ -443,10 +443,8 @@
 }
 
 /* Chrome bar = pseudo-element on the .highlight wrapper. */
-.md-typeset .highlight > .highlighttable-wrapper::before,
-.md-typeset .highlight > pre::before,
 .md-typeset .highlight::before {
-  content: attr(data-lang) " ";
+  content: "";
 }
 
 /* Filename tab — Django-style dark strip ABOVE the <pre>.
@@ -458,61 +456,62 @@
    cream filename label (--nr-cream, always light) is always readable.
 
    The Copy button is pinned to the right edge of this strip (see
-   `.md-clipboard` block below); it also uses --nr-cream for the
-   same reason. */
-.md-typeset .highlight::before {
-  content: "";
+   `.md-code__button` block below); it also uses --nr-cream for the
+   same reason.
+
+   Material 9.x injects `<span class="filename">filename.py</span>` as
+   the FIRST CHILD of `.highlight` when the fenced block was authored
+   with `title="filename.py"`. The span paints the dark strip + the
+   filename text in one element; the Copy button nav (`<nav class="md-code__nav">`,
+   injected by Material's JS at runtime) is positioned absolutely over
+   the same strip via the `.md-code__nav` rule below. */
+
+/* Filename strip — visible only when title="…" was set. */
+.md-typeset .highlight > .filename {
   display: block;
+  margin: 0;
+  padding: 0.55rem 1.1rem;
   height: 1.85rem;
-  background-color: var(--nr-term-chrome);
-  border-radius: 0;
-}
-
-/* The dark-mode override is intentionally a no-op: --nr-term-chrome
-   is already dark in slate mode. Kept commented for documentation. */
-/* [data-md-color-scheme="slate"] .md-typeset .highlight::before {
-  background-color: var(--nr-term-chrome);
-} */
-
-/* Filename label — set via `data-label="filename.py"` on a fenced block
-   using the attr_list syntax: ```python title="filename.py"`.
-   attr_list puts it on the <code> element, so we look there.
-
-   Sits IN the dark strip above. Negative margin pulls it back up
-   into the strip zone; --nr-cream colour stays light in both schemes
-   so the filename is always readable against --nr-term-chrome. */
-.md-typeset .highlight pre > code::before {
-  content: attr(data-title);
-  display: block;
-  margin: -0.85rem -1.1rem 0.85rem;
-  padding: 0.55rem 1.1rem 0;
   font-family: var(--md-code-font);
   font-size: 0.72rem;
   font-weight: 500;
   letter-spacing: 0.01em;
   color: var(--nr-cream);
-  border-top: none;
-  position: relative;
-  top: -0.55rem;
+  background-color: var(--nr-term-chrome);
+  border-radius: 0;
 }
 
-/* If the page author didn't set `title="..."`, fall back to the
-   language label so the strip never looks empty. */
-.md-typeset .highlight pre > code:not([data-title])::before {
-  content: attr(data-lang);
+/* When the author didn't set `title="..."`, Material does NOT emit a
+   `.filename` span — the `.highlight` contains only `<pre>`. The
+   `.md-code__nav` (Copy button container) is still injected by the JS
+   runtime; it needs an anchor so the button doesn't overlap the first
+   line of code. We don't paint a fake empty dark strip (Django doesn't
+   do that either), but we DO offset the nav down into the pre's top
+   edge so it sits as an unobtrusive floating button. The :has() selector
+   scopes this to titled blocks. */
+.md-typeset .highlight:has(> .filename) .md-code__nav {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  height: 1.85rem;
+  padding: 0 0.55rem;
+  margin: 0;
+  z-index: 4;
 }
 
-.md-typeset .highlight pre > code:not([data-title]):not([data-lang])::before {
-  content: "code";
-}
-
-/* `data-lang` should always be present from Pygments — make sure
-   the default is lowercase, not "Python" etc. The Material renderer
-   provides data-lang. Drop the old uppercase: the new strip is
-   denser and uppercase + monospace reads as shouting. */
-.md-typeset .highlight pre > code:not([data-title])::before {
-  text-transform: lowercase;
-  font-weight: 400;
+/* Untitled blocks: park the Copy button inside the top-right of the
+   pre body itself (Material's pre-9.x default). Still semi-transparent
+   until the block is hovered. */
+.md-typeset .highlight:not(:has(> .filename)) .md-code__nav {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.55rem;
+  display: flex;
+  align-items: center;
+  margin: 0;
+  z-index: 4;
 }
 
 /* ── Inline code (NOT inside <pre>) — Django `.literal` style ─────
@@ -568,28 +567,14 @@
   background-color: transparent;
 }
 
-/* ── Copy button — Material `content.code.copy` (both APIs) ────────
-   Material renders the copy button in one of two DOM shapes depending
-   on theme version:
-     • OLD (< 9.x): `<button class="md-clipboard md-icon">` lives
-       inside `<pre>` and floats top-right by default.
-     • NEW (≥ 9.x): `<nav class="md-code__nav"><button class="md-code__button"></button></nav>`
-       lives inside `<pre>` (often BEFORE `<code>`), exposing a copy
-       affordance that is NOT styled by Material's defaults — without
-       intervention it sits inline in the pre, overlapping the first
-       line of code.
+/* ── Copy button — Material `content.code.copy` (≥ 9.x API) ─────────
+   Material 9.x injects `<nav class="md-code__nav">` containing
+   `<button class="md-code__button">` at runtime into every `.highlight`
+   block. We pin the nav INTO the dark chrome strip above the code
+   body — same treatment as the rest of the filename-bar chrome.
 
-   Django docs don't have this problem because Sphinx doesn't ship a
-   per-block copy button at all. We borrow Material's button (and its
-   `data-md-state="done"` confirmation toggle) but pin it INTO the dark
-   chrome strip above the code body — same treatment as the rest of
-   the filename-bar chrome.
-
-   The selector list below covers BOTH APIs so theme upgrades don't
-   silently re-break this. `--nr-cream` (always light) keeps the
-   button readable on the dark `--nr-term-chrome` strip in both
-   light + dark schemes. */
-.md-typeset .md-clipboard,
+   `--nr-cream` (always light) keeps the button readable on the dark
+   `--nr-term-chrome` strip in both light + dark schemes. */
 .md-typeset .md-code__button {
   display: inline-flex;
   align-items: center;
@@ -610,44 +595,22 @@
   transition: opacity 120ms ease, background-color 120ms ease, border-color 120ms ease;
 }
 
-/* OLD-API positioning — copy button is a direct child of `.highlight`
-   (or one of its descendants). Pin it to the chrome strip top-right. */
-.md-typeset .md-clipboard {
-  position: absolute;
-  top: 0.22rem;
-  right: 0.55rem;
-  z-index: 4;
-}
-
-/* NEW-API positioning — `<nav class="md-code__nav">` is the container,
-   `<button class="md-code__button">` is the actual control. Pull the
-   nav OUT of pre's flow (it sits at position 0 inside pre, which would
-   otherwise eat vertical space above the first code line) and pin it
-   to the chrome strip top-right corner. */
-.md-typeset .md-code__nav {
-  position: absolute;
-  top: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  height: 1.85rem;
-  padding: 0 0.55rem;
-  margin: 0;
-  z-index: 4;
-}
+/* `<nav class="md-code__nav">` is the container, `<button class="md-code__button">`
+   is the actual control. Pull the nav OUT of pre's flow (it sits at
+   The nav is anchored to the chrome strip via the `:has(> .filename)`
+   selector above (titled blocks) or floated inside the pre's top-right
+   for untitled blocks. No unscoped `.md-code__nav` rule here — it
+   would conflict with both scoped variants. */
 
 /* Reveal on hover of the whole code block, with a subtle cream tint
    so the button reads as a clickable surface. */
-.md-typeset .highlight:hover .md-clipboard,
 .md-typeset .highlight:hover .md-code__button,
-.md-typeset .md-clipboard:focus-visible,
 .md-typeset .md-code__button:focus-visible {
   opacity: 1;
   background-color: rgba(237, 235, 224, 0.10);
 }
 
 /* Force the icon size — Material defaults to 1.2rem svg which clips. */
-.md-typeset .md-clipboard svg,
 .md-typeset .md-code__button svg {
   width: 0.85rem;
   height: 0.85rem;
@@ -663,8 +626,7 @@
 }
 
 /* After-click feedback — `data-md-state="done"` is set by Material's
-   clipboard handler (both APIs use the same attribute). */
-.md-typeset .md-clipboard[data-md-state="done"],
+   clipboard handler. */
 .md-typeset .md-code__button[data-md-state="done"] {
   opacity: 1;
   border-color: var(--nr-state-allow);
@@ -726,7 +688,13 @@
   border-bottom-color: var(--md-default-fg-color);
 }
 
-/* ── Line numbers (pymdownx.highlight anchor_linenums + line_spans) ── */
+/* ── Line numbers (pymdownx.highlight anchor_linenums + line_spans) ──
+   The mkdocs.yml config uses `line_spans: __span` + `anchor_linenums: true`,
+   which renders line numbers as INLINE `<a id="__codelineno-N-N">` anchors
+   inside `<code>` — NOT as a separate `<table class="highlighttable">`.
+   The .highlighttable rules below are dead (no `.highlighttable` element
+   is produced by pymdownx with line_spans), kept only as a defensive
+   fallback in case a future renderer flips back to the table layout. */
 .md-typeset .highlighttable {
   display: block;
   border-collapse: collapse;

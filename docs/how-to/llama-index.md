@@ -2,11 +2,11 @@
 
 Install:
 
-```bash
+```bash title="shell"
 pip install "nullrun[llama-index]"
 ```
 
-```python
+```python title="llama_index_chat.py"
 import nullrun
 from llama_index.core.llms import ChatMessage
 from llama_index.llms.openai import OpenAI

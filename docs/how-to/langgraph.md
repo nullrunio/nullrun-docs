@@ -2,7 +2,7 @@
 
 Install with the LangGraph extra:
 
-```bash
+```bash title="shell"
 pip install "nullrun[langgraph]" langgraph langchain-openai
 ```
 
@@ -12,7 +12,7 @@ manual callback wiring needed** (the old
 `from nullrun.instrumentation.langgraph import NullRunCallback`
 import still works but is discouraged).
 
-```python
+```python title="langgraph_agent.py"
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, MessagesState, StateGraph
 
@@ -45,7 +45,7 @@ any LangChain `Runnable` and most LangGraph node types.
 If you need to attach the callback manually — e.g. inside a library
 that re-compiles graphs after `init()` ran — the canonical wrapper is:
 
-```python
+```python title="langgraph_manual_wrapper.py"
 from nullrun.toolbox.langgraph import wrapper
 
 app = wrapper(graph.compile())

@@ -58,7 +58,7 @@ Disabling the WebSocket control plane is an internal test knob — it
 is **not** a public env var. To turn it off, construct the runtime
 directly with `polling=False`:
 
-```python
+```python title="runtime_custom.py"
 from nullrun.runtime import NullRunRuntime
 rt = NullRunRuntime(api_key=..., polling=False)   # poll-only mode
 ```

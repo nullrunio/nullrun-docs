@@ -2,13 +2,13 @@
 
 ## Python SDK
 
-```bash
+```bash title="shell"
 pip install nullrun
 ```
 
 Verify:
 
-```bash
+```bash title="shell"
 python -c "from nullrun import protect; print('ok')"
 ```
 
@@ -26,7 +26,7 @@ identifier (`nr_live_...`) plus a server-side HMAC secret. The SDK
 transparently obtains the HMAC secret via `POST /api/v1/auth/verify`
 on first use, so you only need to pass the API key:
 
-```python
+```python title="app.py"
 import nullrun
 
 nullrun.init(api_key="nr_live_...")
@@ -35,7 +35,7 @@ nullrun.init(api_key="nr_live_...")
 For air-gapped setups, or if you want to skip the auth round-trip,
 set both via env vars before `init()`:
 
-```bash
+```bash title="~/.bashrc"
 export NULLRUN_API_KEY=nr_live_...
 export NULLRUN_SECRET_KEY=nrs_...   # optional: server-issued HMAC secret
 ```
@@ -85,7 +85,7 @@ layer (budget pre-flight + kill/pause + sensitive-tool decision).
 | `nullrun[autogen]` | `autogen-agentchat`, `autogen-ext[openai]` |
 | `nullrun[all]` | every vendor extra |
 
-```bash
+```bash title="shell"
 pip install "nullrun[langgraph]"
 pip install "nullrun[all]"
 ```

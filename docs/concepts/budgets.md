@@ -38,7 +38,7 @@ post-flight `/track` reconciles any drift.
 In the NullRun dashboard, open a workflow and set the per-workflow
 budget. Or via the API:
 
-```bash
+```bash title="set_budget.sh"
 curl -X PATCH https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/$WORKFLOW_ID \
   -H "X-API-Key: $NULLRUN_API_KEY" \
   -H "X-Signature: $(compute_hmac)" \
@@ -50,7 +50,7 @@ curl -X PATCH https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/$WORKFLOW_ID 
 Inside `@protect`, set the workflow id via `nullrun.workflow(...)`
 (the decorator itself takes no kwargs):
 
-```python
+```python title="budgeted_workflow.py"
 import nullrun
 from nullrun import init, protect
 

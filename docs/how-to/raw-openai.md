@@ -3,11 +3,11 @@
 If you use the `openai` package directly (no LangChain / LlamaIndex /
 CrewAI on top), install the OpenAI extra:
 
-```bash
+```bash title="shell"
 pip install "nullrun[openai]"
 ```
 
-```python
+```python title="raw_openai_client.py"
 import nullrun
 from openai import OpenAI
 

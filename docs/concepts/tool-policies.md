@@ -10,7 +10,7 @@ the SDK's `@protect` path.
 Three equivalent JSON keys are accepted (`validate_tool_block_config`
 in `backend/src/proxy/http/validation.rs:409-483`):
 
-```json
+```json title="tool_block_policy.json"
 {
   "config": {
     "tool_pattern": ["send_*", "admin.*", "file.delete"],

@@ -50,7 +50,7 @@ invisible to NullRun until you wrap it in `@protect`.
 
 ## All of the above
 
-```bash
+```bash title="shell"
 pip install "nullrun[all]"
 ```
 

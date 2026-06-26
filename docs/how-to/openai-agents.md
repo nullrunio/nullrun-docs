@@ -2,14 +2,14 @@
 
 Install:
 
-```bash
+```bash title="shell"
 pip install "nullrun[agents]" openai-agents
 ```
 
 Wrap the `Runner.run_sync` call (or any sync / async runner) with
 `@protect`:
 
-```python
+```python title="openai_agents_protect.py"
 from agents import Agent, Runner
 
 from nullrun import init, protect

@@ -2,11 +2,11 @@
 
 Install:
 
-```bash
+```bash title="shell"
 pip install "nullrun[langchain]"
 ```
 
-```python
+```python title="langchain_chat.py"
 import nullrun
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage

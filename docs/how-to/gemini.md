@@ -2,11 +2,11 @@
 
 Install:
 
-```bash
+```bash title="shell"
 pip install "nullrun[gemini]"
 ```
 
-```python
+```python title="gemini_client.py"
 import nullrun
 from google import genai
 

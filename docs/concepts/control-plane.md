@@ -92,7 +92,7 @@ calls lands before the next call (no lost state window).
 To force the HTTP-poll path without the env var (test / air-gapped
 setups), construct the runtime directly with `polling=False`:
 
-```python
+```python title="runtime_poll_only.py"
 from nullrun.runtime import NullRunRuntime
 rt = NullRunRuntime(api_key="nr_live_...", polling=False)   # WS-disabled
 ```

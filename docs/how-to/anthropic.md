@@ -2,11 +2,11 @@
 
 Install:
 
-```bash
+```bash title="shell"
 pip install "nullrun[anthropic]"
 ```
 
-```python
+```python title="anthropic_client.py"
 import nullrun
 from anthropic import Anthropic
 
