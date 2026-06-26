@@ -661,9 +661,11 @@
    body — same treatment as the rest of the filename-bar chrome.
 
    The button is ALWAYS visible (not hidden until hover) with a
-   semi-transparent cream tint that lifts on hover. This way the
-   "Copy" affordance is discoverable without forcing a mouse
-   sweep, and the contrast against the dark strip is unambiguous. */
+   clearly-lighter pill that contrasts against the dark strip.
+   Earlier `rgba(237, 235, 224, 0.12)` over `#0E0E0C` resolved to
+   roughly `rgb(40, 40, 37)` — only 26/255 L* above the strip, so
+   the button was effectively invisible. Bumped to a solid lifted
+   shade that reads unambiguously as a clickable surface. */
 .md-typeset .md-code__button {
   display: inline-flex;
   align-items: center;
@@ -672,12 +674,12 @@
   padding: 0 0.6rem;
   font-family: var(--md-text-font);
   font-size: 0.66rem;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--nr-cream);
-  background-color: rgba(237, 235, 224, 0.12);
-  border: 1px solid rgba(237, 235, 224, 0.20);
+  background-color: rgba(237, 235, 224, 0.20);
+  border: 1px solid rgba(237, 235, 224, 0.35);
   border-radius: var(--md-border-radius--sm);
   cursor: pointer;
   opacity: 1;
@@ -696,8 +698,8 @@
 .md-typeset .highlight:hover .md-code__button,
 .md-typeset .md-code__button:hover,
 .md-typeset .md-code__button:focus-visible {
-  background-color: rgba(237, 235, 224, 0.22);
-  border-color: rgba(237, 235, 224, 0.35);
+  background-color: rgba(237, 235, 224, 0.32);
+  border-color: rgba(237, 235, 224, 0.50);
 }
 
 /* Force the icon size — Material defaults to 1.2rem svg which clips. */
