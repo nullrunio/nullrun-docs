@@ -657,49 +657,64 @@
 /* ── Copy button — Material `content.code.copy` (≥ 9.x API) ─────────
    Material 9.x injects `<nav class="md-code__nav">` containing
    `<button class="md-code__button">` at runtime into every `.highlight`
-   block. We pin the nav INTO the dark chrome strip above the code
-   body — same treatment as the rest of the filename-bar chrome.
+   block. The button is empty — Material renders the copy icon via
+   a `::after` pseudo-element with `mask-image: var(--md-code-copy-icon)`
+   and `background-color: currentcolor` (so the icon's fill tracks
+   the button's `color`).
 
-   The button is ALWAYS visible (not hidden until hover) with a
-   clearly-lighter pill that contrasts against the dark strip.
-   Earlier `rgba(237, 235, 224, 0.12)` over `#0E0E0C` resolved to
-   roughly `rgb(40, 40, 37)` — only 26/255 L* above the strip, so
-   the button was effectively invisible. Bumped to a solid lifted
-   shade that reads unambiguously as a clickable surface. */
+   We pin the nav INTO the dark chrome strip above the code body.
+   Button surface: a SOLID cream pill (`#FBFAF4`) with the icon in
+   INK (`#1A1A18`) — fully inverted, so the dark-strip background,
+   the cream pill, and the dark icon all have unambiguous contrast
+   (≥ 12:1). Earlier tinted-cream-on-dark (12%, 20%) collapsed the
+   icon (cream) into the bg (cream) and the button became invisible
+   despite opacity:1. Solid colors fix it. */
 .md-typeset .md-code__button {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  height: 1.5rem;
-  padding: 0 0.6rem;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
   font-family: var(--md-text-font);
   font-size: 0.66rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--nr-cream);
-  background-color: rgba(237, 235, 224, 0.20);
-  border: 1px solid rgba(237, 235, 224, 0.35);
+  color: var(--nr-ink);                 /* dark icon on cream pill */
+  background-color: var(--nr-cream);    /* solid cream pill */
+  border: 1px solid var(--nr-cream);
   border-radius: var(--md-border-radius--sm);
   cursor: pointer;
   opacity: 1;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 /* `<nav class="md-code__nav">` is the container, `<button class="md-code__button">`
    is the actual control. Pull the nav OUT of pre's flow (it sits at
-   The nav is anchored to the chrome strip via the `:has(> .filename)`
-   selector above (titled blocks) or floated inside the pre's top-right
-   for untitled blocks. No unscoped `.md-code__nav` rule here — it
-   would conflict with both scoped variants. */
+   position 0 inside pre, which would otherwise eat vertical space above
+   the first code line) and pin it to the chrome strip top-right corner. */
+.md-typeset .md-code__nav {
+  position: absolute;
+  top: 0.15rem;
+  right: 0.55rem;
+  display: flex;
+  align-items: center;
+  height: 1.7rem;
+  padding: 0;
+  margin: 0;
+  z-index: 4;
+}
 
-/* Lift the cream tint on hover so the button reads as a clickable
-   surface without the opacity transition. */
+/* On hover, swap the pill to ink-on-cream: button bg becomes ink,
+   icon becomes cream. Inverts the contrast, signals the click
+   affordance unambiguously. */
 .md-typeset .highlight:hover .md-code__button,
 .md-typeset .md-code__button:hover,
 .md-typeset .md-code__button:focus-visible {
-  background-color: rgba(237, 235, 224, 0.32);
-  border-color: rgba(237, 235, 224, 0.50);
+  background-color: var(--nr-ink);
+  border-color: var(--nr-ink);
+  color: var(--nr-cream);
 }
 
 /* Force the icon size — Material defaults to 1.2rem svg which clips. */
