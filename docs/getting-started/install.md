@@ -20,15 +20,17 @@ Current version: `0.6.0` (alpha).
 
 ## API key
 
-Sign in at [nullrun.io](https://nullrun.io), open **Settings
-→ API keys**, and create a key. Each key is minted with a public
+Sign in at [nullrun.io](https://nullrun.io), open **API keys**, and create a key. Each key is minted with a public
 identifier (`nr_live_...`) plus a server-side HMAC secret. The SDK
-transparently obtains the HMAC secret via `POST /api/v1/auth/verify`
+transparently obtains the HMAC secret via: 
+```http
+POST /api/v1/auth/verify
+```
+
 on first use, so you only need to pass the API key:
 
 ```python title="app.py"
 import nullrun
-
 nullrun.init(api_key="nr_live_...")
 ```
 
@@ -37,7 +39,6 @@ set both via env vars before `init()`:
 
 ```bash title="~/.bashrc"
 export NULLRUN_API_KEY=nr_live_...
-export NULLRUN_SECRET_KEY=nrs_...   # optional: server-issued HMAC secret
 ```
 
 The public `init()` surface takes `api_key` (and optionally `api_url`,

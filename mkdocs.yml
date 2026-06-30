@@ -85,6 +85,7 @@ nav:
   - How-to:
       - Protect a LangGraph agent: how-to/langgraph.md
       - Use with OpenAI Agents: how-to/openai-agents.md
+      - Use with FastAPI: how-to/fastapi.md
       - LLM frameworks:
           - Auto-instrumentation overview: how-to/auto-instrumented-frameworks.md
           - Anthropic: how-to/anthropic.md

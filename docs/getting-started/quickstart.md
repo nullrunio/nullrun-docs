@@ -1,16 +1,16 @@
 # Quickstart
 
-Wrap any function with `@protect` to track its cost, tools, and
+Wrap any function with **`@nullrun.protect`** to track its cost, tools, and
 behaviour, and let NullRun halt it when it goes off the rails.
 
 ```python title="app.py"
 from openai import OpenAI
-from nullrun import init, protect
+import nullrun
 
-init(api_key="nr_live_...")
+nullrun.init(api_key="nr_live_...")
 client = OpenAI()
 
-@protect
+@nullrun.protect
 def answer(prompt: str) -> str:
     response = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -23,10 +23,6 @@ print(answer("What does NullRun do?"))
 
 That's it — every call inside `answer()` is now cost-attributed and
 governed by your workspace policy.
-
-> Without an `api_key`, `init()` raises `NullRunAuthenticationError` at
-> first use. There is no local / offline mode — NullRun has no way to
-> enforce anything without the gateway.
 
 ## What gets tracked
 

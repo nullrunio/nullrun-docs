@@ -23,8 +23,6 @@ needs the API key — everything else has sensible defaults.
 | `NULLRUN_BATCH_SIZE` | `50` | Event batch size for `/track/batch` |
 | `NULLRUN_FLUSH_INTERVAL_MS` | `5000` | Event flush interval (ms — internally divided by 1000) |
 | `NULLRUN_TRANSPORT` | `ws` | Control-plane transport: `ws` (default, WebSocket push) or `http` (1s polling fallback). See `NullRunRuntime._start_remote_polling()` in `src/nullrun/runtime.py`. |
-| `NULLRUN_USE_GRPC` | unset (no-op) | Silent no-op — the gRPC transport is frozen. Set to any value; the SDK falls back to HTTP and logs at INFO. |
-| `NULLRUN_FALLBACK_MODE` | (deprecated) | Legacy selector — use `on_transport_error` on `Transport.execute()` instead. Emits `DeprecationWarning`, scheduled for removal in 0.5.0. |
 
 The HTTP request timeout and retry count are **not** configurable from
 the SDK — they are hardcoded to `30s` and `3` retries in

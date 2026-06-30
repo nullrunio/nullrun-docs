@@ -33,6 +33,9 @@ from nullrun import init, protect, workflow, span, agent, track_llm, track_tool,
 | `track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` | Manual escape hatch for non-HTTP LLM calls. |
 | `track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool-call tracking. |
 | `track_event(event_type, **kwargs)` | Catch-all for custom events. |
+| `format_user_message(exc, locale="en")` | Render a `NullRunError` (or any object with an `error_code`) as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. |
+| `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear the override. |
+| `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. |
 
 All `track_*` functions return a `dict[str, Any]` describing the
 backend's response (`{"allowed": bool, "actions": [...], ...}`); they
@@ -125,8 +128,79 @@ failure fired (`stage`, `workflow_id`, `tool_name`, `api_key_prefix`).
 Hook exceptions are caught and DEBUG-logged — a misbehaving hook
 cannot break the SDK.
 
+## User-facing messages
+
+`nullrun.format_user_message(exc, locale="en")` renders a `NullRunError`
+(or any object with an `error_code` attribute) as an end-user-facing
+string. **Use this instead of `str(exc)` whenever the message might be
+shown to a person who is not the developer** — `str(exc)` contains
+internal identifiers like `workflow_id` and `budget_cents` that leak
+the SDK's internals into product UI.
+
+```python title="format_user_message.py"
+import nullrun
+from nullrun import NullRunBudgetError
+
+@nullrun.protect
+def chatbot(message: str) -> str:
+    return agent.run(message)
+
+try:
+    reply = chatbot(message)
+except NullRunBudgetError as exc:
+    # Show the user a clean message instead of the raw exception text
+    # ("Workflow wf-31a blocked: budget_cents=500 exceeded...").
+    return nullrun.format_user_message(exc)
+```
+
+### Why the SDK owns the wording
+
+The catalog of default messages is part of the NullRun product, not the
+customer's integration code. Every Customer Support Bot built on
+NullRun that hits `NR-B004` shows the same "You've reached the usage
+limit for this conversation. Please try again later." string. This
+keeps the UX consistent across deployments and lets the product team
+A/B test wording for upgrade-conversion without touching customer
+code. **Customers should not write their own `code -> text` mapping.**
+
+### Per-deployment branding
+
+If a deployment wants its own wording for a single code (e.g. a
+branded "out of credits ☕" message), call `set_user_message` once at
+startup:
+
+```python title="set_user_message.py"
+import nullrun
+
+# Override the default message for budget-exceeded. Pass "" to clear.
+nullrun.set_user_message(
+    "NR-B004",
+    "You've used all your support credits. Upgrade to keep chatting.",
+)
+```
+
+Overrides live in a per-process dict and are checked before the
+catalog default. They do not persist across processes and are not
+synced to the backend — they are pure presentation sugar.
+
+### Locale
+
+`format_user_message(exc, locale)` accepts a locale code; in this SDK
+version **only English (`"en"`) is shipped** and any other value falls
+back to the English message. The parameter is reserved for future
+locale packs and matches the structure that user-message overrides
+will take when they land.
+
+### What if `error_code` is unknown or missing?
+
+Objects without `error_code` (plain `Exception`, raw values) get a
+generic fallback (`"Something went wrong. Please try again."`). The
+function never raises and never returns an empty string.
+
 ## See also
 
 - [Errors](errors.md)
+- [Errors → Decision vs. infrastructure](errors.md#decision-vs-infrastructure)
+- [Use with FastAPI](../how-to/fastapi.md)
 - [Auto-instrumentation](../getting-started/install.md#auto-instrumentation)
 - [Control plane](../concepts/control-plane.md)
