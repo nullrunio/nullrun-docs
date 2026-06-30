@@ -38,3 +38,6 @@ at import.
 
 - [Circuit breaker](circuit-breaker.md)
 - [Workflow context](workflow.md)
+- [Tool catalog](../reference/llm-tool-catalog.md) — common
+  tool names LLM agents expose, with a recommended
+  `@sensitive` starter list
