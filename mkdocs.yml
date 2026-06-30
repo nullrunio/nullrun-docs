@@ -102,6 +102,10 @@ nav:
       - SDK API: reference/sdk-api.md
       - HTTP API: reference/http-api.md
       - Error codes: reference/errors.md
+  - Compliance:
+      - Overview: compliance/index.md
+      - Geographic restrictions: compliance/geo-restrictions.md
+      - Sanctions screening: compliance/sanctions-screening.md
   - Troubleshooting: troubleshooting.md
 
 # Tier 2 announcement — rendered as a dismissible top-of-page bar by

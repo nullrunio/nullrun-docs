@@ -56,6 +56,11 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 - [HTTP API](docs/reference/http-api.md) · `/track`, `/gate`, `/check`, `/execute`, WebSocket
 - [Error codes](docs/reference/errors.md) · `validation_error`, `RateLimitError`, kill contract
 
+**Compliance**
+- [Overview](docs/compliance/index.md) · Fortress posture, fail-CLOSED matrix
+- [Geographic restrictions](docs/compliance/geo-restrictions.md) · IP-level geo-block, sanctioned + high-risk blocklists, VPS runbook
+- [Sanctions screening](docs/compliance/sanctions-screening.md) · OFAC SDN signup screening, degraded fallback
+
 ## What you need from us
 
 - **API key** — create one in [nullrun.io](https://nullrun.io) → Settings
