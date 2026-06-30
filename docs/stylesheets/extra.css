@@ -576,6 +576,25 @@
   background-color: var(--md-code-bg-color);
 }
 
+/* ── Code body (`<code>` inside the <pre>) ─────────────────────────────
+   Material's bundled `mkdocs-material.css` sets `white-space: nowrap`
+   on `.md-typeset pre > code` ONLY when the block uses `line_spans`
+   rendering (mkdocs.yml `markdown_extensions.pymdownx.highlight.line_spans:
+   __span` + `anchor_linenums: true`). The narrow-collapse collapses
+   the leading whitespace of each line — every `    return` inside a
+   `def`, every indented YAML/hier config, every shell continuation —
+   flush to column 0. We re-assert `pre-wrap` here so indent is
+   preserved and long lines still wrap the same way the surrounding
+   `<pre>` does.
+
+   Scoped to `.highlight pre > code` so inline `<code>` (e.g.
+   `inline` backticks in prose) is left alone — Material keeps that
+   as `nowrap` on purpose. */
+.md-typeset .highlight pre > code {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
 /* Chrome bar = pseudo-element on the .highlight wrapper. */
 .md-typeset .highlight::before {
   content: "";
