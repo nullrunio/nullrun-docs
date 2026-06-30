@@ -9,3 +9,5 @@ venv/
 site/
 .claude-flow/data/
 .gitignore
+docs/.claude-flow/data/pending-insights.jsonl
+.claude-flow/

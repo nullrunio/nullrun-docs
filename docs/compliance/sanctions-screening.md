@@ -31,12 +31,11 @@ is the catch-net for the cases where the IP alone is insufficient:
 
 ## List source
 
-The screening table is loaded from `data/sanctions/sdn.csv`. The
+The screening table is loaded from `[Office of Foreign Assets Control`](https://ofac.treasury.gov/sanctions-list-service). The
 expected CSV format is the OFAC SDN format:
 
 ```
-ent_num, SDN_Name, SDN_Type, Program, Title, Call_Sign, Vess_type, Tonnage, GRT, Vess_flag, Vess_owner, Remarks
-12345, "PUTIN, Vladimir Vladimirovich", individual, UKRAINE-EO13662, "", "", "", "", "", "", "", ""
+35096,"PUTIN, Vladimir Vladimirovich","individual","RUSSIA-EO14024","President of the Russian Federation",-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,"DOB 07 Oct 1952; POB Leningrad, Russia; nationality Russia; citizen Russia; Gender Male; Secondary sanctions risk: See Section 11 of Executive Order 14024.; President of the Russian Federation."
 ```
 
 The EU consolidated list and the UK HMT consolidated list share the
