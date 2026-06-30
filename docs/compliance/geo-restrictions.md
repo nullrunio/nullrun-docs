@@ -4,15 +4,14 @@ NullRun's edge gateway classifies every inbound request by source
 country and applies one of three actions:
 
 - **Allow** — request proceeds normally.
-- **Hard block** — request is rejected (403 `service_unavailable_in_jurisdiction` or 503 `geoip_unavailable`).
-- **Waitlist redirect** — compliance-blocked visitor on the marketing
+- **Hard block** — request is rejected with **403**
+  (`service_unavailable_in_jurisdiction`) or **503** (`geoip_unavailable`).
+- **Waitlist redirect** — a compliance-blocked visitor on the marketing
   site is 302-redirected to `/waitlist` so the lead is captured without
   exposing the API surface.
 
-The lookup is performed by the **Fortress geo-block middleware** at
-`backend/src/proxy/middleware/geo_block.rs`, which runs before auth
-and before the per-org quota checks so blocked traffic never touches
-the database.
+The classification happens before authentication and before
+per-account quota checks, so blocked traffic never touches the database.
 
 ## Why this is needed
 
@@ -30,9 +29,7 @@ those jurisdictions is a criminal-law violation, not a civil one.
 
 ## Blocklist
 
-The blocklist is compiled into the binary in two tiers. Both lists
-live in `geo_block.rs` and are unit-tested in
-`backend/src/proxy/middleware/geo_block.rs:550-567`.
+The blocklist has two tiers.
 
 ### Tier 1 — Sanctioned (strict-liability block)
 
@@ -69,8 +66,7 @@ For high-risk countries:
 
 - **`/api/*` and `/ws/*`** → 403 `service_unavailable_in_jurisdiction`
 - **Marketing site** (anything NOT under `/api/` or `/ws/`) → 302 to
-  `/waitlist?cc=<ISO>`. The waitlist page lives at
-  `frontend/app/waitlist/page.tsx`.
+  `/waitlist?cc=<ISO>`.
 
 ## Decision matrix
 
@@ -91,31 +87,23 @@ flowchart TD
     P -->|No| H4["403 service_unavailable_in_jurisdiction"]
 ```
 
-The action table is covered by `geo_block.rs::Lookup::action()` and
-its unit tests at `geo_block.rs:600-652`.
-
 ## Fail-CLOSED posture
 
-The middleware is **fail-CLOSED on the blocklist**: if the GeoIP
-database is missing, unreadable, or returns an error, **all** ingress
-is rejected with 503. The rationale is in the module-level doc-comment
-of `geo_block.rs`:
+The geo-block is **fail-CLOSED**: if the GeoIP database is missing,
+unreadable, or returns an error, **all** ingress is rejected with
+**503**. The rationale:
 
 > If the GeoIP database is missing or unreadable, ALL ingress is
 > rejected (503) so the operator notices the misconfiguration.
 
-The trace log emits `fortress: GeoIP database unavailable` at ERROR
-level on every request that hits the failure path — that log line in
-ELK is the operator's first signal that the `.mmdb` needs to be
-restored.
+The error log line you should watch for is
+`fortress: GeoIP database unavailable` — its appearance is the first
+signal that the `.mmdb` file needs to be restored.
 
-The earlier behaviour was that a missing `.mmdb` made the reader
-return `None` and the request was allowed. That regression caused a
-prod 503-storm on 2026-06-30 until `20a5d7f fix(infra)` pinned
-`NULLRUN_GEOIP_DB=/tmp/geoip/GeoLite2-Country.mmdb` and bind-mounted
-`/opt/nullrun/backend/data` into the container so the file survives
-`docker compose up -d`. See the [runbook appendix](#runbook-vps-deploy)
-below.
+A previous version silently allowed traffic when the database was
+missing, which caused a production 503-storm on 2026-06-30 until the
+operator pin mounted the database into the container so it survives
+redeploys.
 
 ## Operator overrides
 
@@ -123,17 +111,17 @@ below.
 
 | Env var | Effect | When to use |
 | --- | --- | --- |
-| `NULLRUN_GEOBLOCK_DISABLED=1` | Disables the middleware entirely. One-shot WARN is logged on first request. | Local development only. Set in `dev.env`, never in `.env.prod`. |
+| `NULLRUN_GEOBLOCK_DISABLED=1` | Disables the geo-block entirely. One-shot WARN is logged on first request. | Local development only. Never set in production. |
 | `NULLRUN_GEOIP_DB=/path/to/file.mmdb` | Override the path to the MaxMind database. Default: `data/GeoLite2-Country.mmdb` (relative to container CWD). | VPS / staging deployments where the operator supplies the file. |
 
 The `NULLRUN_GEOBLOCK_DISABLED=1` flag is the most dangerous knob in
-the codebase — it is a **fail-OPEN** setting on a regulatory control.
+the gateway — it is a **fail-OPEN** setting on a regulatory control.
 The middleware emits the WARN exactly once per process to surface the
 misconfiguration without flooding the log.
 
 ## What is bypassed
 
-The middleware **never** blocks:
+The geo-block **never** blocks:
 
 - **Localhost and private IPs** — `127.0.0.0/8`, `10/8`, `172.16/12`,
   `192.168/16`, `169.254/16`, `100.64.0.0/10` (CGNAT), IPv6
@@ -146,11 +134,7 @@ The middleware **never** blocks:
 - **The waitlist endpoint** — `POST /api/v1/waitlist`. The marketing
   site redirects compliance-blocked visitors here; if the geo-block
   then 403'd the form POST, the lead-capture flow would be broken.
-  The waitlist has its own rate limit (5/hour/IP via
-  `ip_rate_limit::waitlist_rate_limit`).
-
-The bypass rules live in `is_bypass_ip` and `is_bypass_path` at
-`geo_block.rs:258-362` and are unit-tested at `:570-597`.
+  The waitlist has its own rate limit of 5 submissions per hour per IP.
 
 ## Audit headers
 
@@ -164,14 +148,12 @@ debugging:
 | `x-nullrun-fortress-country: <ISO>` | The resolved ISO 3166-1 alpha-2 country code. Absent when the GeoIP database is unavailable. |
 
 These headers are **not** logged at INFO level (the country code is
-PII under GDPR, ironically) — they appear at WARN. See
-`geo_block.rs:455-477` for the sanitised log behaviour.
+PII under GDPR, ironically) — they appear at WARN.
 
 ## Runbook — VPS deploy
 
-This is the operator recipe that ships with the
-`fix(infra): wire NULLRUN_GEOIP_DB + bind mount MaxMind db`
-commit (`20a5d7f`).
+This is the operator recipe for keeping the GeoIP database live in
+production.
 
 1. **Download the database.** A free MaxMind license key is required:
    <https://www.maxmind.com/en/geolite2/signup>.
@@ -187,7 +169,7 @@ edition_id=GeoLite2-Country&license_key=$MAXMIND_LICENSE_KEY&suffix=tar.gz" \
     rm -rf /tmp/GeoLite2-Country_*
     ```
 
-2. **Pin the env var.** The `docker-compose.yml` already declares:
+2. **Pin the path.** The `docker-compose.yml` already declares:
 
     ```yaml
     environment:
@@ -197,34 +179,17 @@ edition_id=GeoLite2-Country&license_key=$MAXMIND_LICENSE_KEY&suffix=tar.gz" \
     ```
 
     The bind-mount is **read-only** and pins the path so the
-    `data/GeoLite2-Country.mmdb` lookup in `geo_block.rs:128` resolves
-    to the operator-supplied file.
+    `data/GeoLite2-Country.mmdb` lookup resolves to the
+    operator-supplied file.
 
 3. **Restart the gateway.** Until in-process hot-reload lands, a
    fresh `docker compose up -d` is required to pick up a new `.mmdb`.
 
 4. **Verify.** From a known EU IP: `curl -i https://api.nullrun.io/healthz`
    should be 200, and `curl -i https://api.nullrun.io/api/v1/auth/register`
-   should be 403 with `x-nullrun-fortress-block: sanctions` or `service_unavailable_in_jurisdiction` in the body.
+   should be 403 with `x-nullrun-fortress-block: sanctions` or
+   `service_unavailable_in_jurisdiction` in the body.
 
-5. **Schedule weekly refresh.** A weekly cron is recommended — see
-   `infra/cron.d/` for an example. The GeoIP allocation drift is
-   slow (weeks), but OFAC/EU/UK SDN lists move faster; see
-   [Sanctions screening](sanctions-screening.md).
-
-## Testing
-
-The middleware is covered by unit tests in
-`geo_block.rs:545-735`:
-
-- `sanctioned_list_includes_core_targets` — RU, IR, KP, SY, CU present
-- `high_risk_list_includes_eu_us_china_india_uk` — DE, FR, IT, ES, NL,
-  US, CN, IN, GB, CH present
-- `bypass_ip_skips_geo_block` — loopback / private / CGNAT pass through
-- `bypass_path_skips_geo_block` — health, metrics, `/internal/*`, the
-  waitlist, and the marketing site all bypass
-- `lookup_action_matrix` — the sanctioned / high-risk / allowed /
-  miss / down branches of the action table
-- `geo_block_loads_mmdb` (`--ignored`) — integration smoke test that
-  requires `data/GeoLite2-Country.mmdb` to be present. Runs
-  `cargo test -p breaker-core geo_block_loads_mmdb -- --ignored`.
+5. **Schedule weekly refresh.** A weekly cron is recommended. The
+   GeoIP allocation drift is slow (weeks), but OFAC/EU/UK SDN lists
+   move faster — see [Sanctions screening](sanctions-screening.md).

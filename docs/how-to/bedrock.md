@@ -23,8 +23,7 @@ Patched at the `boto3` transport layer; works for every model
 hosted on Bedrock (Anthropic, Mistral, Cohere, Meta, AI21, etc.).
 The extractor handles both the nested (`response.usage` with
 `inputTokens` / `outputTokens`) and the top-level (Anthropic-on-Bedrock
-flattens them onto the response body) shapes — see the
-`_bedrock_extractor` docstring in `src/nullrun/instrumentation/auto.py`.
+flattens them onto the response body) shapes.
 
 ## See also
 

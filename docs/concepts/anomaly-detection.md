@@ -22,8 +22,8 @@ like the others."
 
 For each gate / execute evaluation, the detector computes the
 **mean** and **standard deviation** of recent per-call costs in
-the workflow (`backend/src/detectors/anomaly.rs:14-26`). It then
-checks whether the current call's cost exceeds:
+the workflow. It then checks whether the current call's cost
+exceeds:
 
 ```
 threshold = mean + (std_dev × multiplier)
@@ -42,15 +42,14 @@ flowchart LR
     C --> A
     T --> A
 
-    A -->|yes| D["Severity::Warning<br/>alert + log"]
+    A -->|yes| D["Warning severity<br/>alert + log"]
     A -->|no| OK["proceed (allow)"]
 ```
 
 The trigger fires only when there is a meaningful baseline
-(`recent_costs.is_empty()` short-circuits to no-fire). On a brand
-new workflow with one call, there is nothing to compare against,
-so the first call never trips anomaly detection regardless of
-mode.
+(`recent_costs.is_empty()` short-circuits to no-fire). On a brand-new workflow with one call, there is nothing to compare
+against, so the first call never trips anomaly detection regardless
+of mode.
 
 ### Cost distribution shape
 
@@ -88,8 +87,7 @@ exceeding the threshold derived from the distribution.
 ## Modes
 
 The σ multiplier is controlled by the policy's `anomaly_mode`
-field (`AnomalyMode` enum in `models.rs:175-185`). Three values
-are exposed:
+field. Three values are exposed:
 
 | Mode | σ multiplier | Use when |
 | --- | --- | --- |
@@ -97,20 +95,14 @@ are exposed:
 | `Moderate` *(default)* | `3.0` | Mixed workloads. Balanced sensitivity. |
 | `Strict` | `5.0` | High-stakes workflows; only fires on dramatic outliers. |
 
-The mapping is in `AnomalyMode::to_stddev()` at
-`backend/src/proxy/domain/models.rs:191-197`. The default applied
-when `anomaly_mode = None` is `Moderate` (per
-`PolicyThresholds::default()` at
-`backend/src/detectors/mod.rs:58`).
+When `anomaly_mode = None`, the default applied is `Moderate`.
 
-Legacy rows may store the raw σ as a number; `from_stddev()` at
-`models.rs:202-212` snaps back: `≤ 2.5 → Lite`, `2.5–4.0 →
-Moderate`, `> 4.0 → Strict`.
+Legacy rows may store the raw σ as a number; the platform snaps it
+back: `≤ 2.5 → Lite`, `2.5–4.0 → Moderate`, `> 4.0 → Strict`.
 
 ## What happens on detection
 
-The detector returns `Severity::Warning`. Per
-`backend/src/detectors/mod.rs:163-165`, a Warning does **not**
+The detector returns a **Warning** severity. A Warning does **not**
 pause or kill — it surfaces an alert through the configured
 channels (Slack / Email / Webhook) and writes the event to the
 workflow's audit log.

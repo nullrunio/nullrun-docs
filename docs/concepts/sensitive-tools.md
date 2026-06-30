@@ -14,9 +14,8 @@ high-risk operation patterns:
   `s3.delete`
 - Admin: `admin.delete`, `admin.create_user`, `admin.disable_user`
 
-The list is defined in `NullRunRuntime._sensitive_tools` (see
-`src/nullrun/runtime.py`). You can extend it from the SDK with
-`runtime.add_sensitive_tool("my.custom_tool")` or
+The list is built into the SDK runtime. You can extend it from the
+SDK with `runtime.add_sensitive_tool("my.custom_tool")` or
 `runtime.register_sensitive_tools([...])` — additions are matched
 case-insensitively (a caller passing `"Stripe.Charge"` matches the
 built-in `"stripe.charge"`).

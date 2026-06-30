@@ -23,28 +23,25 @@ NullRun is layered as seven cooperating subsystems. The names below
 are a navigation aid, not a marketing taxonomy — each one maps to a
 real module in the gateway.
 
-- **Breaker** — cost control + circuit breaker (the flagship). Implemented
-  in `proxy/middleware/` and `enforcement/`. Halt triggers: budget cap,
-  loop, rate, sensitive-tool.
+- **Breaker** — cost control + circuit breaker (the flagship). Halt
+  triggers: budget cap, loop, rate, sensitive-tool.
 - **Gate** — the `@protect` enforcement point. Every `track_llm` /
-  `track_tool` call from the SDK flows through `proxy/handlers.rs` →
-  `enforcement/decision_engine.rs`. Returns allow / block / require-approval.
-- **Flow** — durable workflow runtime. `execution/state_machine.rs`
-  + control-plane `StateChange` over `WS /ws/control/{org_id}`. Supports
+  `track_tool` call from the SDK flows through it. Returns allow /
+  block / require-approval.
+- **Flow** — durable workflow runtime, with control-plane
+  `StateChange` events over `WS /ws/control/{org_id}`. Supports
   kill / pause / resume at any gate call.
 - **Identity** — HMAC-SHA256 signed capability headers. Replaces
   client-side secrets: the SDK signs every request with `NULLRUN_SECRET_KEY`,
   the gateway verifies the signature. **NULLRUN never stores customer
   LLM API keys** — credentials stay in your environment.
-- **Trace** — execution telemetry + audit log. `observability/` +
-  `events/` + `proxy/middleware/metrics.rs`. Surfaces token counts,
+- **Trace** — execution telemetry + audit log. Surfaces token counts,
   cost, latency, and policy decisions per workflow.
 - **Policy** — declarative rules with first-match-wins composition.
-  `policy/` + `proxy/policy_cache.rs`. Per-org / per-agent / per-tool
-  scopes (see ADR-007).
-- **Detectors** — adaptive enforcement. `detectors/` runs loop / rate
-  / drift / retry-storm analysis on the event stream and feeds
-  signals back to the Gate.
+  Per-org / per-agent / per-tool scopes (see ADR-007).
+- **Detectors** — adaptive enforcement. Loop / rate / drift /
+  retry-storm analysis on the event stream feeds signals back to
+  the Gate.
 
 ## Where to start
 

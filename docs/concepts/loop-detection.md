@@ -16,12 +16,12 @@ agent is stuck."
 
 ## How it works
 
-Loop detection is **window-based, exact-match on tool name**
-(`backend/src/detectors/loop_detector.rs:34-90`). For every gate /
-execute evaluation, the detector counts how often each
-`tool_name` appears in the workflow's recent call history within
-the last `loop_window_secs` seconds. If any count reaches
-`loop_threshold`, the detector fires (`Severity::Critical`).
+Loop detection is **window-based, exact-match on tool name**.
+For every gate / execute evaluation, the detector counts how
+often each `tool_name` appears in the workflow's recent call
+history within the last `loop_window_secs` seconds. If any count
+reaches `loop_threshold`, the detector fires at **Critical**
+severity.
 
 ```mermaid
 flowchart LR
@@ -31,7 +31,7 @@ flowchart LR
 
     H --> C
     C --> M
-    M -->|yes| D["Severity::Critical<br/>→ throttle_factor → 0.0"]
+    M -->|yes| D["Critical severity<br/>→ throttle_factor → 0.0"]
     M -->|no| OK["proceed (allow)"]
 ```
 
@@ -52,9 +52,7 @@ Two per-policy fields control the detector (see
 
 Both fields are aggregated across active policies via `min()`
 ([Policies — conflict resolution](policies.md#conflict-resolution))
-— the tightest config wins. Defaults live in
-`PolicyThresholds::default()` at
-`backend/src/detectors/mod.rs:47-61`.
+— the tightest config wins.
 
 ### Sliding window in action
 
@@ -78,16 +76,15 @@ flowchart LR
     Now --> C["count = 6<br/>(+ 1 from now)"]
     Older --> C
     Dropped -.->|"excluded"| C
-    C -->|"≥ 6 → fire"| F["Severity::Critical"]
+    C -->|"≥ 6 → fire"| F["Critical severity"]
 ```
 
 ## What happens on detection
 
-Loop detection returns `Severity::Critical`. Per
-`backend/src/detectors/mod.rs:163-165`, a Critical finding
-reduces the workflow's `throttle_factor` (see
-`policy_cache.rs:728`). Once `throttle_factor < 0.1`, the next
-gate / execute is rejected with `circuit_breaker_tripped`.
+Loop detection returns **Critical** severity. A Critical finding
+reduces the workflow's `throttle_factor`. Once `throttle_factor
+< 0.1`, the next gate / execute is rejected with
+`circuit_breaker_tripped`.
 
 ```mermaid
 sequenceDiagram
@@ -98,7 +95,7 @@ sequenceDiagram
 
     SDK->>GW: POST /gate (call #6 of send_email)
     GW->>LD: evaluate(history)
-    LD-->>GW: Severity::Critical (loop)
+    LD-->>GW: Critical (loop)
     GW->>CB: throttle_factor → 0.0
     GW-->>SDK: 429 circuit_breaker_tripped
     Note over CB: HALF_OPEN probe after recovery_timeout

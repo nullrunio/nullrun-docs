@@ -8,11 +8,10 @@ enforcement, and audit.
 
 A **workflow_id** is **not** auto-generated per `@protect` invocation.
 Instead, since Phase 139 every API key is minted bound to exactly one
-workflow, and the SDK reads that binding during `init()` (see
-`NullRunRuntime._authenticate()` in `src/nullrun/runtime.py`). The
-SDK does not invent workflow IDs — if you want a different grouping
-than the API key's binding, scope the work inside a
-`nullrun.workflow(...)` context. **`@protect` itself takes no kwargs**:
+workflow, and the SDK reads that binding during `init()`. The SDK does
+not invent workflow IDs — if you want a different grouping than the
+API key's binding, scope the work inside a `nullrun.workflow(...)`
+context. **`@protect` itself takes no kwargs**:
 
 ```python title="workflow_scoped_agent.py"
 import nullrun

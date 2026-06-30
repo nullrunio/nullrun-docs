@@ -14,11 +14,10 @@ PATCH /api/v1/orgs/:org_id/workflows/:workflow_id
 { "human_approvals_enabled": true }
 ```
 
-The toggle lives at `Workflow.human_approvals_enabled`
-(`backend/src/proxy/domain/models.rs:67-71`) and is enforced on
-update at `workflows.rs:1022-1053`. Setting it to `true`
-requires `Feature::Approvals` (Growth+) — flipping it on Lite or
-Starter returns `403 plan_feature_missing`.
+The toggle lives on the workflow record and is enforced on
+update. Setting it to `true` requires `Feature::Approvals`
+(Growth+) — flipping it on Lite or Starter returns
+`403 plan_feature_missing`.
 
 When enabled, every gate / execute evaluation can return one of:
 
@@ -30,10 +29,9 @@ When enabled, every gate / execute evaluation can return one of:
 | `flag` | Proceed, decision logged for review. |
 
 `approval_required` is produced when the merged policy set
-contains a rule whose action is `RequireApproval`
-(`backend/src/policy/graph.rs:106`) and that rule wins the
-conflict resolution. The classic example: a `ToolBlock` policy
-with `action = "require_approval"` for `payment.process`.
+contains a rule whose action is `RequireApproval` and that rule
+wins the conflict resolution. The classic example: a `ToolBlock`
+policy with `action = "require_approval"` for `payment.process`.
 
 ## Lifecycle
 
@@ -51,10 +49,10 @@ stateDiagram-v2
 
 | Status | Set by |
 | --- | --- |
-| `Pending` | DB insert (`db.rs:634-675`) at the moment the gate returns `approval_required`. |
-| `Approved` | `POST /api/v1/orgs/:org_id/approvals/:approval_id/approve` (`approvals.rs:206-233`). |
-| `Denied` | `POST /api/v1/orgs/:org_id/approvals/:approval_id/deny` (`approvals.rs:235-263`). |
-| `Expired` | **Manual only** today — there is no background expiry sweep. Operators set this via direct DB update or a future housekeeping job. The Redis budget reservation held during `Pending` has its own TTL (`handlers.rs:3256-3272`); if that TTL elapses, the reservation is released and the SDK surfaces the pause as `NullRunBudgetExhausted`. |
+| `Pending` | DB insert at the moment the gate returns `approval_required`. |
+| `Approved` | `POST /api/v1/orgs/:org_id/approvals/:approval_id/approve`. |
+| `Denied` | `POST /api/v1/orgs/:org_id/approvals/:approval_id/deny`. |
+| `Expired` | **Manual only** today — there is no background expiry sweep. Operators set this via direct DB update or a future housekeeping job. The budget reservation held during `Pending` has its own TTL; if that TTL elapses, the reservation is released and the SDK surfaces the pause as `NullRunBudgetExhausted`. |
 
 Each approval row carries a required `expires_at` — the operator
 UI shows this as a countdown. The status transitions are
@@ -62,12 +60,10 @@ append-only in the audit log.
 
 ## Notification channels
 
-On insert, the gateway calls
-`dispatch_approval_required_alert()` at
-`backend/src/alert/bridges.rs:132-215`, which fans out through
-every active channel configured on the org:
+On insert, the gateway dispatches an alert through every active
+channel configured on the org:
 
-- **Email** — SMTP relay (see `alert/models.rs:8-37`).
+- **Email** — SMTP relay.
 - **Slack** — uses the org's installed Slack OAuth
   (`installation_id`); falls back to email if no Slack install.
 - **Webhook** — generic HTTPS POST with HMAC signature.
@@ -79,7 +75,7 @@ Disable per-channel notifications via the
 ```mermaid
 flowchart LR
     I[Approval row inserted<br/>status = Pending]
-    I --> D["dispatch_approval_required_alert()"]
+    I --> D["dispatch approval alert"]
     D --> N["Org notification_settings<br/>notify_on_approval_required?"]
     N -->|false| X[stop]
     N -->|true| C[for each active channel]

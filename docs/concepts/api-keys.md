@@ -13,12 +13,11 @@ workflow is deleted or paused, calls with that key fail closed.
 
 `POST /api/v1/orgs/:org_id/api-keys` — see
 [HTTP API](../reference/http-api.md) for the full request / response
-schema. The handler is `create_api_key_handler` in
-`backend/src/proxy/http/api_keys.rs:243-549`.
+schema.
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `name` | optional | Default `"New API Key"`. Max 80 chars (`MAX_API_KEY_NAME`). Validated server-side (`validate_name_or_err` at `api_keys.rs:306-313`). |
+| `name` | optional | Default `"New API Key"`. Max 80 chars. |
 | `workflow_id` | **required** | The workflow the key is bound to. Must belong to the same org. Missing → `400 workflow_id is required. Keys are workflow-scoped…`. |
 | `scopes` | optional | Default `["track", "verify"]`. Restricted to `["gate", "execute", "track", "verify"]` — anything else → `400 invalid_scope`. Use `"*"` for the full set. |
 | `expires_at` | optional | RFC 3339 timestamp. Must be in the future. `null` = never expires. |
@@ -66,8 +65,7 @@ flowchart LR
 | `track` | `POST /api/v1/track`, `/api/v1/track/batch` | Async event ingestion (cost tokens, span lifecycle). |
 | `verify` | `POST /api/v1/auth/verify` | SDK uses this on first start and after `key_rotated` events to obtain the HMAC `secret_key`. |
 
-The `"*"` wildcard satisfies any scope check (`has_scope` in
-`backend/src/auth/mod.rs:422-429`). The list endpoint shows each
+The `"*"` wildcard satisfies any scope check. The list endpoint shows each
 key's effective scopes; an operator can narrow a key from `*` to
 just `["execute", "track"]` without rotating it.
 
@@ -142,10 +140,9 @@ let `rotate` carry the credential forward without code changes.
 ## Revocation
 
 `DELETE /api/v1/orgs/:org_id/api-keys/:id` soft-deletes the key
-row and invalidates the in-process policy cache
-(`api_keys.rs:573-579`). The list endpoint then hides it from the
-default view. Subsequent requests with that key return `401`
-immediately.
+row and invalidates the in-process policy cache. The list endpoint
+then hides it from the default view. Subsequent requests with that
+key return `401` immediately.
 
 Revocation is **immediate**: there is no grace period. If you need
 zero-downtime rotation, use `rotate` instead — the old key stays
@@ -165,13 +162,11 @@ just the keys bound to a single workflow.
 
 ## Headers and HMAC
 
-Keys travel as `X-API-Key: nr_live_…` (machine / SDK auth — see
-`backend/src/proxy/middleware/auth.rs:82-85`). For request
-integrity the SDK also computes an HMAC-SHA256 over
+Keys travel as `X-API-Key: nr_live_…` (machine / SDK auth). For
+request integrity the SDK also computes an HMAC-SHA256 over
 `timestamp + ":" + api_key + ":" + body_hash` using `secret_key`
-as the key (verification at `handlers.rs:2604-2651`). `Bearer`
-tokens are reserved for user (session) auth and are not used for
-API keys.
+as the key. `Bearer` tokens are reserved for user (session) auth
+and are not used for API keys.
 
 ## See also
 

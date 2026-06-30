@@ -12,8 +12,7 @@ Three endpoints work together:
    This is a **binary** pre-flight, not a cost prediction. If the
    workflow has already exceeded its budget, the call is rejected
    *before* it runs. (The legacy `/api/v1/check` endpoint still
-   exists for backward compatibility — new code uses `/gate` per
-   `Transport.check()` in `src/nullrun/transport.py`.)
+   exists for backward compatibility — new code uses `/gate`.)
 
 2. **Reservation `/api/v1/execute`** — synchronously evaluates the
    gate (budget + policy + sensitive tool rules) and **reserves** the

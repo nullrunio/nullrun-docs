@@ -14,19 +14,16 @@ control. Two cooperating enforcement layers run at the gateway edge:
   a VPN, or signs up through a non-sanctioned-country proxy.
   See [Sanctions screening](sanctions-screening.md).
 
-Both layers shipped together on **2026-06-30** (`6274c23 g fixes16` +
-follow-up `1655801 g fixes 17` for the geo-block wiring, and
-`20a5d7f fix(infra)` for the MaxMind bind-mount). They are the
-authoritative enforcement for the corresponding Terms-of-Service
-clauses and the regulatory disclosures on `nullrun.io/privacy` and
-`nullrun.io/terms`.
+These two layers together implement the eligibility clauses in the
+[Terms of Service](https://nullrun.io/terms) and the data-residency
+disclosures in the [Privacy Policy](https://nullrun.io/privacy).
 
 ## Operating posture
 
 | Concern | Posture | Why |
 | --- | --- | --- |
 | GeoIP database missing | **fail-CLOSED** (503) | A misconfigured edge must never silently let traffic through. |
-| Sanctions CSV missing | **degraded fallback** (logged) | Screening still runs against a hand-curated subset of obvious state actors; an ERROR log and `degraded: true` flag surface the gap. |
+| Sanctions CSV missing | **degraded fallback** (logged) | Screening still runs against a hand-curated subset of obvious state actors; an ERROR log surfaces the gap. |
 | Sanctions screening opt-out | `NULLRUN_SANCTIONS_SCREENING_DISABLED=1` | Disables name-based screening. The IP-level Fortress geo-block stays on. Intended for the pre-revenue / pre-customer stage. |
 | Geo-block dev bypass | `NULLRUN_GEOBLOCK_DISABLED=1` | Disables geo-block entirely. **Fail-OPEN on a regulatory control** — a one-shot WARN is emitted; production must never set this. |
 | Localhost / private IPs | Always allowed | Pod-to-pod health probes and operator local dev must not be blocked. |
@@ -40,14 +37,21 @@ clauses and the regulatory disclosures on `nullrun.io/privacy` and
     on either path is an enforcement-path incident and must be reverted
     immediately.
 
-## Where to look in the codebase
+## What this means for you
 
-| Concern | File | Notes |
-| --- | --- | --- |
-| IP → country lookup + blocklist | `backend/src/proxy/middleware/geo_block.rs` | `fortress_geo_block_middleware`, fail-CLOSED on missing `.mmdb`. |
-| Wire-in (middleware stack) | `backend/src/proxy/server.rs:294` | Registered before auth and per-org quota. |
-| Signup-time screening | `backend/src/proxy/middleware/sanctions.rs` | `screen_signup(name, email)`; called from `auth_register_handler` and `auth_oauth_register_handler`. |
-| Wiring in signup handlers | `backend/src/proxy/handlers.rs:12339, 12572` | Rejects `ScreenResult::Match` with 403. |
-| GeoIP / sanctions data layout | `backend/data/README.md` | Operator runbook for the `.mmdb` and `sdn.csv`. |
-| VPS bind-mount (prod) | `infra/docker-compose.yml` | Pins `NULLRUN_GEOIP_DB=/tmp/geoip/GeoLite2-Country.mmdb` and mounts `/opt/nullrun/backend/data` into the container so the database survives redeploys. |
-| Waitlist endpoint (public bridge) | `frontend/app/waitlist/page.tsx` | Receives compliance-blocked visitors from the marketing-site redirect. Rate-limited at 5/hour/IP via `ip_rate_limit::waitlist_rate_limit`. |
+If you are signing up from a country on either list:
+
+- **Sanctioned countries** — your request is rejected with 403. There is
+  no waitlist or alternative sign-up path; strict-liability does not
+  allow a "we will email you when we do" bridge.
+- **High-risk / no-service countries** — your request to the marketing
+  site is redirected to `/waitlist`. The waitlist form records your
+  email and the country you are visiting from. Requests to `/api/*` or
+  `/ws/*` from these countries are hard-rejected with 403.
+
+If you are an operator, see:
+
+- [Geographic restrictions → Runbook](geo-restrictions.md#runbook-vps-deploy)
+  for the GeoIP database deploy steps.
+- [Sanctions screening → Operator override](sanctions-screening.md#operator-override)
+  for the opt-out env var.

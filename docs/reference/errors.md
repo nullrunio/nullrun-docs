@@ -9,10 +9,10 @@ non-2xx response the gateway returns. This page maps each code to:
 
 ## Gateway error codes (`error` field on every non-2xx response)
 
-The canonical catalog is `ErrorSlug` in
-`backend/src/proxy/http/errors.rs`. The `error` slug is the stable,
-machine-readable identifier; `message` is human-safe; `code` is a
-legacy SCREAMING_SNAKE_CASE alias kept for backward compatibility.
+The canonical catalog lives in the gateway. The `error` slug is
+the stable, machine-readable identifier; `message` is human-safe;
+`code` is a legacy SCREAMING_SNAKE_CASE alias kept for backward
+compatibility.
 
 | `error` slug | HTTP | When | SDK exception |
 | --- | --- | --- | --- |
@@ -82,8 +82,7 @@ attribute — use `str(exc)`.
 
 Removed in SDK 0.4.0: `CostLimitExceeded`, `ApprovalRequired`,
 `BreakerTimeout`, `LoopDetectedException`, `RetryStormException`,
-`RateLimitExceededException` (no remaining callers — see the
-`Sprint 2.2` note in `exceptions.py`).
+`RateLimitExceededException` (no remaining callers).
 
 Catch `WorkflowKilledInterrupt` **explicitly and before** any `except
 Exception` — it does not subclass `Exception`.

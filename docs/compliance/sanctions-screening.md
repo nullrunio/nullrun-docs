@@ -4,8 +4,8 @@ The geo-block stops ingress from sanctioned countries at the edge.
 **Sanctions screening** is the second layer: a name/email/handle check
 on every signup that catches the case where a designated individual
 travels, uses a VPN, or signs up through a non-sanctioned-country
-proxy. It is wired into both the standard `/api/v1/auth/register` and
-the OAuth registration flow.
+proxy. It runs on both the standard signup form and the OAuth
+registration flow.
 
 The screening table is loaded at process start from
 `backend/data/sanctions/sdn.csv` (downloaded by the operator from
@@ -41,7 +41,7 @@ ent_num, SDN_Name, SDN_Type, Program, Title, Call_Sign, Vess_type, Tonnage, GRT,
 
 The EU consolidated list and the UK HMT consolidated list share the
 same column layout and can be appended as additional CSVs (one per
-jurisdiction). See `backend/data/README.md` for the download recipe.
+jurisdiction).
 
 !!! tip "Refresh cadence"
     OFAC SDN: refresh **daily**. MaxMind GeoLite2: weekly. EU / UK
@@ -53,36 +53,31 @@ jurisdiction). See `backend/data/README.md` for the download recipe.
 
 For each signup the screening runs:
 
-1. **Normalise** the name and email with NFKC (catches full-width
-   homoglyphs like `ＡＢＣ` → `ABC`) and lowercase.
+1. **Normalise** the name and email (catches full-width homoglyphs like
+   `ＡＢＣ` → `ABC`) and lower-case them.
 2. **Tokenise** on whitespace and non-alphanumeric characters.
 3. **Drop short noise** — tokens shorter than 3 characters are
    skipped (so `Mr.`, `de`, `la`, `Jr.` do not contribute).
 4. **Match** — if **any** token of the name or the email appears in
-   the SDN token set, the signup is rejected with
-   `ScreenResult::Match { matched, field }`.
+   the SDN token set, the signup is rejected.
 
 The matching is intentionally aggressive. False positives are cheap
 (rejected signup, the user retries with a different email); false
-negatives are criminal. The tokenisation lives in
-`backend/src/proxy/middleware/sanctions.rs:87-97`.
+negatives are criminal.
 
 ## Screen outcomes
 
-The screening returns one of three results to the signup handler
-(`sanctions.rs:260-330`):
+The screening returns one of three results:
 
-| Result | Meaning | Handler action |
+| Result | Meaning | What happens |
 | --- | --- | --- |
-| `Clean` | No SDN token matched. | Allow signup. |
-| `Match { matched, field }` | The name or email contained a known SDN token. | Reject with 403. The matched display name and the field that hit are logged at WARN for audit. |
-| `DegradedFallback` | Screening ran but the table is the hand-curated fallback (CSV missing or unparseable). | Allow signup. A separate WARN log + a Prometheus-friendly counter flag the misconfiguration. The geo-block is still on — the IP-level defence is intact. |
+| Clean | No SDN token matched. | Allow signup. |
+| Match | The name or email contained a known SDN token. | Reject with 403. The matched display name and the field that hit are logged at WARN for audit. |
+| Degraded | Screening ran but the table is the hand-curated fallback (CSV missing or unparseable). | Allow signup. A separate WARN log + an ops-counter flag the misconfiguration. The geo-block is still on — the IP-level defence is intact. |
 
-The signup handler is `auth_register_handler` /
-`auth_oauth_register_handler` in
-`backend/src/proxy/handlers.rs:12339, 12572`. On `Match` the handler
-returns 403 with a generic body — the matched display name is **not**
-echoed to the client to avoid confirming the screening target.
+On a `Match` the response body is a generic 403 — the matched display
+name is **not** echoed to the client to avoid confirming the
+screening target.
 
 ## Operator override — disabled by default
 
@@ -90,7 +85,7 @@ echoed to the client to avoid confirming the screening target.
 NULLRUN_SANCTIONS_SCREENING_DISABLED=1
 ```
 
-Setting this env var makes `screen_signup` a no-op that always returns
+Setting this env var makes the screening a no-op that always returns
 `Clean`. The recommended posture for the **pre-revenue / pre-customer**
 stage of the service, where the false-positive rate of token-based
 name matching (`Vladimir Petrov` rejected because the surname token
@@ -119,14 +114,7 @@ The two layers fail differently, on purpose:
 | Layer | Failure mode | Posture |
 | --- | --- | --- |
 | Geo-block (IP) | `.mmdb` missing | **fail-CLOSED** (503). The edge must never silently let traffic through. |
-| Sanctions screening (name) | `.csv` missing | **degraded fallback**. Screening runs against a hand-curated subset of obvious state actors; an ERROR log + `degraded: true` flag surface the gap. |
-
-The asymmetry is documented in the module-level doc-comment of
-`sanctions.rs:14-19`:
-
-> If the file is missing the screening falls back to a hand-curated
-> subset of well-known state actors, plus a hard fail-CLOSED log so
-> the operator notices the misconfiguration.
+| Sanctions screening (name) | `.csv` missing | **degraded fallback**. Screening runs against a hand-curated subset of obvious state actors; an ERROR log + a `degraded` flag surface the gap. |
 
 The rationale is operational: a geo-database outage is a hard outage
 (no traffic should be served); a sanctions-CSV outage is a degraded
@@ -137,45 +125,10 @@ and the `sanctions: Sanctions table loaded from …` log line at
 process start; absence of the latter is the signal that the CSV
 never loaded.
 
-## Testing
-
-The screening is covered by unit tests in
-`sanctions.rs:333-451`:
-
-- `tokenise_strips_short_tokens` — NFKC + lowercase + ≥3-char filter
-- `tokenise_strips_full_width_homoglyphs` — full-width `Ａ` → ASCII `A`
-- `tokenise_drops_short_noise` — `Mr. de la Cruz Jr.` → only `cruz`
-- `screen_signup_matches_degraded_state_actor` — degraded fallback
-  correctly rejects `Ali Khamenei`
-- `screen_signup_clean_for_unrelated_name` — generic `Test User`
-  returns `Clean` or `DegradedFallback` (never `Match` against a
-  benign name)
-- `screen_signup_clean_when_disabled` — the
-  `NULLRUN_SANCTIONS_SCREENING_DISABLED=1` override is honoured
-
-An **integration smoke test** against the real OFAC SDN list lives at
-`geo_block.rs:705-734` (placed next to the geo-block tests for
-discoverability):
-
-```bash
-cargo test -p breaker-core sanctions_loads_sdn -- --ignored
-```
-
-Run this after dropping the real `sdn.csv` into `data/sanctions/`. It
-asserts that `Vladimir PUTIN` / `v.putin@example.com` matches against
-the real list.
-
-!!! note "Run with `--test-threads=1`"
-    The screening table is loaded once per process via `OnceLock`. If
-    other tests run first and the table is already cached in degraded
-    mode, the assertion will fail because the real CSV will not be
-    re-read. `--test-threads=1` ensures this test is the first to
-    touch the screening table.
-
 ## Known limitations
 
-- **Cyrillic / Latin homoglyphs are NOT collapsed.** `Cyrillic а`
-  (U+0430) stays Cyrillic after NFKC; only the full-width Latin /
+- **Cyrillic / Latin homoglyphs are NOT collapsed.** A Cyrillic `а`
+  stays Cyrillic after normalisation; only the full-width Latin /
   ASCII cases collapse. A designated individual could circumvent
   name-based screening by transliterating their name to a homoglyph
   script. The geo-block is the durable defence here — a non-Latin
@@ -184,16 +137,19 @@ the real list.
   but the resulting tokens (e.g. `gmail`, `mail`) are common enough
   that matching them would produce false positives. The name tokens
   are the primary signal; the email is a secondary, weaker signal.
-- **OnceLock cache is process-once.** A new CSV requires a process
-  restart. Until in-process hot-reload lands, the recommended cadence
-  is daily process restarts paired with a daily OFAC CSV refresh.
+- **The screening table is loaded once per process.** A new CSV
+  requires a process restart. Until in-process hot-reload lands, the
+  recommended cadence is daily process restarts paired with a daily
+  OFAC CSV refresh.
 
-## Where to look in the codebase
+## Self-check
 
-| Concern | File | Notes |
-| --- | --- | --- |
-| Screening table load + match | `backend/src/proxy/middleware/sanctions.rs` | `SanctionsTable::load_or_degraded()`, `screen_signup(name, email)`. |
-| Signup handler wiring | `backend/src/proxy/handlers.rs:12339, 12572` | `auth_register_handler`, `auth_oauth_register_handler`. |
-| CSV layout and refresh recipe | `backend/data/README.md` | Operator runbook. |
-| Geo-block (the always-on defence) | `backend/src/proxy/middleware/geo_block.rs` | IP-level, fail-CLOSED. |
-| Fortress risk register | (forthcoming) | Brief lives at `FORTRESS_TIER1_BRIEF.md` in the gateway repo. |
+If you are an operator and want to confirm the screening is wired up:
+
+1. Drop the real `sdn.csv` into `data/sanctions/`.
+2. Restart the gateway.
+3. Attempt a signup with a name that appears in the OFAC SDN list
+   (e.g. `Vladimir PUTIN` / `v.putin@example.com`). The request
+   should return 403.
+4. Confirm the `sanctions: Sanctions table loaded from …` log line
+   appears at process start, with a non-degraded token count.

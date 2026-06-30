@@ -21,11 +21,10 @@ when it isn't.
 | `workflow_id` paused / killed (WS push) | Apply at next `@protect` call | `WorkflowKilledInterrupt` / `WorkflowPausedException` |
 | `Policy.fetch` fails on first call | Use cached policy → fall back to `Policy.strict_local()` (zero budget, 1-call rate limit) | (none — `track_event` returns the block verdict; no exception) |
 
-> Fail-closed vs fail-open defaults live in `proxy/handlers.rs` and
-> `policy/service.rs`. The full fail-CLOSED / fail-OPEN policy is
-> documented in the project root `CLAUDE.md` — anything in the SDK
-> that touches a billing or quota gate fails closed on transport
-> error.
+> Fail-closed vs fail-open defaults are an internal implementation
+> concern. The full fail-CLOSED / fail-OPEN policy is documented in
+> the project root `CLAUDE.md` — anything in the SDK that touches a
+> billing or quota gate fails closed on transport error.
 
 ## Common runtime questions
 
@@ -51,11 +50,10 @@ Two usual suspects:
 - **Dashboard action** — open the workflow's detail page; the audit
   log shows the actor and timestamp.
 - **Stream-reservation auto-pause** — the per-reservation stream
-  control loop pauses at 80% consumption and cancels at 95%
-  (`StreamControlLoop::pause_threshold` / `cancel_threshold` in
-  `backend/src/billing/reservation.rs`). This is per-stream, not
-  per-plan-monthly — it fires inside a single LLM call once the
-  reservation is mostly consumed. Resumable from the dashboard.
+  control loop pauses at 80% consumption and cancels at 95%. This
+  is per-stream, not per-plan-monthly — it fires inside a single LLM
+  call once the reservation is mostly consumed. Resumable from the
+  dashboard.
 
 ### "Why is the SDK raising `NullRunAuthenticationError`?"
 

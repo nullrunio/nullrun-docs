@@ -22,8 +22,8 @@ resp = client.chat(
 Patched via the per-vendor extractor in `nullrun.instrumentation.auto`.
 The extractor handles both Cohere v1 (`prompt_tokens` /
 `completion_tokens`) and v2 (`input_tokens` / `output_tokens`)
-response shapes — see the `_cohere_extractor` docstring in
-`src/nullrun/instrumentation/auto.py` for the field fallback.
+response shapes, including the field fallback when one of the two
+shapes is missing.
 
 > Cohere streaming does not include usage in the streamed chunks —
 > only the non-streaming response carries it. Tracked events for

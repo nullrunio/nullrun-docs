@@ -7,8 +7,7 @@ the SDK's `@protect` path.
 
 ## Configuration shape
 
-Three equivalent JSON keys are accepted (`validate_tool_block_config`
-in `backend/src/proxy/http/validation.rs:409-483`):
+Three equivalent JSON keys are accepted:
 
 ```json title="tool_block_policy.json"
 {
@@ -34,8 +33,7 @@ one key is fine; duplicates are deduplicated.
 
 ## Pattern syntax
 
-The matcher is `glob_match` in
-`backend/src/policy/graph.rs:469-483`. It supports:
+The matcher is a single-`*` glob. It supports:
 
 - `*` — matches anything.
 - `prefix*` — matches anything starting with `prefix`.
@@ -86,22 +84,19 @@ chaining stars.
 
 ## Per-entry size cap
 
-Every entry must be **≤ 4096 bytes** (`MAX_POLICY_PATTERN_BYTES`).
-A 10 MB pattern would burn CPU per call (the matcher is O(n) over
-each entry's glob on every gate / execute request), so the cap is
-enforced at create and update time
-(`backend/src/proxy/http/validation.rs:421-481`). Going over
-returns `400 pattern_too_long`.
+Every entry must be **≤ 4096 bytes**. A 10 MB pattern would burn CPU
+per call (the matcher is O(n) over each entry's glob on every gate /
+execute request), so the cap is enforced at create and update time.
+Going over returns `400 pattern_too_long`.
 
-Control characters in entries are also rejected
-(`validation.rs:473-479`).
+Control characters in entries are also rejected.
 
 ## Union across scopes
 
 The effective blocked-tool set is the union of all active
-`ToolBlock` policies (org-scope + workflow-scope), deduplicated
-(`workflows.rs:312-325`). A workflow inherits its org's blocks
-and can add its own; you cannot un-block a tool the org blocks.
+`ToolBlock` policies (org-scope + workflow-scope), deduplicated.
+A workflow inherits its org's blocks and can add its own; you
+cannot un-block a tool the org blocks.
 
 ```mermaid
 flowchart TD
@@ -118,7 +113,7 @@ flowchart TD
 
 `ToolBlock` policies require `Feature::CustomPolicies` — Growth+
 plan and above. On Lite / Starter, the create handler returns
-`403 plan_feature_missing` (`policies.rs:404-418`).
+`403 plan_feature_missing`.
 
 ## Built-in sensitive list
 

@@ -8,9 +8,8 @@ evaluation.
 
 ## Types
 
-Three policy types exist (`PolicyType` enum in
-`backend/src/proxy/domain/models.rs:156-162`). Each has a JSON
-`config` payload whose shape is type-specific:
+Three policy types exist. Each has a JSON `config` payload whose
+shape is type-specific:
 
 | Type | What it caps | `config` keys |
 | --- | --- | --- |
@@ -25,19 +24,17 @@ and above).
 ### Per-policy fields outside `config`
 
 Three fields look like policy fields but are consumed by the
-**detector layer** (`backend/src/detectors/`), not by the gate
-engine:
+**detector layer**, not by the gate engine:
 
 | Field | Default | Consumer |
 | --- | --- | --- |
-| `loop_threshold: i32` | `6` | Loop detector — see [Loop detection](loop-detection.md). |
-| `loop_window_secs: i32` | `60` | Loop detector sliding window. |
-| `anomaly_mode: AnomalyMode` | `Moderate` | Anomaly detector σ multiplier — see [Anomaly detection](anomaly-detection.md). |
+| `loop_threshold` | `6` | Loop detector — see [Loop detection](loop-detection.md). |
+| `loop_window_secs` | `60` | Loop detector sliding window. |
+| `anomaly_mode` | `Moderate` | Anomaly detector σ multiplier — see [Anomaly detection](anomaly-detection.md). |
 
 ## Scopes
 
-Every policy has a `scope` of either `Org` or `Workflow`
-(`PolicyScope` enum in `models.rs:148-153`).
+Every policy has a `scope` of either `Org` or `Workflow`.
 
 ```mermaid
 flowchart TD
@@ -54,17 +51,14 @@ Org-scope policies are **inherited** by every workflow in the
 organization — they apply everywhere by default. Workflow-scope
 policies apply only to the bound workflow.
 
-Both scopes are merged at evaluation time
-(`fetch_effective_policies()` in
-`backend/src/proxy/http/workflows.rs:366-392`). There is no notion
-of one scope "overriding" another — both apply simultaneously.
+Both scopes are merged at evaluation time. There is no notion of
+one scope "overriding" another — both apply simultaneously.
 
 ## Conflict resolution
 
 When two policies in the merged set compete, the engine uses
 **most-restrictive-wins** for numeric caps and **union** for tool
-block patterns. The aggregation lives in `aggregate_policies()` at
-`backend/src/proxy/http/workflows.rs:283-345`.
+block patterns.
 
 ```mermaid
 flowchart LR
@@ -119,7 +113,7 @@ flowchart TD
 | Resource | Gate |
 | --- | --- |
 | Total policy count per org | `plan_limits.policies_limit` (returns `429 plan_limit_exceeded`) |
-| Sum of `max_calls_per_minute` across org | `plan_features.aggregate_rate_limit_per_min` (enforced on create at `policies.rs:445-478`) |
+| Sum of `max_calls_per_minute` across org | `plan_features.aggregate_rate_limit_per_min` (enforced on policy create) |
 | `ToolBlock` policies | `Feature::CustomPolicies` (Growth+) |
 | `human_approvals_enabled = true` on a workflow | `Feature::Approvals` (Growth+) |
 

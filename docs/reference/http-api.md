@@ -33,10 +33,9 @@ The SDK computes and signs every request automatically once
 `NULLRUN_API_KEY` and `NULLRUN_SECRET_KEY` are set. The gateway
 default for `NULLRUN_HMAC_REQUIRED` is `false` for backward
 compatibility — operators must set it explicitly to `true` in
-production (see `backend/src/config.rs::HmacConfig::from_env`). When
-`NULLRUN_HMAC_REQUIRED=true`, unsigned SDK requests are rejected
-with 401 and the SDK-auth middleware emits a per-request WARN so the
-gap is visible in logs.
+production. When `NULLRUN_HMAC_REQUIRED=true`, unsigned SDK requests
+are rejected with 401 and the SDK-auth middleware emits a per-request
+WARN so the gap is visible in logs.
 
 > SDK requests to `/api/v1/orgs/{org_id}/*` are also checked for
 > org-mismatch: the org claimed in the URL must match the org the
@@ -145,9 +144,8 @@ First-match-wins composition — see ADR-007.
 ## Health
 
 Health endpoints are registered on the gateway's top-level router
-(`backend/src/observability/health.rs`) — they are **not** under
-`/api/v1`. They return `200 OK` when healthy, `503` otherwise, with
-a JSON body listing each dependency's status.
+— they are **not** under `/api/v1`. They return `200 OK` when healthy,
+`503` otherwise, with a JSON body listing each dependency's status.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
