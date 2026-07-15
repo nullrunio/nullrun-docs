@@ -41,33 +41,42 @@ the matching scope or the gateway returns `403 missing_scope`.
 
 ```mermaid
 flowchart LR
-    K["API key<br/>scopes: gate, execute, track, verify"]
-    G["POST /api/v1/gate<br/>(pre-flight probe)"]
-    E["POST /api/v1/execute<br/>(budget reservation)"]
-    T["POST /api/v1/track<br/>(cost / span events)"]
+    K["API key<br/>scopes: gate, track, verify"]
+    G["POST /api/v1/gate<br/>(v3: pre-flight + reservation)"]
+    T["POST /api/v1/track<br/>(v3: single-event commit)"]
+    T2["POST /api/v1/track/batch<br/>(legacy, NULLRUN_V3_TRACK_DISABLE=1)"]
     V["POST /api/v1/auth/verify<br/>(rotation refresh)"]
 
     K --> G
-    K --> E
     K --> T
+    K -.-> T2
     K --> V
 
     K -. '"*" wildcard' .-> G
-    K -. '"*" wildcard' .-> E
     K -. '"*" wildcard' .-> T
     K -. '"*" wildcard' .-> V
 ```
 
 | Scope | Endpoint | Purpose |
 | --- | --- | --- |
-| `gate` | `POST /api/v1/gate` | Pre-flight budget probe — returns `allow` / `block` / `approval_required` without reserving budget. |
-| `execute` | `POST /api/v1/execute` | Full policy evaluation + budget reservation. Required for every `@protect`-decorated call. |
-| `track` | `POST /api/v1/track`, `/api/v1/track/batch` | Async event ingestion (cost tokens, span lifecycle). |
-| `verify` | `POST /api/v1/auth/verify` | SDK uses this on first start and after `key_rotated` events to obtain the HMAC `secret_key`. |
+| `gate` | `POST /api/v1/gate` | v3: policy evaluation + budget reservation (server mints a `reservation_id` uuidv7). Required for every `@protect`-decorated call. |
+| `track` | `POST /api/v1/track`, `/api/v1/track/batch` | v3 single-event commit (`reservation_id` + `idempotency_key`) or legacy batched events (≤ 100 per batch, used only when `NULLRUN_V3_TRACK_DISABLE=1`). |
+| `verify` | `POST /api/v1/auth/verify` | SDK uses this on first start and after `key_rotated` WS push to obtain the HMAC `secret_key`. |
 
 The `"*"` wildcard satisfies any scope check. The list endpoint shows each
 key's effective scopes; an operator can narrow a key from `*` to
-just `["execute", "track"]` without rotating it.
+just `["gate", "track"]` without rotating it.
+
+!!! info "`execute` scope is deprecated"
+    Pre-v3 keys used a separate `execute` scope for
+    `/api/v1/execute` (full policy evaluation + reservation). Since
+    SDK 0.12.0 the v3 `/gate` call performs both pre-flight and
+    reservation in a single round-trip, so the `execute` scope is
+    no longer needed. Legacy keys minted before 0.12.0 with the
+    `execute` scope continue to work via the deprecated
+    `/api/v1/execute` route, but new keys should be minted with
+    `["gate", "track"]` only. The full lifecycle of the scope
+    transition is documented in the SDK changelog.
 
 ### Choosing scopes for a deployment
 
@@ -75,30 +84,27 @@ just `["execute", "track"]` without rotating it.
 flowchart TD
     A[What does this key do?]
     B{Calls /gate?}
-    C{Calls /execute?}
     D{Ingests events?}
     E{Only auth/verify?}
 
     A --> B
     B -->|Yes| G[needs: gate]
-    B -->|No| C
-    C -->|Yes| X[needs: execute]
-    C -->|No| D
+    B -->|No| D
     D -->|Yes| T[needs: track]
     D -->|No| E
     E -->|Yes| V[needs: verify]
 
-    G --> H[Production SDK<br/>gate + execute + track]
-    X --> H
+    G --> H[Production SDK<br/>gate + track]
     T --> I[Telemetry / worker<br/>track only]
     V --> J[CLI / cron<br/>verify only]
 ```
 
 Production SDKs that wrap `@protect`-decorated calls almost always
-want `["gate", "execute", "track"]`. A telemetry-only ingestor
-needs `track`. `verify` is included in the default scope set so
-the SDK can refresh its HMAC credential on rotation without an
-extra round trip.
+want `["gate", "track"]`. A telemetry-only ingestor needs `track`.
+`verify` is included in the default scope set so the SDK can
+refresh its HMAC credential on rotation without an extra round
+trip. The legacy `execute` scope is documented above — do not
+mint new keys with it.
 
 ## Expiration and rotation
 

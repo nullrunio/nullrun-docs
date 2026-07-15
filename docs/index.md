@@ -29,7 +29,7 @@ real module in the gateway.
   `track_tool` call from the SDK flows through it. Returns allow /
   block / require-approval.
 - **Flow** — durable workflow runtime, with control-plane
-  `StateChange` events over `WS /ws/control/{org_id}`. Supports
+  `state_change` events over `WS /ws/control/{org_id}`. Supports
   kill / pause / resume at any gate call.
 - **Identity** — HMAC-SHA256 signed capability headers. Replaces
   client-side secrets: the SDK signs every request with `NULLRUN_SECRET_KEY`,

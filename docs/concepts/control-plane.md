@@ -71,10 +71,13 @@ defines which events are recoverable vs terminal.
 ## Operator UI
 
 The dashboard's **Workflows → `<workflow_id>` → Actions** panel sends
-`StateChange` messages. `PolicyInvalidated` is sent automatically when
-a policy is saved. `KeyRotated` is sent when an API key's HMAC secret
-is rotated (via `POST /api/v1/orgs/{org_id}/api-keys/{key_id}/rotate`,
-**not** on key revocation/delete).
+`state_change` messages. `policy_invalidated` is sent automatically
+when a policy is saved. `key_rotated` is sent when an API key's
+HMAC secret is rotated (via
+`POST /api/v1/orgs/{org_id}/api-keys/{key_id}/rotate`, **not** on
+key revocation/delete). `approval_resolved` is sent when a
+pending human-approval request is approved or denied by an operator
+(see [Concepts → Human approval](human-approval.md)).
 
 ## When the WebSocket is down
 

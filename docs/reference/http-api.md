@@ -60,7 +60,7 @@ documents every field.
 | `POST` | `/api/v1/gate` | Pre-flight + policy evaluation + budget reservation (called from `@protect` entry) |
 | `POST` | `/api/v1/track` | v3 single-event commit (`reservation_id` + `idempotency_key`) |
 | `POST` | `/api/v1/track/batch` | Legacy batched events (≤ 100 per batch); SDK 0.12.0+ falls back to this only when `NULLRUN_V3_TRACK_DISABLE=1` |
-| `GET` | `/api/v1/orgs/{org_id}/policies` | Policy fetch (called from SDK on first `@protect` and on `PolicyInvalidated` WS push) |
+| `GET` | `/api/v1/orgs/{org_id}/policies` | Policy fetch (called from SDK on first `@protect` and on `policy_invalidated` WS push) |
 | `GET` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Workflow lookup (called from SDK on first gate per workflow) |
 | `GET` | `/api/v1/orgs/{org_id}/status` | Control-plane poll fallback (only used when WS is down) |
 | `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat (v3 contract; replaces the legacy chunk-count v2 path) |
@@ -89,9 +89,9 @@ documents every field.
 | `GET` | `/api/v1/orgs/{org_id}/workflows` | List workflows |
 | `GET` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Get workflow |
 | `PATCH` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Update (budget, name, …) |
-| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/pause` | Pause (broadcasts `StateChange` over WS) |
+| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/pause` | Pause (broadcasts `state_change` over WS) |
 | `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/resume` | Resume |
-| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/kill` | Kill (broadcasts `StateChange` over WS) |
+| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/kill` | Kill (broadcasts `state_change` over WS) |
 
 ## Policies
 
@@ -204,11 +204,11 @@ do not need to call it manually.
 | --- | --- |
 | `WS /ws/control/{org_id}` | Real-time kill/pause/policy-invalidated/key-rotated events (HMAC-signed on connect) |
 
-Server → client message types: `InitialState`, `StateChange`,
-`PolicyInvalidated`, `KeyRotated`, `ResyncRequired`, `Error`,
-`Pong`.
+Server → client message types: `initial_state`, `state_change`,
+`policy_invalidated`, `key_rotated`, `resync_required`, `error`,
+`pong`, `approval_resolved`, `subscribed`.
 
-Client → server message types: `Subscribed`, `Ack`.
+Client → server message types: `ack`.
 
 See [Control plane](../concepts/control-plane.md) for the full
 protocol and the SDK reaction matrix.

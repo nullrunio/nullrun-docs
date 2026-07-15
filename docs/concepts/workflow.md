@@ -94,7 +94,7 @@ the event and retries on the next call.
 ## How kill / pause arrives
 
 When an operator hits **Kill** in the dashboard (or the kill API is
-called), the gateway broadcasts a `StateChange` over
+called), the gateway broadcasts a `state_change` over
 `WS /ws/control/{org_id}`. The SDK receives it and:
 
 | Situation | Result |
