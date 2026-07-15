@@ -53,9 +53,11 @@ real module in the gateway.
 ## Repositories
 
 - [`nullrunio/nullrun-sdk-python`](https://github.com/nullrunio/nullrun-sdk-python) —
-  Python SDK (`pip install nullrun`)
+  Python SDK (`pip install nullrun`), current release `0.13.11`
+  against platform contract `1.0.0`
 - [`nullrunio/nullrun-examples`](https://github.com/nullrunio/nullrun-examples) —
-  runnable examples
+  runnable examples (`examples/crewai_basic.py` requires CrewAI
+  ≥ 1.15)
 - [`nullrunio/nullrun-docs`](https://github.com/nullrunio/nullrun-docs) —
   this documentation site (https://docs.nullrun.io)
 - [`nullrunio/.github`](https://github.com/nullrunio/.github) — org profile
