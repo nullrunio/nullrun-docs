@@ -7,6 +7,11 @@ non-2xx response the gateway returns. This page maps each code to:
 - the HTTP status code the gateway returns
 - when it happens
 
+For the **three-layer error model** (structured exceptions →
+`on_error` hook → `format_user_message` / `@guarded`) and the
+boundary between developer-facing and end-user-facing wording, see
+[Concepts → Error handling](../concepts/error-handling.md).
+
 ## Gateway error codes (`error` field on every non-2xx response)
 
 The canonical catalog lives in the gateway. The `error` slug is
@@ -87,6 +92,42 @@ Removed in SDK 0.4.0: `CostLimitExceeded`, `ApprovalRequired`,
 Catch `WorkflowKilledInterrupt` **explicitly and before** any `except
 Exception` — it does not subclass `Exception`.
 
+## The default path: zero lines of error handling
+
+For the common "run an agent and print a friendly message on failure"
+case, the three public helpers do the work — no `try/except NullRunError`
+required.
+
+```python title="minimal_boilerplate.py"
+import nullrun
+from nullrun import init_or_die, guarded, protect, shutdown
+
+init_or_die(api_key="nr_live_...")        # exits cleanly if api_key missing
+
+@guarded                                 # catches NullRunError,
+@protect                                 # prints catalog wording,
+def my_agent(prompt):                    # sys.exit(1)
+    return call_llm(prompt)
+
+if __name__ == "__main__":
+    try:
+        print(my_agent("hello"))
+    finally:
+        shutdown()
+```
+
+| Helper | Catches | For |
+|---|---|---|
+| `init_or_die(api_key=...)` | `NullRunError` raised by `init()` (typically `NR-C001`) | Startup; one-shot script entry point |
+| `@guarded` | Any `NullRunError` raised inside the wrapped function | Standard agent loop |
+| `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) |
+
+All three propagate `WorkflowKilledInterrupt` (`BaseException`)
+unchanged and let non-`NullRunError` exceptions surface as honest
+tracebacks. For the full design rationale and the boundary between
+"what NullRun tells the developer" and "what the developer tells
+their end users", see [Concepts → Error handling](../concepts/error-handling.md).
+
 ## Decision vs. infrastructure
 
 The public exception hierarchy splits `NullRunError` into two marker
@@ -136,11 +177,22 @@ status:
 
 | Category | HTTP status | Notes |
 | --- | --- | --- |
-| `NullRunDecision` — budget exhausted (`NR-B004`) | `429` | Honour `retry_after` if set |
+| `NullRunDecision` — budget exhausted (`NR-B004`) | `429` (or backend `402`) | Honour `.retry_after` from the `RateLimitError` if set; budget-exhausted `NullRunBudgetError` exposes the same field via `.details.retry_after` |
 | `NullRunDecision` — tool blocked (`NR-T001`) | `403` | User did nothing wrong, but the action is forbidden |
 | `NullRunDecision` — workflow paused (`NR-W003`) | `503` | Set `Retry-After` from `.resume_after` |
-| `NullRunInfrastructureError` (any subclass) | `503` | The failure is on our side, not the user's |
+| `NullRunDecision` — consume overbudget (`CONSUME_OVERBUDGET`) | `422` | Subclass `NullRunConsumeOverbudgetError`; actual cost > reservation + ε |
+| `NullRunDecision` — chain error (`NR-CH001`) | `409` | Subclass `NullRunChainError`; chain_id mismatch / expired |
+| `NullRunDecision` — workflow inactive (`NR-W004`) | `403` | Subclass `NullRunWorkflowInactiveError`; workflow paused or killed in cross-org scenario |
+| `NullRunInfrastructureError` — rate-limit Redis (`NR-R002`) | `503` | `NullRunRateLimitRedisError`. **Fail-CLOSED** — do not retry blindly |
+| `NullRunInfrastructureError` — protocol too old (`PROTOCOL_TOO_OLD`) | `400` | `NullRunProtocolError`. Carries `.min_required_version`; SDK must be upgraded past `SDK_MIN_VERSION_FOR_V3` |
+| `NullRunInfrastructureError` (any other subclass) | `503` | The failure is on our side, not the user's |
 | `WorkflowKilledInterrupt` | `503` | Special ASGI middleware required — see [Use with FastAPI](../how-to/fastapi.md) |
+
+Every `NullRunDecision` subclass carries `.status_code` (the wire
+HTTP status the backend returned). The FastAPI integration maps
+this field to the response status automatically; in custom
+integrations read `exc.status_code` rather than hard-coding the
+default above.
 
 The NullRun SDK ships a reference FastAPI integration that applies
 this mapping for you — see [Use with FastAPI](../how-to/fastapi.md)
@@ -167,6 +219,8 @@ full rationale.
 
 ## See also
 
+- [Concepts → Error handling](../concepts/error-handling.md) — the
+  three-layer model, minimal-boilerplate helpers, dev/end-user boundary
 - [SDK API](sdk-api.md)
 - [SDK API → User-facing messages](sdk-api.md#user-facing-messages)
 - [Use with FastAPI](../how-to/fastapi.md)
