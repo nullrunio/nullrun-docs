@@ -152,3 +152,41 @@ If you are an operator and want to confirm the screening is wired up:
    should return 403.
 4. Confirm the `sanctions: Sanctions table loaded from …` log line
    appears at process start, with a non-degraded token count.
+
+### Is the screening currently degraded?
+
+The pre-revenue default is `NULLRUN_SANCTIONS_SCREENING_DISABLED=1`
+(see [Operator override](#operator-override-disabled-by-default)
+above). When the CSV is missing or fails to parse, the screening
+falls back to a hand-curated subset and the log line
+`sanctions: Sanctions table loaded from … (degraded=true)`
+appears at process start — the `degraded=true` tag is the signal
+that screening is in fallback mode.
+
+Quick triage when you suspect degraded screening in production:
+
+```bash
+ssh nullrun-vps 'docker logs --since 1h infra-breaker-core-1 | \
+  grep -E "sanctions: Sanctions table loaded|sanctions: screening skipped" | tail -5'
+```
+
+If you see `degraded=true` and the message says the CSV is missing,
+the table file is absent on the running container — restore
+`backend/data/sanctions/sdn.csv` and either redeploy (forces a
+fresh container with the file baked in) or hot-copy it into the
+running container's data directory and restart the breaker-core
+process. The geo-block remains fail-CLOSED throughout, so the IP
+defence is intact even when name-based screening is degraded.
+
+To re-enable screening explicitly (override the pre-revenue
+default and force the production posture):
+
+```bash
+# In your deploy env / docker-compose prod
+NULLRUN_SANCTIONS_SCREENING_DISABLED=0
+```
+
+A weekly cron for the OFAC SDN refresh is recommended — see
+[Geographic restrictions → Runbook — VPS deploy](geo-restrictions.md#runbook-vps-deploy)
+for the GeoIP download script template; swap the MaxMind URL for
+the OFAC SDN CSV (`https://www.treasury.gov/ofac/downloads/sdn.csv`).
