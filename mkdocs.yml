@@ -82,6 +82,7 @@ nav:
       - Loop detection: concepts/loop-detection.md
       - Anomaly detection: concepts/anomaly-detection.md
       - Human approval: concepts/human-approval.md
+      - Error handling: concepts/error-handling.md
   - How-to:
       - Protect a LangGraph agent: how-to/langgraph.md
       - Use with OpenAI Agents: how-to/openai-agents.md
