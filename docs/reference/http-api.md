@@ -56,14 +56,21 @@ documents every field.
 | Method | Path | Called by |
 | --- | --- | --- |
 | `POST` | `/api/v1/auth/verify` | `init()` — fetches the HMAC `secret_key` for the API key |
-| `POST` | `/api/v1/track` | Single cost / token / latency event |
-| `POST` | `/api/v1/track/batch` | Batched events (≤ 100 per batch) |
-| `POST` | `/api/v1/gate` | Binary budget pre-flight (called from `@protect` entry) |
-| `POST` | `/api/v1/execute` | Full policy evaluation + budget reservation (called from `@protect` body) |
-| `POST` | `/api/v1/check` | Legacy pre-flight (advisory, no scope check — kept for backward compatibility; new code uses `/gate`) |
+| `GET` | `/api/v1/capabilities` | `init()` — protocol negotiation (probes v3 contract support) |
+| `POST` | `/api/v1/gate` | Pre-flight + policy evaluation + budget reservation (called from `@protect` entry) |
+| `POST` | `/api/v1/track` | v3 single-event commit (`reservation_id` + `idempotency_key`) |
+| `POST` | `/api/v1/track/batch` | Legacy batched events (≤ 100 per batch); SDK 0.12.0+ falls back to this only when `NULLRUN_V3_TRACK_DISABLE=1` |
 | `GET` | `/api/v1/orgs/{org_id}/policies` | Policy fetch (called from SDK on first `@protect` and on `PolicyInvalidated` WS push) |
 | `GET` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Workflow lookup (called from SDK on first gate per workflow) |
 | `GET` | `/api/v1/orgs/{org_id}/status` | Control-plane poll fallback (only used when WS is down) |
+| `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat (v3 contract; replaces the legacy chunk-count v2 path) |
+
+!!! info "Legacy endpoints"
+    `/api/v1/check` was removed for new SDK traffic in 0.13.1 and
+    now returns `410 Gone` with `replacement: /api/v1/gate`. New
+    integrations should target `/gate` directly. `/api/v1/execute`
+    is still registered on the gateway for legacy callers but the
+    SDK no longer emits traffic against it.
 
 ## Auth
 
@@ -154,6 +161,42 @@ Health endpoints are registered on the gateway's top-level router
 | `GET` | `/health/live` | Liveness — process is up and accepting connections |
 | `GET` | `/health/ready` | Readiness — Postgres + Redis reachable |
 | `GET` | `/health/startup` | Startup — `200` after migrations complete, `503` while booting |
+
+## Capabilities
+
+The capabilities endpoint reports the wire-contract version the
+gateway supports. The SDK calls this on `init()` to negotiate
+the protocol version (v1/v2 vs. v3) and to surface a startup
+warning if the SDK is older than what the gateway requires.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/capabilities` | Report `min_protocol_version` / `max_protocol_version`, `sdk_min_version`, `lua_script_version`, server version + build timestamp, and the `capabilities.*` feature flags (`server_minted_execution_id`, `per_execution_reservations`, `heartbeat_time_based`, `idempotency_keys`, `rate_limit_fail_scope`, etc.) |
+
+The v3 readiness gate (`is_v3_ready()` on the SDK side) requires
+all three of `server_minted_execution_id`, `per_execution_reservations`,
+and `heartbeat_time_based` to be `true`. If the backend reports
+v3-ready but the SDK is older than `0.12.0` (the canonical
+`SDK_MIN_VERSION_FOR_V3`), `init()` emits a warning so the
+operator sees the gap before the first `/gate` call fails with
+`400 PROTOCOL_TOO_OLD`.
+
+## Heartbeat
+
+Long-running workflows post a time-based cadence heartbeat so the
+gateway can detect an orphaned workflow whose agent process has
+crashed without sending a kill / pause signal. The v3 contract
+replaces the legacy chunk-count heartbeat with a wall-clock
+interval; the recommended cadence is advertised in
+`capabilities.heartbeat_interval_seconds` (default 30s).
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat (workflow_id + chain_id) |
+
+The SDK posts heartbeats automatically inside the
+`NullRunRuntime` background thread once `init()` has run; operators
+do not need to call it manually.
 
 ## WebSocket control plane
 
