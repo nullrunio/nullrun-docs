@@ -40,21 +40,31 @@ with nullrun.workflow("my-workflow"):
     def run(): ...
 ```
 
-Cumulative cost > 500¢ → `NullRunBlockedException` on the next gate call
-(see [Errors](../reference/errors.md) for the full exception hierarchy).
+Cumulative cost > 500¢ → `NullRunBudgetError` (`NR-B004`, a
+`NullRunBlockedException` subclass) raised on the next gate call.
+For non-budget policy blocks (tool block, sensitive tool, loop
+detection) the generic `NullRunBlockedException` (`NR-X001`) is
+raised instead. See [Errors](../reference/errors.md) for the full
+exception hierarchy and the recommended `except` pattern.
 
 ## Per-call
 
 The SDK does not project per-call cost on its own — the per-call
 cap is enforced by the workspace policy on the gateway. When the
-policy carries a `max_per_call_cents` limit, the gate rejects any
-single call whose projected cost would exceed the cap *before* the
-model is invoked (see [Budgets](../concepts/budgets.md) for the
-reservation flow).
+policy carries a `max_per_call_cents` limit, the v3 `/gate` call
+rejects any single call whose projected cost would exceed the cap
+*before* the model is invoked (see [Budgets](../concepts/budgets.md)
+for the v3 reservation flow). The SDK raises `NullRunBlockedException`
+with `.reason="per_call_cap"` and `.workflow_id` set.
+
+If you need to skip the pre-flight check in test environments
+only, set `NULLRUN_SKIP_BUDGET_CHECK=1`. The SDK emits a
+`RuntimeWarning` at import so this can't slip into production
+unnoticed.
 
 ## See also
 
-- [Budgets](../concepts/budgets.md) — reservation lifecycle and the
+- [Budgets](../concepts/budgets.md) — v3 reservation lifecycle and the
   pre-flight `/gate` end-to-end
 - [Errors](../reference/errors.md)
 - [Examples → cost cap demo](https://github.com/nullrunio/nullrun-examples/blob/main/examples/cost_cap_demo.py)
