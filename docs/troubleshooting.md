@@ -16,7 +16,8 @@ when it isn't.
 | Workflow paused via dashboard | Raise at next `@protect` call | `WorkflowPausedException` |
 | Missing `api_key` on `init()` | Raise at first SDK call | `NullRunAuthenticationError` |
 | HMAC signature missing / stale | Reject the request (401) | `NullRunAuthenticationError` |
-| Plan monthly / per-dimension cap reached | Reject the request (**422** with `error=plan_limit_exceeded` or `workflow_limit_reached`; `details.resource` names the dimension) | `NullRunBlockedException` |
+| Plan monthly / per-dimension cap reached | Reject the request (**422** with `error=plan_limit_exceeded` or `workflow_limit_reached`; `details.resource` names the dimension) | `NullRunBlockedException` (HTTP `422` via `exc.status_code`) |
+| Consume over-budget on commit | Reject the `/track` commit (**422** with `error=CONSUME_OVERBUDGET`; actual cost > reserved + ε) | `NullRunConsumeOverbudgetError` |
 | Per-minute rate cap reached | Reject the request (429 with `Retry-After`) | `RateLimitError` |
 | `workflow_id` paused / killed (WS push) | Apply at next `@protect` call | `WorkflowKilledInterrupt` / `WorkflowPausedException` |
 | `Policy.fetch` fails on first call | Use cached policy → fall back to `Policy.strict_local()` (zero budget, 1-call rate limit) | (none — `track_event` returns the block verdict; no exception) |
