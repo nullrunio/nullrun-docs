@@ -34,11 +34,11 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 - [Configuration](docs/getting-started/configuration.md) · env vars, transport options, gRPC status
 
 **Concepts**
-- [Circuit breaker](docs/concepts/circuit-breaker.md) · CLOSED / OPEN / HALF_OPEN
-- [Budgets](docs/concepts/budgets.md) · pre-flight `/gate` + reservation `/execute`
+- [Circuit breaker](docs/concepts/circuit-breaker.md) · CLOSED / OPEN / HALF_OPEN, `PERMISSIVE`/`STRICT`/`CACHED` fallback modes
+- [Budgets](docs/concepts/budgets.md) · v3 contract: `/gate` pre-flight + server-minted `reservation_id` + `/api/v1/track` single commit
 - [Sensitive tools](docs/concepts/sensitive-tools.md) · fail-CLOSED, always
-- [Workflow context](docs/concepts/workflow.md) · `nullrun.workflow(...)` and what it does
-- [Control plane (WebSocket)](docs/concepts/control-plane.md) · real-time kill / pause
+- [Workflow context](docs/concepts/workflow.md) · `nullrun.workflow(...)` + `nullrun.chain(...)` + `parent_trace_id` multi-agent attachment
+- [Control plane (WebSocket)](docs/concepts/control-plane.md) · real-time kill / pause / `approval_resolved`
 - [API keys](docs/concepts/api-keys.md) · scopes, `expires_at`, rotation, revocation
 - [Policies](docs/concepts/policies.md) · RateLimit / BudgetLimit / ToolBlock, org vs workflow, aggregation
 - [Tool policies](docs/concepts/tool-policies.md) · glob match, 4 KB cap, union across scopes
@@ -53,7 +53,7 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 
 **Reference**
 - [SDK API](docs/reference/sdk-api.md) · `init`, `@protect`, `@sensitive`, `workflow`, exceptions
-- [HTTP API](docs/reference/http-api.md) · `/track`, `/gate`, `/check`, `/execute`, WebSocket
+- [HTTP API](docs/reference/http-api.md) · `/track`, `/gate`, `/capabilities`, `/heartbeat`, WebSocket
 - [Error codes](docs/reference/errors.md) · `validation_error`, `RateLimitError`, kill contract
 
 **Compliance**
