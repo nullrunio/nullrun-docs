@@ -12,11 +12,13 @@ Verify:
 python -c "from nullrun import protect; print('ok')"
 ```
 
-Current version: `0.6.0` (alpha).
+Current version: `0.13.11` (platform `1.0.0`).
 
 > **No local mode.** If `init()` is called without an API key, the
 > SDK raises `NullRunAuthenticationError` at first use. There is no
-> offline / local-only fallback.
+> offline / local-only fallback. The pre-0.3.0 silent no-op stub was
+> removed because it bypassed every backend gate (budget, policy,
+> control plane) — see SDK changelog for the full rationale.
 
 ## API key
 
