@@ -139,36 +139,46 @@ rather than enumerating them.
 ## Recommended `@sensitive` starter list
 
 Use this as a starting point, then narrow or widen based on what
-your agent actually does. Register on SDK init:
+your agent actually does. Register on SDK init by calling
+`runtime.add_sensitive_tool(...)` (or the batch helper
+`runtime.register_sensitive_tools([...])`) — the public `init()`
+signature has **no** `sensitive_tool_patterns` kwarg, so the example
+below shows the supported pattern:
 
 ```python title="sensitive_patterns.py"
+import nullrun
 from nullrun import init
 
-init(
-    api_key="nr_live_...",
-    sensitive_tool_patterns=[
-        # Finance
-        "stripe.*", "charge", "send_payment", "create_invoice", "refund",
-        # Email & messaging (anything that "sends")
-        "send_email", "send_gmail", "send_message", "send_sms",
-        "slack_send.*", "office365_send.*",
-        # Destructive file ops
-        "delete_file", "file_delete", "write_file", "file_write",
-        # Destructive DB ops
-        "execute_sql", "run_sql", "db_write", "db_delete",
-        "write_query", "create_table",
-        # Destructive cloud / infra
-        "s3_delete.*", "ec2_terminate.*", "ec2_stop.*",
-        "lambda_invoke", "kubernetes_delete", "kubernetes_apply",
-        # Any code execution
-        "python_repl.*", "bash", "shell", "terminal",
-        "execute_.*", "run_command", "run_bash_command",
-        # Git / GitHub writes
-        "git_commit", "github_merge.*", "github_push.*", "github_delete.*",
-        # Memory / vector destructive
-        "memory_delete", "vector_store_delete", "delete_entities",
-    ],
-)
+init(api_key="nr_live_...")
+
+# Pull the runtime back out and register the starter list. The
+# runtime.handle.add_sensitive_tool / register_sensitive_tools API
+# is stable; init() does not accept these patterns as a kwarg.
+runtime = nullrun.status().__class__
+# Real call — see nullrun.runtime.add_sensitive_tool:
+from nullrun.decorators import get_protected_runtime
+get_protected_runtime().register_sensitive_tools([
+    # Finance
+    "stripe.*", "charge", "send_payment", "create_invoice", "refund",
+    # Email & messaging (anything that "sends")
+    "send_email", "send_gmail", "send_message", "send_sms",
+    "slack_send.*", "office365_send.*",
+    # Destructive file ops
+    "delete_file", "file_delete", "write_file", "file_write",
+    # Destructive DB ops
+    "execute_sql", "run_sql", "db_write", "db_delete",
+    "write_query", "create_table",
+    # Destructive cloud / infra
+    "s3_delete.*", "ec2_terminate.*", "ec2_stop.*",
+    "lambda_invoke", "kubernetes_delete", "kubernetes_apply",
+    # Any code execution
+    "python_repl.*", "bash", "shell", "terminal",
+    "execute_.*", "run_command", "run_bash_command",
+    # Git / GitHub writes
+    "git_commit", "github_merge.*", "github_push.*", "github_delete.*",
+    # Memory / vector destructive
+    "memory_delete", "vector_store_delete", "delete_entities",
+])
 ```
 
 Patterns are glob-matched against the tool name the agent requested,
