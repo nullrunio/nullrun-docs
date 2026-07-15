@@ -43,7 +43,7 @@ the key in the dashboard to enable control-plane enforcement.
 - Powers the audit log
 - Carries `trace_id` + `parent_trace_id` for multi-agent span
   attachment (since SDK 0.13.6 — see
-  [parent_trace_id cost_events column](http-api.md#sdk-endpoints)).
+  [parent_trace_id cost_events column](../reference/http-api.md#sdk-endpoints)).
   When an LLM call sits inside a `with chain(...)` block or a
   LangGraph sub-agent, the SDK attaches the chain's trace_id as
   `parent_trace_id` so the unified cost_events SELECT third JOIN
@@ -77,7 +77,7 @@ The SDK's in-process gate cache collapses same-key
 round-trip with a 5s TTL — see
 [Budgets → v3 protocol negotiation](budgets.md#v3-protocol-negotiation)
 and the `NULLRUN_GATE_CACHE_DISABLE=1` opt-out in
-[Configuration](configuration.md).
+[Configuration](../getting-started/configuration.md).
 
 ## How the workflow ends
 

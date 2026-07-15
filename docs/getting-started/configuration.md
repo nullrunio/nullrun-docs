@@ -22,7 +22,7 @@ needs the API key — everything else has sensible defaults.
 | --- | --- | --- |
 | `NULLRUN_BATCH_SIZE` | `50` | Event batch size for `/track/batch` |
 | `NULLRUN_FLUSH_INTERVAL_MS` | `5000` | Event flush interval (ms — internally divided by 1000) |
-| `NULLRUN_GATE_CACHE_DISABLE` | `0` | When `1`, disables the in-process 5s gate cache used by chain-mode `@protect` calls (forces a fresh `/gate` round-trip on every call). Use in smoke tests or whenever you need live gate decisions on every invocation — see [Concepts → Budgets](concepts/budgets.md#v3-protocol-negotiation). |
+| `NULLRUN_GATE_CACHE_DISABLE` | `0` | When `1`, disables the in-process 5s gate cache used by chain-mode `@protect` calls (forces a fresh `/gate` round-trip on every call). Use in smoke tests or whenever you need live gate decisions on every invocation — see [Concepts → Budgets](../concepts/budgets.md#v3-protocol-negotiation). |
 | `NULLRUN_V3_TRACK_DISABLE` | `0` | When `1`, falls back to legacy `/track/batch` instead of the v3 single-event `/api/v1/track` path. Only set this against a v1/v2-only backend; every shipped 1.0.0 backend supports v3. |
 
 The HTTP request timeout and retry count are **not** configurable from

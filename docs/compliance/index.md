@@ -53,5 +53,5 @@ If you are an operator, see:
 
 - [Geographic restrictions → Runbook](geo-restrictions.md#runbook-vps-deploy)
   for the GeoIP database deploy steps.
-- [Sanctions screening → Operator override](sanctions-screening.md#operator-override)
+- [Sanctions screening → Operator override](sanctions-screening.md#operator-override-disabled-by-default)
   for the opt-out env var.
