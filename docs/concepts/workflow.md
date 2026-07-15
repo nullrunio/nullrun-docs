@@ -41,6 +41,43 @@ the key in the dashboard to enable control-plane enforcement.
 - Anchors the [control plane](control-plane.md) (kill / pause
   broadcasts to all `@protect` calls with the same `workflow_id`)
 - Powers the audit log
+- Carries `trace_id` + `parent_trace_id` for multi-agent span
+  attachment (since SDK 0.13.6 — see
+  [parent_trace_id cost_events column](http-api.md#sdk-endpoints)).
+  When an LLM call sits inside a `with chain(...)` block or a
+  LangGraph sub-agent, the SDK attaches the chain's trace_id as
+  `parent_trace_id` so the unified cost_events SELECT third JOIN
+  arm surfaces the LLM cost on the orchestration row.
+
+## Chain context (soft-mode budget gate)
+
+A **chain** groups consecutive `@protect` calls under a single
+budget reservation. Use it when a single user request fans out
+into a multi-step agent loop and you want one budget decision
+across the whole loop instead of one decision per step:
+
+```python title="chain_example.py"
+import nullrun
+from nullrun import init, protect
+
+init(api_key="nr_live_...")
+
+with nullrun.workflow("research-task"):
+    with nullrun.chain("loop-1"):
+        @protect
+        def step1(): ...
+        @protect
+        def step2(): ...
+        @protect
+        def step3(): ...
+```
+
+The SDK's in-process gate cache collapses same-key
+`(workflow_id, chain_id, model)` calls to a single `/gate`
+round-trip with a 5s TTL — see
+[Budgets → v3 protocol negotiation](budgets.md#v3-protocol-negotiation)
+and the `NULLRUN_GATE_CACHE_DISABLE=1` opt-out in
+[Configuration](configuration.md).
 
 ## How the workflow ends
 
