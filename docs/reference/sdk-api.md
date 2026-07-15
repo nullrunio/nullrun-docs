@@ -21,21 +21,28 @@ see [Auto-instrumentation](../getting-started/install.md#auto-instrumentation).
 from nullrun import init, protect, workflow, span, agent, track_llm, track_tool, track_event
 ```
 
-| Symbol | Purpose |
-| --- | --- |
-| `init(api_key=None, api_url=None, debug=False)` | Initialise the SDK singleton. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars or by constructing `NullRunRuntime` directly. |
-| `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. |
-| `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check `runtime.execute(...)` before the body runs. Fails CLOSED on transport error (ADR-008) regardless of the runtime's fallback mode. Chain with `@protect` in either order; the recommended form is `@sensitive` outside so `add_sensitive_tool(fn.__name__)` runs before the wrapper is built. |
-| `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. |
-| `span(name=None)` | Context manager for nested trace spans. |
-| `agent(name=None)` | Context manager for agent identity. |
-| `on_error(hook)` | Register a global error hook (Layer 2 of "give the user a chance"). Called for every structured SDK failure (subclasses of `NullRunError`) BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Does NOT fire for `WorkflowKilledInterrupt` (BaseException — kill is a non-recoverable signal). Returns an idempotent unregister callable. |
-| `track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` | Manual escape hatch for non-HTTP LLM calls. |
-| `track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool-call tracking. |
-| `track_event(event_type, **kwargs)` | Catch-all for custom events. |
-| `format_user_message(exc, locale="en")` | Render a `NullRunError` (or any object with an `error_code`) as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. |
-| `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear the override. |
-| `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. |
+| Symbol | Purpose | In `__all__` |
+| --- | --- | --- |
+| `init(api_key=None, api_url=None, debug=False)` | Initialise the SDK singleton. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars or by constructing `NullRunRuntime` directly. Probes `GET /api/v1/capabilities` on first call to validate v3 contract. | ✅ |
+| `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. | ✅ |
+| `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check `runtime.execute(...)` before the body runs. Fails CLOSED on transport error (ADR-008) regardless of the runtime's fallback mode. Chain with `@protect` in either order; the recommended form is `@sensitive` outside so `add_sensitive_tool(fn.__name__)` runs before the wrapper is built. | ✅ (lazy import) |
+| `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
+| `span(name=None)` | Context manager for nested trace spans. | (lazy) |
+| `agent(name=None)` | Context manager for agent identity. | (lazy) |
+| `chain(name=None)` | Context manager for soft-mode budget gate (0.11.0+). | (lazy) |
+| `set_call_context(model=..., tools=[...])` | Per-call context the SDK forwards to `/gate` so the backend's budget + tool-block enforcement sees real values (was `"budget-precheck"` sentinel + empty tool list pre-0.6.0). | (lazy) |
+| `on_error(hook)` | Register a global error hook (Layer 2 of "give the user a chance"). Called for every structured SDK failure (subclasses of `NullRunError`) BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Does NOT fire for `WorkflowKilledInterrupt` (BaseException — kill is a non-recoverable signal). Returns an idempotent unregister callable. | ✅ |
+| `track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` | Manual escape hatch for non-HTTP LLM calls. | ✅ |
+| `track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool-call tracking. | ✅ |
+| `track_event(event_type, **kwargs)` | Catch-all for custom events. | ✅ |
+| `format_user_message(exc, locale="en")` | Render a `NullRunError` (or any object with an `error_code`) as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. | ✅ |
+| `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear the override. | ✅ |
+| `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
+| `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads (HTTP poller, WS push listener, transport flush). Safe to register via `atexit`. | ✅ |
+| `status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. | ✅ |
+| `handle(*, exit_code=1)` | Context manager. Inside the block, any `NullRunError` is caught, formatted via `format_user_message`, printed to stderr, and the process exits with `exit_code`. `WorkflowKilledInterrupt` propagates. | ✅ |
+| `guarded(fn)` | Decorator. Same semantics as `with nullrun.handle():` applied to `fn`. | ✅ |
+| `init_or_die(*, api_key=None, api_url=None, debug=False)` | Wrapper around `init` that catches the `NR-C001` "no api_key" failure at startup and exits cleanly. The recommended startup helper for one-shot scripts. | ✅ |
 
 All `track_*` functions return a `dict[str, Any]` describing the
 backend's response (`{"allowed": bool, "actions": [...], ...}`); they
@@ -63,21 +70,26 @@ hierarchy diagram.
 
 | Class | When | Notes |
 | --- | --- | --- |
-| `NullRunError` | Structured base for every user-facing SDK exception | Inherits `BreakerError` |
+| `NullRunError` | Structured base for every user-facing SDK exception | Inherits `BreakerError`. Carries `.error_code`, `.user_action`, `.retryable`, `.docs_url`. |
 | `NullRunConfigError` | SDK misconfigured (e.g. missing `api_key`) | `error_code="NR-C000"`-family. Never retryable. |
 | `NullRunAuthenticationError` | Missing / invalid `X-API-Key`, bad HMAC | 401 / 403. Carries `.message` for backward compat. |
-| `NullRunAuthError` | 401 specifically (key rejected) | Subclass of `NullRunAuthenticationError` (`NR-A003`). |
+| `NullRunAuthError` | 401 specifically (key rejected) | Subclass of `NullRunAuthenticationError` (`NR-A003`). Carries `.status_code` (the wire HTTP status). |
 | `NullRunTransportError` | Gateway unreachable | Carries `.source` (`NETWORK_ERROR` / `GATEWAY_ERROR` / `BREAKER_OPEN` / `AUTH_ERROR`) and `.endpoint`. Retryable. |
 | `NullRunBackendError` | 5xx from the gateway | Subclass of `NullRunTransportError`. `NR-B002`. Retryable. |
 | `RateLimitError` | HTTP 429 | Subclass of `NullRunTransportError`. Carries `.retry_after`, `.upgrade_url`, `.body`. `NR-R001`. Retryable. |
-| `NullRunBlockedException` | Generic policy block | Inspect `.workflow_id`, `.reason`, `.action`, `.tool_name`, `.details`. **No** `.message` — use `str(exc)`. `NR-X001`. |
+| `NullRunRateLimitRedisError` | 503 — Redis reservation failed | Subclass of `NullRunInfrastructureError`. `NR-R002`. **Fail-CLOSED.** |
+| `NullRunProtocolError` | Backend returned 400 `PROTOCOL_TOO_OLD` | Carries `.min_required_version`. Upgrade SDK past `SDK_MIN_VERSION_FOR_V3`. |
+| `NullRunBlockedException` | Generic policy block | Inspect `.workflow_id`, `.reason`, `.action`, `.tool_name`, `.details`. Carries `.status_code` (the wire HTTP status, e.g. 402 budget, 403 cross-org, 422 `CONSUME_OVERBUDGET`, 429 cap-reached). **No** `.message` — use `str(exc)`. `NR-X001`. |
 | `NullRunBudgetError` | Budget exhausted | Subclass of `NullRunBlockedException`. `NR-B004`. |
 | `NullRunToolBlockedError` | Tool in block list | Subclass of `NullRunBlockedException`. `NR-T001`. Carries `.tool_name`. |
+| `NullRunChainError` | Chain-mode gate check failed | Subclass of `NullRunDecision`. `NR-CH001`. |
+| `NullRunConsumeOverbudgetError` | 422 — actual cost > reservation + ε | Subclass of `NullRunDecision`. Surfaces over-budget commit events. |
+| `NullRunWorkflowInactiveError` | 403 — workflow paused / killed cross-org | Subclass of `NullRunDecision`. `NR-W004`. |
 | `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
 | `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
 | `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunError`. `NR-W003`. Carries `.workflow_id`, `.reason`, `.resume_after`. |
-| `WorkflowKilledException` | Killed via control plane (parent) | **BaseException**, not `Exception`. Emits `DeprecationWarning` on construction. |
-| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `WorkflowKilledException`. **BaseException** per the kill contract — catch before `except Exception`. |
+| `WorkflowKilledException` | Killed via control plane (parent) | `Exception` subclass. **Deprecated** — emits `DeprecationWarning` on construction. Use `WorkflowKilledInterrupt` directly. |
+| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `BaseException` (NOT `Exception`) per the kill contract — catch before `except Exception`. |
 
 Removed in 0.4.0: `CostLimitExceeded`, `ApprovalRequired`,
 `BreakerTimeout`, `LoopDetectedException`, `RetryStormException`,
