@@ -79,6 +79,60 @@ def _to_log(err: nullrun.NullRunError, ctx: nullrun.ErrorContext) -> None:
     )
 ```
 
+### `ErrorContext` fields
+
+The context object is a frozen dataclass — safe to log, hash, or
+forward to Sentry without copying:
+
+| Field | Type | When set |
+|---|---|---|
+| `stage` | `str` | One of `"init"`, `"transport"`, `"track"`, `"gate"`, `"auth"`. Tells you which subsystem fired the error. |
+| `workflow_id` | `str \| None` | The current `workflow_id` contextvar, if any was set via `with nullrun.workflow(...)`. |
+| `tool_name` | `str \| None` | For `track_tool` errors and `ToolBlock` decisions, the tool name the agent tried to call. |
+| `api_key_prefix` | `*** \| None` | First 12 chars of the API key (`"nr_live_abc..."`) for cross-org tracing. Never the full key. |
+| `correlation_id` | `str \| None` | Per-request UUID set by the transport; pass through to your backend to correlate SDK and gateway logs. |
+| `timestamp` | `datetime` (UTC) | When the error fired. |
+| `extra` | `dict[str, Any]` | Free-form — vendor-specific extras the SDK didn't put on the dataclass. |
+
+### Multiple hooks
+
+```python title="multiple_hooks.py"
+import nullrun
+import sentry_sdk
+import logging
+
+log = logging.getLogger(__name__)
+
+# Hooks fire in registration order. Each gets the same (err, ctx).
+@nullrun.on_error
+def _to_sentry(err, ctx):
+    sentry_sdk.capture_exception(err, extra={
+        "code": err.error_code,
+        "stage": ctx.stage,
+    })
+
+@nullrun.on_error
+def _to_log(err, ctx):
+    log.warning("NullRun error", extra={"code": err.error_code})
+
+# Both hooks run on every NullRunError. Order is preserved.
+# Hook exceptions are caught and logged at DEBUG — a misbehaving
+# hook does NOT break the SDK or skip subsequent hooks.
+```
+
+To unregister a hook, call the function returned by `on_error`:
+
+```python title="unregister_hook.py"
+import nullrun
+
+@nullrun.on_error
+def _my_hook(err, ctx): pass
+
+unregister = nullrun.on_error(_my_hook)   # idempotent
+unregister()                              # remove
+unregister()                              # safe no-op
+```
+
 What the hook does **not** fire for:
 
 - `WorkflowKilledInterrupt` (`BaseException`) — kill is a signal, not
