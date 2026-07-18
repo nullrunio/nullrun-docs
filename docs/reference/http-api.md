@@ -213,6 +213,158 @@ Client → server message types: `ack`.
 See [Control plane](../concepts/control-plane.md) for the full
 protocol and the SDK reaction matrix.
 
+## Common request patterns
+
+The examples below use the dashboard's `Authorization: Bearer *** session
+token (acquired via `POST /api/v1/auth/login`). For SDK-traffic
+endpoints substitute `X-API-Key` + HMAC headers — see the
+[Authentication](#authentication) section above.
+
+Every example assumes shell variables for the auth header and org id:
+
+```bash title="shell"
+TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+ORG_ID=8a3b1c7d-...
+```
+
+!!! note "Compute the HMAC signature"
+    For SDK endpoints the `X-Signature` and `X-Signature-Timestamp`
+    headers are required. The signature is
+    `HMAC-SHA256(secret_key, "<timestamp>:<api_key>:<sha256(body)>")`.
+    See [Authentication → X-API-Key + HMAC](#x-api-key--hmac-sdk-gateway).
+
+### Create a workflow
+
+```bash title="shell"
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "production-bot",
+    "description": "Customer-facing assistant",
+    "budget_cents": 5000,
+    "human_approvals_enabled": false
+  }'
+
+# → 201 { "id": "wf_abc...", "name": "production-bot", ... }
+```
+
+### Mint an API key bound to a workflow
+
+```bash title="shell"
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../api-keys" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "prod-bot-key-2026-07",
+    "scopes": ["gate", "track", "verify"]
+  }'
+
+# → 201 {
+#     "id": "key_...",
+#     "key": "nr_live_xxxxxxxxxxxx",   ← shown ONCE, store it
+#     "secret_key": "sk_...",          ← shown ONCE, store it
+#     "workflow_id": "wf_abc...",
+#     "key_prefix": "nr_live_xxxxxx"
+#   }
+```
+
+The raw `key` and `secret_key` are **never returned again** —
+losing them means rotating the key. See
+[API keys → Creating a key](../concepts/api-keys.md#creating-a-key).
+
+### Update a workflow's budget
+
+```bash title="shell"
+curl -X PATCH "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc..." \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "budget_cents": 10000 }'
+
+# → 200 { "id": "wf_abc...", "budget_cents": 10000, ... }
+```
+
+`budget_cents` is the per-period cap. Period rollover is automatic —
+see [Budgets → Set a budget](../concepts/budgets.md#set-a-budget).
+
+### Kill / pause / resume a running workflow
+
+```bash title="shell"
+# Kill — broadcasts state_change(killed) over WS to every connected SDK
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../kill" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Pause
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../pause" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Resume
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../resume" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Rotate an API key's HMAC secret
+
+```bash title="shell"
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/api-keys/key_.../rotate" \
+  -H "Authorization: Bearer $TOKEN"
+
+# → 200 {
+#     "id": "key_...",
+#     "key": "nr_live_xxxxxxxxxxxx",   ← NEW raw key
+#     "secret_key": "sk_...",          ← NEW HMAC secret
+#     "key_version": 7
+#   }
+```
+
+The old key stays valid for a brief overlap window while the SDK
+picks up the new credentials via the `key_rotated` WS push. See
+[API keys → Expiration and rotation](../concepts/api-keys.md#expiration-and-rotation)
+for the full flow.
+
+### Revoke an API key
+
+```bash title="shell"
+curl -X DELETE "https://api.nullrun.io/api/v1/orgs/$ORG_ID/api-keys/key_..." \
+  -H "Authorization: Bearer $TOKEN"
+
+# → 204 No Content
+```
+
+Immediate — no grace period. For zero-downtime rotation, use
+`rotate` instead.
+
+### List pending approvals
+
+```bash title="shell"
+curl "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals?status=pending" \
+  -H "Authorization: Bearer $TOKEN"
+
+# → 200 { "approvals": [ { "id": "...", "risk_level": "high", ... } ] }
+```
+
+Sorted by `risk_level` desc — the highest-stakes decisions surface
+first. See [Human approval](../concepts/human-approval.md#operator-flow).
+
+### Single-call status (current spend / budget / time-to-exhaustion)
+
+```bash title="shell"
+curl "https://api.nullrun.io/api/v1/orgs/$ORG_ID/status" \
+  -H "Authorization: Bearer $TOKEN"
+
+# → 200 {
+#     "current_spend_cents": 2340,
+#     "budget_cents": 5000,
+#     "time_to_exhaustion_secs": 86400,
+#     "rate_used": 12,
+#     "rate_limit_per_min": 60,
+#     "plan_caps": { ... }
+#   }
+```
+
+Useful for dashboards and alerts — one call returns everything
+you need to show "you've used X of Y".
+
 ## Not in this page
 
 The following endpoint families are intentionally omitted because
