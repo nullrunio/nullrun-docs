@@ -102,6 +102,7 @@ nav:
           - Raw openai SDK: how-to/raw-openai.md
       - Set a hard cost cap: how-to/cost-cap.md
       - Run multiple agents: how-to/multi-agent.md
+      - Multi-agent orchestration: how-to/multi-agent-orchestration.md
       - Stream responses: how-to/streaming.md
   - Reference:
       - SDK API: reference/sdk-api.md
