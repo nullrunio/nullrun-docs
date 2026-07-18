@@ -76,6 +76,7 @@ nav:
       - Budgets: concepts/budgets.md
       - Sensitive tools: concepts/sensitive-tools.md
       - Workflow context: concepts/workflow.md
+      - Tracing: concepts/tracing.md
       - Control plane (WebSocket): concepts/control-plane.md
       - API keys: concepts/api-keys.md
       - Policies: concepts/policies.md
