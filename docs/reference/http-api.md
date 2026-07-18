@@ -215,8 +215,8 @@ protocol and the SDK reaction matrix.
 
 ## Common request patterns
 
-The examples below use the dashboard's `Authorization: Bearer *** session
-token (acquired via `POST /api/v1/auth/login`). For SDK-traffic
+The examples below use the dashboard's `Authorization: Bearer <session-token>`
+header (the token comes from `POST /api/v1/auth/login`). For SDK-traffic
 endpoints substitute `X-API-Key` + HMAC headers — see the
 [Authentication](#authentication) section above.
 
