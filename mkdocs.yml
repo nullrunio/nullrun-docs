@@ -105,6 +105,7 @@ nav:
       - Run multiple agents: how-to/multi-agent.md
       - Multi-agent orchestration: how-to/multi-agent-orchestration.md
       - Stream responses: how-to/streaming.md
+      - Manual cost / event tracking: how-to/custom-tracking.md
   - Reference:
       - SDK API: reference/sdk-api.md
       - HTTP API: reference/http-api.md
