@@ -101,6 +101,7 @@ nav:
           - AutoGen: how-to/autogen.md
           - Raw openai SDK: how-to/raw-openai.md
       - Set a hard cost cap: how-to/cost-cap.md
+      - Run multiple agents: how-to/multi-agent.md
   - Reference:
       - SDK API: reference/sdk-api.md
       - HTTP API: reference/http-api.md
