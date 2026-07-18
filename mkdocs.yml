@@ -67,6 +67,7 @@ theme:
 nav:
   - Home: index.md
   - Getting started:
+      - First agent in 15 minutes: getting-started/onboarding.md
       - Installation: getting-started/install.md
       - Quickstart: getting-started/quickstart.md
       - Configuration: getting-started/configuration.md
