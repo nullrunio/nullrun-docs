@@ -81,18 +81,26 @@ pending human-approval request is approved or denied by an operator
 
 ## When the WebSocket is down
 
-The SDK supports two transport modes for the control plane
-(selected via `NULLRUN_TRANSPORT`):
+If the WS endpoint is blocked by your network (corporate firewall,
+proxy in the way, etc.) the SDK falls back to HTTP polling on
+`/api/v1/orgs/{org_id}/workflows/{workflow_id}` — a 1-second round trip
+that surfaces kill/pause with at most 1s of latency.
 
-- `ws` (default) — WebSocket push to `/ws/control/{org_id}`.
-  Sub-second kill/pause propagation. On disconnect the SDK
-  reconnects with exponential backoff.
-- `http` — 1-second polling fallback. Each poll round fetches
-  per-workflow state from
-  `GET /api/v1/orgs/{org_id}/workflows/{workflow_id}` (not
-  `/status` — that route is the legacy pre-Phase-139 path that no
-  longer exists). Use this in environments where the WS endpoint is
-  blocked.
+!!! info "No public env var for transport mode"
+    There is **no** `NULLRUN_TRANSPORT` env var. Earlier docs drafts
+    mentioned one; it was never wired up to the SDK. To force HTTP
+    polling from start (instead of letting WS push fail over), build
+    a `NullRunRuntime` directly:
+
+    ```python title="polling_runtime.py"
+    from nullrun.runtime import NullRunRuntime
+
+    runtime = NullRunRuntime(api_key="nr_live_...", polling=True)
+    ```
+
+    In practice the SDK is correct to keep this internal — selecting
+    the transport at runtime is a deploy-time concern, not a config
+    knob you want to flip per-request.
 
 The control-plane check on every `@protect` gate entry merges the
 local cached remote state with whatever the transport last delivered.
