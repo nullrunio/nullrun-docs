@@ -18,36 +18,120 @@ see [Auto-instrumentation](../getting-started/install.md#auto-instrumentation).
 ## Top-level
 
 ```python title="public_surface.py"
-from nullrun import init, protect, workflow, span, agent, track_llm, track_tool, track_event
+from nullrun import init, init_or_die, protect, workflow, span, agent, chain, track_llm, track_tool, track_event
 ```
 
-| Symbol | Purpose | In `__all__` |
-| --- | --- | --- |
+### `init()` vs `init_or_die()` — which one to use
+
+| Helper | Behaviour | Use when |
+|---|---|---|
+| `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` (NR-C001) if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI) |
+| `init_or_die(api_key=None, api_url=None, debug=False)` | Catches the NR-C001 exception, prints the catalog user-message to stderr, calls `sys.exit(1)`. Returns the runtime otherwise. | One-shot scripts, CLI tools, examples, anything where a missing key is a hard error |
+
+`init_or_die` is `init` plus an `try/except NullRunAuthenticationError → sys.exit(1)`. The chain `@guarded` decorator does the same for callsite-level errors.
+
+|| Symbol | Purpose | In `__all__` |
+|---|---|---|---|
 | `init(api_key=None, api_url=None, debug=False)` | Initialise the SDK singleton. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars or by constructing `NullRunRuntime` directly. Probes `GET /api/v1/capabilities` on first call to validate v3 contract. | ✅ |
-| `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. | ✅ |
-| `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check `runtime.execute(...)` before the body runs. Fails CLOSED on transport error (ADR-008) regardless of the runtime's fallback mode. Chain with `@protect` in either order; the recommended form is `@sensitive` outside so `add_sensitive_tool(fn.__name__)` runs before the wrapper is built. | ✅ (lazy import) |
+| `init_or_die(api_key=None, api_url=None, debug=False)` | Like `init` but exits cleanly with code 1 if no API key is configured. See the table above. | ✅ |
+| `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. Always pair with `@guarded` for the zero-boilerplate exit-on-block pattern. | ✅ |
+| `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check `runtime.execute(...)` before the body runs. **Fails CLOSED on transport error** (ADR-008) regardless of the runtime's fallback mode. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
+| `@guarded` | Decorator that wraps a function so any `NullRunError` raised inside is converted to `format_user_message(exc)` on stderr and `sys.exit(1)`. `WorkflowKilledInterrupt` (BaseException) propagates unchanged. | ✅ |
+| `with nullrun.handle(*, exit_code=1):` | Context manager form of `@guarded` — apply to a region of code rather than a single function. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
+| `chain(name=None, *, op="auto")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
 | `span(name=None)` | Context manager for nested trace spans. | (lazy) |
 | `agent(name=None)` | Context manager for agent identity. | (lazy) |
-| `chain(name=None)` | Context manager for soft-mode budget gate (0.11.0+). | (lazy) |
-| `set_call_context(model=..., tools=[...])` | Per-call context the SDK forwards to `/gate` so the backend's budget + tool-block enforcement sees real values (was `"budget-precheck"` sentinel + empty tool list pre-0.6.0). | (lazy) |
-| `on_error(hook)` | Register a global error hook (Layer 2 of "give the user a chance"). Called for every structured SDK failure (subclasses of `NullRunError`) BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Does NOT fire for `WorkflowKilledInterrupt` (BaseException — kill is a non-recoverable signal). Returns an idempotent unregister callable. | ✅ |
-| `track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` | Manual escape hatch for non-HTTP LLM calls. | ✅ |
+| `set_call_context(model=None, tools=None)` | Per-call context the SDK forwards to `/gate` so the backend's budget + tool-block enforcement sees real values (was `"budget-precheck"` sentinel + empty tool list pre-0.6.0). | (lazy) |
+| `on_error(hook)` | Register a global error hook (Layer 2 of "give the user a chance"). Fires for every `NullRunError` subclass BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Does NOT fire for `WorkflowKilledInterrupt` (BaseException — kill is a non-recoverable signal). Returns an idempotent unregister callable. | ✅ |
+| `track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` | Manual escape hatch for non-HTTP LLM calls. Returns the backend's decision dict. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. | ✅ |
 | `track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool-call tracking. | ✅ |
 | `track_event(event_type, **kwargs)` | Catch-all for custom events. | ✅ |
-| `format_user_message(exc, locale="en")` | Render a `NullRunError` (or any object with an `error_code`) as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. | ✅ |
-| `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear the override. | ✅ |
+| `format_user_message(exc, locale="en")` | Render a `NullRunError` as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. | ✅ |
+| `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
 | `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
 | `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads (HTTP poller, WS push listener, transport flush). Safe to register via `atexit`. | ✅ |
-| `status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. | ✅ |
-| `handle(*, exit_code=1)` | Context manager. Inside the block, any `NullRunError` is caught, formatted via `format_user_message`, printed to stderr, and the process exits with `exit_code`. `WorkflowKilledInterrupt` propagates. | ✅ |
-| `guarded(fn)` | Decorator. Same semantics as `with nullrun.handle():` applied to `fn`. | ✅ |
-| `init_or_die(*, api_key=None, api_url=None, debug=False)` | Wrapper around `init` that catches the `NR-C001` "no api_key" failure at startup and exits cleanly. The recommended startup helper for one-shot scripts. | ✅ |
+| `status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. Raises `NullRunConfigError` if the runtime hasn't been initialised yet. | ✅ |
 
-All `track_*` functions return a `dict[str, Any]` describing the
-backend's response (`{"allowed": bool, "actions": [...], ...}`); they
-buffer into the event batch and flush on the next `@protect` call or
-`flush_interval_ms`.
+### `track_llm` manual usage
+
+Use `track_llm` when auto-instrumentation can't see the LLM call — a
+custom HTTP client that bypasses `httpx`, an offline batch job, a
+test fixture. The signature mirrors the data the auto-instrumentation
+extractor reads from OpenAI / Anthropic / Gemini / Cohere response
+bodies:
+
+```python title="track_llm_manual.py"
+import nullrun
+from nullrun import track_llm
+
+# After your custom LLM call returns:
+track_llm(
+    input_tokens=response.usage.prompt_tokens,
+    output_tokens=response.usage.completion_tokens,
+    model="custom-model-v1",
+    latency_ms=response.elapsed_ms,
+    metadata={"vendor": "custom", "trace_id": "..."},
+)
+```
+
+Without `track_llm`, the SDK has nothing to report to the gateway —
+the budget counter is never credited, and the next `/gate` call may
+reject based on stale spend. Call `track_llm` once per real LLM
+call.
+
+### `track_tool` manual usage
+
+```python title="track_tool_manual.py"
+from nullrun import track_tool
+
+track_tool(
+    tool_name="send_email",
+    duration_ms=240,
+    is_retry=False,
+    metadata={"to": "user@example.com"},
+)
+```
+
+Use it when a non-LLM tool call happens outside the auto-instrumentation
+hooks (e.g. a custom agent framework, or a tool wrapped in your own
+function). The `tool_name` flows through to the policy engine — a
+`ToolBlock` policy with `pattern = "send_*"` will catch a manual call
+to `track_tool("send_email", ...)`.
+
+### `track_event` catch-all
+
+```python title="track_event_manual.py"
+from nullrun import track_event
+
+track_event("agent.milestone", step="research_complete", elapsed_secs=42)
+```
+
+Accepts arbitrary keyword arguments as the event payload. Use for
+custom observability signals (milestones, errors, business events)
+that you want in the decision log alongside `track_llm` /
+`track_tool`.
+
+### Custom user messages
+
+```python title="set_user_message.py"
+import nullrun
+
+# Override the default message for budget-exceeded. Pass "" to clear.
+nullrun.set_user_message(
+    "NR-B004",
+    "You've used all your support credits. Upgrade to keep chatting.",
+)
+
+# Look up the message for an error_code at runtime:
+msg = nullrun.get_user_message("NR-R001")
+```
+
+Overrides live in a per-process dict and are checked before the
+catalog default. They do not persist across processes and are not
+synced to the backend — they are pure presentation sugar. See
+[User-facing messages](#user-facing-messages) below for the full
+rationale.
 
 The curated public surface in `dir(nullrun)` is the six core symbols
 above plus `on_error`, plus the structured exception names
