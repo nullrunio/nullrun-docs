@@ -4,9 +4,12 @@ An **API key** is how your code authenticates with the NullRun
 gateway. The key identifies a single workflow, gives the agent the
 permissions it needs, and (optionally) expires on a date you choose.
 
-In the dashboard, keys live under **Access → API keys**. The counter
-at the top of the page (`13 / 350`) tells you how many keys your
-org has versus your plan's cap.
+## Where you see it in the dashboard
+
+API keys live under **Access → API keys** in the left sidebar. The
+counter at the top of the page (`13 / 350`) tells you how many keys
+your org has versus your plan's cap. The page shows every key with
+its name, workflow, last-used timestamp, and expiration date.
 
 ## The mental model
 

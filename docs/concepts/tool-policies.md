@@ -6,6 +6,14 @@ of type **ToolBlock** — see [Policies](policies.md) for the general
 overview. This page covers how to write the patterns inside the
 policy.
 
+## Where you see it in the dashboard
+
+When you create or edit a policy and pick **ToolBlock** as the
+type, the dashboard shows a JSON editor for the `tool_pattern`,
+`blocked_tools`, or `tools` array. The "Test pattern" preview at the
+bottom lets you paste a tool name and see whether any pattern
+matches — useful for debugging.
+
 ## What a tool name looks like
 
 The agent calls tools by name. Each framework uses its own
