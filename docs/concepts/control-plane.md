@@ -1,5 +1,10 @@
 # Control plane (WebSocket)
 
+> **Current contract:** v3 (SDK ≥ 0.12.0, server ≥ 1.0.0).
+> The WS push catalog below is current. The `policy_invalidated`
+> and `key_rotated` events are server-driven — the SDK does not
+> poll for them.
+
 The control plane is a real-time channel between the NullRun gateway
 and connected SDKs. It carries the events that need to land at the
 agent **while it is running** — kill / pause decisions, policy

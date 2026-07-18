@@ -1,5 +1,10 @@
 # Workflow context
 
+> **Current contract:** v3 (SDK ≥ 0.12.0, server ≥ 1.0.0).
+> `with workflow("name")` is the documented entry point. Legacy
+> ad-hoc workflow_id generation was removed when SDK moved to the
+> server-minted execution_id model.
+
 A **workflow** is a single agent run. It has a unique `workflow_id`
 that groups all its calls together for cost attribution, policy
 enforcement, and audit.

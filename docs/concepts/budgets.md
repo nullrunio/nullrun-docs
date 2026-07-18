@@ -1,5 +1,11 @@
 # Budgets
 
+> **Current contract:** v3 (SDK ≥ 0.12.0, server ≥ 1.0.0).
+> The two-call `/gate` + `/api/v1/track` flow below is what
+> current SDKs use. Legacy `/check` + `/execute` paths still work
+> on the gateway for backward compatibility but are no longer
+> emitted by the SDK.
+
 A budget is a hard cap on cost for a single workflow run. When the
 budget is exceeded, the workflow is halted and the agent stops.
 
