@@ -1,185 +1,193 @@
 # API keys
 
-An API key is how your code authenticates with the NullRun gateway.
-It identifies a single workflow, defines which endpoints it can
-call, and (optionally) expires on a date you choose.
+An **API key** is how your code authenticates with the NullRun
+gateway. The key identifies a single workflow, gives the agent the
+permissions it needs, and (optionally) expires on a date you choose.
 
-Keys are workflow-scoped: every key belongs to exactly one
-workflow, and the policy engine uses that binding to look up the
-effective policy set on every gate / execute call. If a key's
-workflow is deleted or paused, calls with that key fail closed.
+In the dashboard, keys live under **Access → API keys**. The counter
+at the top of the page (`13 / 350`) tells you how many keys your
+org has versus your plan's cap.
 
-## Creating a key
+## The mental model
 
-`POST /api/v1/orgs/:org_id/api-keys` — see
-[HTTP API](../reference/http-api.md) for the full request / response
-schema.
+Each workflow needs at least one API key to run. The key is what
+the SDK uses to identify itself when it talks to the gateway. The
+gateway uses the key to look up:
 
-| Field | Required | Notes |
-| --- | --- | --- |
-| `name` | optional | Default `"New API Key"`. Max 80 chars. |
-| `workflow_id` | **required** | The workflow the key is bound to. Must belong to the same org. Missing → `400 workflow_id is required. Keys are workflow-scoped…`. |
-| `scopes` | optional | Default `["track", "verify"]`. Restricted to `["gate", "execute", "track", "verify"]` — anything else → `400 invalid_scope`. Use `"*"` for the full set. |
-| `expires_at` | optional | RFC 3339 timestamp. Must be in the future. `null` = never expires. |
-| `test_key` | optional | Default `false`. `true` produces an `nr_test_…` prefix instead of `nr_live_…`. |
+- Which workflow is calling (so it can apply the right policies)
+- Which permissions the key has (gate / track / verify)
+- Whether the key is still valid (not revoked, not expired)
 
-The response includes `key` (the raw `nr_live_…` / `nr_test_…`
-string — shown **once**, store it now), `secret_key` (the HMAC
-signing secret, also shown once), `key_prefix` (first 12 chars,
-used in list views), `id`, and `workflow_id`. The raw values are
-never returned again — losing them means rotating the key.
+You mint keys through the dashboard, paste them into your
+application's environment, and the SDK takes care of the rest.
 
-!!! warning "Plan quota"
-    `plan_limits.api_keys_limit` caps how many keys an org can hold.
-    Creating one over the cap returns `429 plan_limit_exceeded`.
+## How to create a key
+
+1. **Access → API keys → New API key**.
+2. Pick a workflow to bind the key to. The dropdown lists every
+   workflow in your org.
+3. Pick the permissions the key needs. The defaults
+   (`gate`, `track`, `verify`) work for most agents.
+4. Optionally set an expiration date. Keys without an expiration
+   are valid until revoked.
+5. Optionally mark as a **test key** if you're developing locally.
+   Test keys bypass the budget cap — useful for trying things
+   without setting up billing. Never use a test key in production.
+6. Click **Create**.
+
+The dashboard shows the new key value **once** — a string starting
+with `nr_live_...`. Copy it into your secret manager
+**immediately**. The dashboard will never show it again.
+
+## What's in the response
+
+When you create a key, the dashboard shows:
+
+- **Key** — the public value (`nr_live_xxx...`). Use this in your SDK.
+- **Secret key** — a second string for HMAC signing. Treat it like
+  a password; never commit it to source control.
+- **Key prefix** — the first 12 characters, used in list views.
+- **Workflow** — the bound workflow (you picked this on creation).
+- **Scopes** — the permissions you granted.
+
+The dashboard shows the full key and secret **exactly once**. After
+you close the modal, the values are gone forever. If you lose them,
+you must rotate the key (see below).
+
+## How the SDK uses the key
+
+The SDK needs two values from you:
+
+```bash title="env"
+export NULLRUN_API_KEY=nr_live_xxx...
+export NULLRUN_SECRET_KEY=sk_xxx...
+```
+
+The `api_key` is the public value the SDK sends on every request.
+The `secret_key` is used for HMAC request signing — the gateway
+verifies every request came from a holder of the secret.
+
+You can pass the API key directly to `init()`:
+
+```python
+import nullrun
+from nullrun import init
+
+init(api_key="nr_live_xxx...")
+```
+
+Or set it via environment variable before the SDK starts:
+
+```bash title="env"
+export NULLRUN_API_KEY=nr_live_xxx...
+python my_agent.py
+```
+
+For the secret key, the SDK reads `NULLRUN_SECRET_KEY` from the
+environment. You can't pass it to `init()` — it has to be an env
+var or read from your secret manager.
 
 ## Scopes
 
-A scope is a permission grant for one of the four SDK endpoints.
-Every call from your code goes to one of these — the key must hold
-the matching scope or the gateway returns `403 missing_scope`.
+Each key has a list of permissions — what it can do:
 
-```mermaid
-flowchart LR
-    K["API key<br/>scopes: gate, track, verify"]
-    G["POST /api/v1/gate<br/>(v3: pre-flight + reservation)"]
-    T["POST /api/v1/track<br/>(v3: single-event commit)"]
-    T2["POST /api/v1/track/batch<br/>(legacy, NULLRUN_V3_TRACK_DISABLE=1)"]
-    V["POST /api/v1/auth/verify<br/>(rotation refresh)"]
+| Scope | What it allows |
+|---|---|
+| `gate` | Call `/gate` (the policy decision endpoint). Required for any `@protect`-wrapped call. |
+| `track` | Call `/track` (the spend tracking endpoint). Required for any LLM call. |
+| `verify` | Call `/auth/verify` (the auth handshake). Almost always needed. |
+| `*` | All of the above. The default if you don't specify. |
 
-    K --> G
-    K --> T
-    K -.-> T2
-    K --> V
+For most agents, the defaults work. A telemetry-only ingestor needs
+just `track`. A read-only CI checker needs just `verify`.
 
-    K -. '"*" wildcard' .-> G
-    K -. '"*" wildcard' .-> T
-    K -. '"*" wildcard' .-> V
-```
+## How to rotate a key
 
-| Scope | Endpoint | Purpose |
-| --- | --- | --- |
-| `gate` | `POST /api/v1/gate` | v3: policy evaluation + budget reservation (server mints a `reservation_id` uuidv7). Required for every `@protect`-decorated call. |
-| `track` | `POST /api/v1/track`, `/api/v1/track/batch` | v3 single-event commit (`reservation_id` + `idempotency_key`) or legacy batched events (≤ 100 per batch, used only when `NULLRUN_V3_TRACK_DISABLE=1`). |
-| `verify` | `POST /api/v1/auth/verify` | SDK uses this on first start and after `key_rotated` WS push to obtain the HMAC `secret_key`. |
+Rotating means replacing the secret on an existing key without
+changing the public key value. Useful when the secret leaks but
+the key itself is still safe.
 
-The `"*"` wildcard satisfies any scope check. The list endpoint shows each
-key's effective scopes; an operator can narrow a key from `*` to
-just `["gate", "track"]` without rotating it.
+1. **Access → API keys → find the key → Rotate**.
+2. The dashboard generates a new secret and shows it once.
+3. Update `NULLRUN_SECRET_KEY` in your environment / secret
+manager / deployment config.
+4. Restart the agent so it picks up the new secret.
 
-!!! info "`execute` scope is deprecated"
-    Pre-v3 keys used a separate `execute` scope for
-    `/api/v1/execute` (full policy evaluation + reservation). Since
-    SDK 0.12.0 the v3 `/gate` call performs both pre-flight and
-    reservation in a single round-trip, so the `execute` scope is
-    no longer needed. Legacy keys minted before 0.12.0 with the
-    `execute` scope continue to work via the deprecated
-    `/api/v1/execute` route, but new keys should be minted with
-    `["gate", "track"]` only. The full lifecycle of the scope
-    transition is documented in the SDK changelog.
+The old secret stops working immediately. Any in-flight requests
+with the old secret get a 401 — the agent's next call retries with
+the new secret and succeeds.
 
-### Choosing scopes for a deployment
+## How to revoke a key
 
-```mermaid
-flowchart TD
-    A[What does this key do?]
-    B{Calls /gate?}
-    D{Ingests events?}
-    E{Only auth/verify?}
+Revoking means deleting the key. Useful when:
 
-    A --> B
-    B -->|Yes| G[needs: gate]
-    B -->|No| D
-    D -->|Yes| T[needs: track]
-    D -->|No| E
-    E -->|Yes| V[needs: verify]
+- The key was leaked publicly
+- The agent is decommissioned
+- The workflow is being deleted
 
-    G --> H[Production SDK<br/>gate + track]
-    T --> I[Telemetry / worker<br/>track only]
-    V --> J[CLI / cron<br/>verify only]
-```
+1. **Access → API keys → find the key → Revoke**.
+2. Confirm.
 
-Production SDKs that wrap `@protect`-decorated calls almost always
-want `["gate", "track"]`. A telemetry-only ingestor needs `track`.
-`verify` is included in the default scope set so the SDK can
-refresh its HMAC credential on rotation without an extra round
-trip. The legacy `execute` scope is documented above — do not
-mint new keys with it.
-
-## Expiration and rotation
-
-Keys do not expire automatically — the SDK and backend honour the
-`expires_at` you set at create time. A key with `expires_at = null`
-is valid until revoked.
-
-To rotate:
-
-1. `POST /api/v1/orgs/:org_id/api-keys/:id/rotate` returns a fresh
-   `(key, secret_key)` pair and bumps `key_version`.
-2. The gateway publishes a `key_rotated` event on the
-   [control-plane WebSocket](control-plane.md).
-3. Connected SDK clients call `/api/v1/auth/verify` to pick up the
-   new credentials and re-sign subsequent requests.
-
-```mermaid
-sequenceDiagram
-    participant Ops as Operator
-    participant GW as Gateway
-    participant WS as Control plane
-    participant SDK as SDK client
-
-    Ops->>GW: POST /rotate
-    GW-->>Ops: new key + secret_key + key_version
-    GW->>WS: publish key_rotated
-    WS-->>SDK: key_rotated event
-    SDK->>GW: POST /auth/verify
-    GW-->>SDK: new secret_key + key_version
-    Note over SDK: SDK re-signs with new HMAC
-```
-
-A key with `expires_at` set will continue to be accepted up to and
-including the timestamp; requests after that moment return
-`401 api_key_expired`. Set `expires_at` for vendor credentials you
-rotate on a fixed schedule (90 / 180 days is a common choice) and
-let `rotate` carry the credential forward without code changes.
-
-## Revocation
-
-`DELETE /api/v1/orgs/:org_id/api-keys/:id` soft-deletes the key
-row and invalidates the in-process policy cache. The list endpoint
-then hides it from the default view. Subsequent requests with that
-key return `401` immediately.
-
-Revocation is **immediate**: there is no grace period. If you need
-zero-downtime rotation, use `rotate` instead — the old key stays
-valid for a brief overlap window while the SDK picks up the new
-one.
+The key stops working **immediately** — no grace period. If you
+need zero-downtime rotation, rotate first (which gives the agent
+time to pick up the new secret) and then revoke the old one.
 
 ## Listing and searching
 
-`GET /api/v1/orgs/:org_id/api-keys?search=substring` returns every
-non-revoked key, filtered by case-insensitive substring match on
-the `name` field. The response includes `key_prefix` (first 12
-chars), `last_used_at`, `expires_at`, `workflow_id`, and the
-masked row fields — never the raw key value.
+The **API keys** page lists every key in your org. You can search
+by name (substring match), filter by workflow, or filter by status
+(active / revoked).
 
-`GET /api/v1/orgs/:org_id/workflows/:workflow_id/api-keys` returns
-just the keys bound to a single workflow.
+Each row shows:
 
-## Headers and HMAC
+- **Name** — what you set when creating
+- **Workflow** — the bound workflow
+- **Prefix** — first 12 characters of the key (`nr_live_abc...`)
+- **Last used** — when the SDK last made a request with this key
+- **Expires** — when the key stops working (or "Never")
+- **Status** — active / revoked
 
-Keys travel as `X-API-Key: nr_live_…` (machine / SDK auth). For
-request integrity the SDK also computes an HMAC-SHA256 over
-`timestamp + ":" + api_key + ":" + body_hash` using `secret_key`
-as the key. `Bearer` tokens are reserved for user (session) auth
-and are not used for API keys.
+Click a row to see full details. The full key value is never shown
+again — only the prefix.
+
+## Common questions
+
+### "How many keys do I need?"
+
+One per workflow, minimum. For production:
+
+- **One key per environment** — separate keys for production,
+  staging, dev. Makes it easy to revoke staging without affecting
+  production.
+- **One key per service** — if your agent runs in three
+  containers, give each its own key. Makes it easy to rotate one
+  without restarting the others.
+- **One test key** — for local development. Bypasses the budget
+  cap. Never deploys to production.
+
+### "Can I share a key between two workflows?"
+
+No. Each key is bound to exactly one workflow at creation time.
+If you need the same agent logic against two workflows (for
+example, A/B testing), create two keys and switch between them
+based on your A/B routing.
+
+### "What happens when my key expires?"
+
+The key stops working at the expiration timestamp. Calls return
+`401 api_key_expired`. Rotate the key (which generates a new secret
+but keeps the same key value) or create a new key entirely.
+
+### "Can I see who used a key?"
+
+The **Last used** column shows the most recent activity. The audit
+log shows every individual call. The audit log records the
+key prefix, not the full key — so you can correlate usage without
+exposing the secret.
 
 ## See also
 
-- [Workflow context](workflow.md) — what the key's `workflow_id`
-  binds to.
-- [Policies](policies.md) — what scopes / keys gate.
-- [Control plane](control-plane.md) — `key_rotated` event.
-- [HTTP API](../reference/http-api.md) — full endpoint schemas.
-- [Configuration](../getting-started/configuration.md) —
-  `NULLRUN_SKIP_BUDGET_CHECK`, `NULLRUN_POLICY_FAIL_OPEN`.
+- [Workflows](workflow.md) — what the key is bound to
+- [Troubleshooting](../troubleshooting.md) — "why am I getting 401?"
+- [Configuration](../getting-started/configuration.md) — env vars
+  for keys

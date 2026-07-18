@@ -1,133 +1,163 @@
 # Tool policies
 
-A `ToolBlock` policy gates tool calls by **glob match** on the tool
-name. The matching happens at the gate / execute layer (not at the
-SDK), so the policy decision is enforced even if a client skips
-the SDK's `@protect` path.
+A `ToolBlock` policy decides which tools the agent is allowed to call
+and which it can't. In the dashboard these rules live under a policy
+of type **ToolBlock** — see [Policies](policies.md) for the general
+overview. This page covers how to write the patterns inside the
+policy.
 
-## Configuration shape
+## What a tool name looks like
 
-Three equivalent JSON keys are accepted:
+The agent calls tools by name. Each framework uses its own
+convention, but the SDK normalises them to `snake_case`:
+
+| Framework | Tool name in the SDK | Example |
+|---|---|---|
+| LangChain | toolkit function name | `tavily_search`, `sql_db_query` |
+| OpenAI hosted | OpenAI tool id | `code_interpreter` |
+| MCP server | `mcp://server/tool` | `mcp://filesystem/read` |
+| Custom | `custom:{name}` | `custom:my_internal_api` |
+
+The policy matcher is name-based. The SDK sends the tool name to the
+gate, the gate checks it against every active ToolBlock policy, and
+the verdict comes back as `allow`, `block`, or `require_approval`.
+
+## How to write the patterns
+
+Each entry in a ToolBlock policy is one of:
+
+- **Exact name** — `"stripe.charge"` blocks only that one tool.
+- **Prefix glob** — `"send_*"` blocks anything starting with
+  `send_`.
+- **Suffix glob** — `"_test"` blocks anything ending with `_test`.
+- **Prefix-suffix glob** — `"send_*_test"` blocks anything starting
+  with `send_` and ending with `_test`.
+- **`*` alone** — blocks everything.
+
+The matcher is case-insensitive. `stripe.charge`, `STRIPE.CHARGE`,
+and `Stripe.Charge` are the same name to the matcher.
+
+Only one `*` is allowed per pattern. `a*b*c` is interpreted as
+"starts with `a`, ends with `c`" — anything in between is fine.
+
+## What's blocked by default
+
+The SDK ships a built-in **sensitive** list that always blocks,
+regardless of your policies. See [Sensitive tools](sensitive-tools.md)
+for the full list and how to extend it. Your ToolBlock policy is
+**in addition** to the built-in defaults — you can make things
+stricter, never looser.
+
+## A worked example
+
+Suppose your agent has these tools: `tavily_search`, `send_email`,
+`db.write`, `db.drop`, `stripe.charge`, `read_file`.
+
+You want to:
+
+- Allow read-only operations (`tavily_search`, `read_file`)
+- Block destructive operations (`db.drop`, `stripe.charge`)
+- Require approval for any outbound communication (`send_email`)
+- Allow normal DB writes (`db.write`) but block `db.drop`
+
+Three policies:
 
 ```json title="tool_block_policy.json"
 {
+  "policies": [
+    {
+      "name": "Block destructive ops",
+      "type": "ToolBlock",
+      "scope": "Org",
+      "config": {
+        "tool_pattern": ["db.drop", "stripe.*", "send_*"]
+      }
+    },
+    {
+      "name": "Require approval for outbound",
+      "type": "ToolBlock",
+      "scope": "Org",
+      "config": {
+        "tool_pattern": ["send_*"],
+        "action": "require_approval"
+      }
+    }
+  ]
+}
+```
+
+When the agent calls `send_email`, the gate sees two matches: the
+"Block" pattern and the "Require approval" pattern. Most-restrictive
+wins — **block** beats **require approval**. You typically want one
+rule per tool category, not overlapping.
+
+A cleaner version:
+
+```json title="tool_block_policy_clean.json"
+{
+  "name": "Outbound needs approval",
+  "type": "ToolBlock",
+  "scope": "Org",
   "config": {
-    "tool_pattern": ["send_*", "admin.*", "file.delete"],
-    "blocked_tools": ["legacy_export"],
-    "tools": ["payment.process"]
+    "tool_pattern": ["send_*", "post_*"],
+    "action": "require_approval"
+  }
+},
+{
+  "name": "Block destructive",
+  "type": "ToolBlock",
+  "scope": "Org",
+  "config": {
+    "tool_pattern": ["db.drop", "stripe.charge", "stripe.refund"]
   }
 }
 ```
 
-All three are walked during evaluation; the merged set is the
-**union** of every entry. You can use whichever you prefer — pick
-`tool_pattern` for glob-heavy configs, `blocked_tools` for exact
-lists, or `tools` for mixed intent. Putting entries in more than
-one key is fine; duplicates are deduplicated.
+Now `send_email` triggers the approval flow (a human clicks
+**Approve** in the dashboard before the call goes through). See
+[Human approval](human-approval.md) for the operator experience.
 
-!!! warning "Bare strings are rejected"
-    A config like `"tool_pattern": "send_*"` (string, not array) is
-    rejected with `400 bare_string_pattern`. The evaluator walks the
-    field as an array — a bare string would silently match nothing
-    and create a fail-OPEN trap. Use `["send_*"]`.
+## Validation at policy creation
 
-## Pattern syntax
+The dashboard rejects invalid patterns at save time:
 
-The matcher is a single-`*` glob. It supports:
+| Error | Cause | Fix |
+|---|---|---|
+| `400 bare_string_pattern` | `"pattern": "send_*"` instead of `"pattern": ["send_*"]` | Always use an array, even for one entry |
+| `400 pattern_too_long` | An entry longer than 4096 bytes | Split into multiple patterns |
+| `400 invalid_glob` | Contains control characters | Remove `\n`, `\r`, `\t` |
 
-- `*` — matches anything.
-- `prefix*` — matches anything starting with `prefix`.
-- `*suffix` — matches anything ending with `suffix`.
-- `prefix*suffix` — matches anything starting with `prefix` **and**
-  ending with `suffix`. Only one `*` is allowed; `a*b*c` is
-  interpreted as `a*` prefix + `c` suffix.
-- Exact string equality for everything else (no regex).
+The 4096-byte cap exists because the matcher scans every pattern
+on every gate call. A 10 MB pattern would burn CPU on each call.
 
-```mermaid
-flowchart LR
-    subgraph Patterns
-      P1["send_*"]
-      P2["*_test"]
-      P3["admin.delete"]
-      P4["*"]
-    end
+## Plan gating
 
-    subgraph Tools["Tool names being matched"]
-      T1["send_email"]
-      T2["send_sms"]
-      T3["receive_email"]
-      T4["payment_test"]
-      T5["admin.delete"]
-      T6["anything"]
-    end
+`ToolBlock` policies require `CustomPolicies`, which is on
+**Growth+** plans. Lite and Starter can have BudgetLimit and
+RateLimit policies, but not ToolBlock.
 
-    P1 -->|"yes"| R1["BLOCK"]
-    T1 -.-> R1
-    T2 -.-> R1
+On Lite / Starter, the dashboard shows ToolBlock policy creation
+greyed out with an "Upgrade" link.
 
-    T3 -. "no (does not start with send_)" .-> P1
+## How to debug a block you didn't expect
 
-    T4 -.-> P2
-    P2 -->|"yes"| R4["BLOCK"]
+If your agent reports `TOOL_BLOCKED` on a call you think should be
+allowed:
 
-    T5 -.-> P3
-    P3 -->|"exact match"| R5["BLOCK"]
-
-    T6 -.-> P4
-    P4 -->|"matches anything"| R6["BLOCK"]
-```
-
-The matcher is single-star only — multi-star patterns (`a*b*c`)
-match the prefix and suffix and ignore anything in between. If
-you need richer matching, list the patterns explicitly rather than
-chaining stars.
-
-## Per-entry size cap
-
-Every entry must be **≤ 4096 bytes**. A 10 MB pattern would burn CPU
-per call (the matcher is O(n) over each entry's glob on every gate /
-execute request), so the cap is enforced at create and update time.
-Going over returns `400 pattern_too_long`.
-
-Control characters in entries are also rejected.
-
-## Union across scopes
-
-The effective blocked-tool set is the union of all active
-`ToolBlock` policies (org-scope + workflow-scope), deduplicated.
-A workflow inherits its org's blocks and can add its own; you
-cannot un-block a tool the org blocks.
-
-```mermaid
-flowchart TD
-    O["Org ToolBlock<br/>send_*, file.delete"]
-    W["Workflow ToolBlock<br/>send_email, db.drop"]
-
-    O --> M["Effective blocked set"]
-    W --> M
-
-    M --> R["send_* (from org)<br/>file.delete (from org)<br/>send_email (from wf, dedup)<br/>db.drop (from wf)"]
-```
-
-## Plan gate
-
-`ToolBlock` policies require `Feature::CustomPolicies` — Growth+
-plan and above. On Lite / Starter, the create handler returns
-`403 plan_feature_missing`.
-
-## Built-in sensitive list
-
-Independently of `ToolBlock` policies, NullRun ships a built-in
-list of high-risk tool patterns that the SDK blocks by default —
-see [Sensitive tools](sensitive-tools.md). That list is matched
-case-insensitively and is always enforced, regardless of policy
-config. A `ToolBlock` policy is the right way to add **additional**
-restrictions on top of the built-ins.
+1. Open the workflow in the dashboard.
+2. Click **Effective policy**. The merged set shows every ToolBlock
+   pattern that could match.
+3. Click **Decision History** and filter by `decision = block` and
+   the tool name. The audit log shows which pattern matched.
+4. If a pattern is too broad (`*` matches everything), narrow it
+   in the policy editor.
+5. If the pattern is wrong entirely, deactivate the policy and
+   re-create it with the correct list.
 
 ## See also
 
-- [Policies](policies.md) — overall hierarchy and aggregation.
-- [Sensitive tools](sensitive-tools.md) — built-in sensitive
-  patterns the SDK blocks out of the box.
-- [Human approval](human-approval.md) — pairing `ToolBlock` with
-  `action = require_approval` for a pause-and-confirm flow.
+- [Sensitive tools](sensitive-tools.md) — built-in defaults
+- [Policies](policies.md) — the dashboard view
+- [Tool catalog](../reference/llm-tool-catalog.md) — common tool
+  names with risk ratings
+- [Human approval](human-approval.md) — the `require_approval` action

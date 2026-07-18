@@ -1,131 +1,150 @@
 # Budgets
 
-> **Current contract:** v3 (SDK ≥ 0.12.0, server ≥ 1.0.0).
-> The two-call `/gate` + `/api/v1/track` flow below is what
-> current SDKs use. Legacy `/check` + `/execute` paths still work
-> on the gateway for backward compatibility but are no longer
-> emitted by the SDK.
+A **budget** is the most important number on the dashboard. It's the
+maximum amount of money a workflow is allowed to spend in a billing
+period. Set it too low and your agent stops working. Set it too high
+and a runaway agent burns through real money before you notice.
 
-A budget is a hard cap on cost for a single workflow run. When the
-budget is exceeded, the workflow is halted and the agent stops.
+This page covers what the budget controls, how the dashboard shows
+it, and what happens at each boundary.
 
-## How budgets are enforced (v3 wire contract)
+## Where you see it
 
-The SDK 0.12.0+ ships a **two-call v3 contract** against the
-gateway: one `/gate` call to pre-flight and mint a reservation,
-then one `/api/v1/track` (single-event) call to commit the actual
-cost. The legacy three-call flow (`/check` + `/execute` +
-`/track`) was deprecated in SDK 0.12.0 and removed for new code
-paths in 0.13.1.
+On the **Workflows** detail page, the budget appears as a progress
+bar near the top:
 
-1. **Pre-flight + reservation `/api/v1/gate`** — on every
-   `@protect`-wrapped call, the SDK asks the gateway "is there any
-   budget left?" with the projected cost. The gateway evaluates
-   the policy (budget + tool-block + sensitive-tool + loop
-   detection) and, if it approves, **mints a server-side
-   `reservation_id` (uuidv7)** keyed to the workflow + chain. The
-   response carries `reservation_id`, the reserved `cents`, and a
-   `policy_snapshot`. This is binary: the gateway either reserves
-   the projected cost or rejects the call with a structured
-   `error` slug.
-
-   The SDK caches the `reservation_id` for ~295s via the
-   `_server_minted_execution_id` contextvar; subsequent
-   `track_event` / `track_llm` calls during the same `@protect`
-   block carry it on the wire so the server can match the commit
-   back to the reservation.
-
-2. **Commit `/api/v1/track` (single event)** — when the LLM call
-   completes, the SDK reports the actual cost via the v3
-   single-event endpoint, including `reservation_id` (the gate's
-   uuidv7) and `idempotency_key` (the `/gate` call's
-   `operation_id`). The gateway either **commits** the reservation
-   (real cost ≤ reserved + ε) or **releases** the unused
-   reservation if the actual cost was lower. Cumulative spend is
-   updated from committed reservations + reconciled `cost_events`.
-
-   On retry of the same event (network blip, transport flush
-   retry), the same `idempotency_key` lands twice; the gateway
-   dedups by key and returns the original commit result. A
-   *different* `idempotency_key` on the same `reservation_id`
-   returns `409 idempotency_key_hash_mismatch` — the SDK treats
-   this as a recoverable error and retries with a fresh key.
-
-The pre-flight is the source of truth for the policy decision; the
-post-flight `/track` reconciles drift between projected and actual
-cost.
-
-!!! info "Legacy endpoints"
-    `/api/v1/check` was removed in SDK 0.13.1 — it now returns
-    `410 Gone` with `replacement: /api/v1/gate`. New integrations
-    should target `/gate` directly. `/api/v1/execute` is still
-    registered on the gateway for legacy callers but the SDK no
-    longer emits traffic against it.
-
-## Set a budget
-
-In the NullRun dashboard, open a workflow and set the per-workflow
-budget. Or via the API:
-
-```bash title="set_budget.sh"
-curl -X PATCH https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/$WORKFLOW_ID \
-  -H "X-API-Key: $NULLRUN_API_KEY" \
-  -H "X-Signature: $(compute_hmac)" \
-  -H "X-Signature-Timestamp: $(date +%s)" \
-  -H "Content-Type: application/json" \
-  -d '{"budget_cents": 500}'
+```
+Spend this period         $47.30 of $50.00  (95%)
+████████████████████████░░
+Time to exhaustion         ~16 hours at current rate
 ```
 
-Inside `@protect`, set the workflow id via `nullrun.workflow(...)`
-(the decorator itself takes no kwargs):
+Three numbers:
 
-```python title="budgeted_workflow.py"
-import nullrun
-from nullrun import init, protect
+- **Spend this period** — total cents spent since the last period
+  rollover. Resets automatically.
+- **Budget** — the cap. Set this in workflow settings.
+- **Time to exhaustion** — at the current rate of spend, when the
+  budget will run out. Useful for "should I raise the cap?".
 
-init(api_key="nr_live_...")
+## What the budget covers
 
-with nullrun.workflow("my-workflow"):
-    @protect
-    def step(): ...
+The budget covers **spend**, not calls. Calls are rate-limited
+separately — see [Policies](policies.md).
+
+"Spend" is calculated from token counts reported by your LLM
+provider. The dashboard knows the per-model pricing for every model
+the SDK tracks:
+
+- **Input tokens** × input rate
+- **Output tokens** × output rate
+- **Cache read** / **cache write** tokens (if your provider exposes
+  them) at their respective rates
+- **Reasoning tokens** for o1/o3-style models at the reasoning rate
+
+The total spend is the sum across all `@protect` calls inside the
+workflow, across the current period.
+
+## Periods
+
+A "period" is the window after which the spend counter resets.
+NullRun has two period sources:
+
+| Plan | Period source | When it resets |
+|---|---|---|
+| **Lite** (free) | Calendar month UTC | 1st of each month at 00:00 UTC |
+| **Paid** (Starter / Growth / Scale) | Your billing cycle (Polar subscription) | Set when you subscribed; on renewal |
+
+The dashboard shows the period start and end dates next to the
+spend bar. When the period rolls over, the spend counter resets to
+zero and the budget applies fresh.
+
+## What happens at the boundary
+
+Three scenarios, depending on the workflow's [enforcement
+mode](workflow.md#soft-mode):
+
+### Hard mode (default)
+
+```
+Spending → $49.95 of $50.00
+Next @protect call:        #2.00 projected
+gate decision:             block
+SDK raises:                 NullRunBudgetError (NR-B004)
+@guarded:                   prints friendly message, sys.exit(1)
 ```
 
-Once set, any call inside that workflow context stops the moment
-cumulative committed cost exceeds 500¢. The SDK raises
-`NullRunBudgetError` (a `NullRunBlockedException` subclass,
-`error_code="NR-B004"`) for budget-exhausted decisions, and the
-generic `NullRunBlockedException` (`NR-X001`) for other policy
-blocks (tool-blocked, sensitive-tool, loop detection).
+The agent stops cleanly at the boundary. No partial charge — the
+projected cost is reserved when the gate approves, and the actual
+cost is reported after the LLM returns. If the call is denied, no
+charge happens.
 
-## Per-call cap
+### Soft mode
 
-The SDK does not project per-call cost on its own — the per-call
-cap is enforced by the workspace policy on the gateway. When the
-policy carries a `max_per_call_cents` limit, `/gate` rejects any
-single call whose projected cost would exceed the cap *before* the
-model is invoked. The SDK surfaces this as `NullRunBlockedException`
-with `.reason="per_call_cap"`.
+```
+Spending → $49.95 of $50.00
+overdraft cap:              $5.00
+Next @protect call:        #2.00 projected
+gate decision:             soft pass (chain active)
+Reserved amount:           +$2.00 to overdraft_used
+SDK:                        proceeds with the LLM call
+```
 
-## v3 protocol negotiation
+The agent continues running until the overdraft cap is exhausted
+(overdraft_used > max_overdraft_cents), at which point the gate
+hard-blocks and the chain returns to standard Hard mode for that
+chain.
 
-On `init()`, the SDK calls `GET /api/v1/capabilities` to confirm
-the backend supports the v3 contract (`server_minted_execution_id`
-+ `per_execution_reservations` + `heartbeat_time_based`). If the
-backend reports v3-ready but the SDK is older than `0.12.0`,
-`init()` emits a startup warning so the operator sees the gap
-before the first `/gate` call fails with `400 PROTOCOL_TOO_OLD`.
-The canonical `SDK_MIN_VERSION_FOR_V3` constant lives in
-`nullrun.capabilities` and is the gate the backend enforces.
+### Out of overdraft
 
-To opt out of v3 single-event routing entirely (e.g. against a
-v1/v2-only backend), set `NULLRUN_V3_TRACK_DISABLE=1` and the SDK
-falls back to the legacy `/track/batch` path. This is rarely
-needed in production — every shipped 1.0.0 backend supports v3.
+```
+overdraft_used: $4.95 of $5.00 cap
+Next @protect call:        #2.00 projected
+gate decision:             block
+SDK raises:                 NullRunBudgetError (NR-B004)
+```
+
+## How to set the budget
+
+The first time you create a workflow, the budget is zero. Every call
+blocks until you raise it. To set it:
+
+1. Open the workflow.
+2. Click **Settings**.
+3. Find **Budget** and enter cents (`$50` = `5000`).
+4. Save.
+
+Reasonable starting budgets:
+
+| Use case | Suggested budget |
+|---|---|
+| Personal / dev experiment | $5 (500 cents) per period |
+| Single-tenant internal tool | $20 (2000 cents) per period |
+| Customer-facing AI feature | $100 (10000 cents) per period, plus an alert at 80% |
+
+The dashboard warns you when spend crosses 80% of the cap and again
+at 100%. Configure alert destinations under **Settings →
+Notifications**.
+
+## What happens when you change the budget mid-period
+
+- **Raise**: the new cap takes effect immediately. The next gate
+  call uses the new cap.
+- **Lower below current spend**: the agent doesn't get retroactive
+  refunds, but every call from this point onward rejects until the
+  spend drops (which only happens at period rollover, since the
+  counter is monotonic within a period).
+
+## Why cents, not dollars
+
+The dashboard stores everything in cents to avoid floating-point
+rounding in pricing math. The `budget_cents` field in the API is
+always an integer. If you set `budget_cents: 5000`, your cap is
+exactly $50.00, no rounding errors.
 
 ## See also
 
-- [Circuit breaker](circuit-breaker.md)
-- [How-to → Set a hard cost cap](../how-to/cost-cap.md)
-- [Errors](../reference/errors.md)
-- [HTTP API → SDK endpoints](../reference/http-api.md#sdk-endpoints)
-- [HTTP API → Capabilities](../reference/http-api.md#capabilities)
+- [Workflows](workflow.md) — where the budget lives
+- [Policies](policies.md) — rate limits (separate from budget)
+- [Soft mode](workflow.md#soft-mode) — letting the agent exceed the budget
+- [Troubleshooting](../troubleshooting.md#why-is-my-call-being-rejected-with-nullrunblockedexception)

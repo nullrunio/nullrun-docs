@@ -143,7 +143,12 @@ markdown_extensions:
   - meta                       # front-matter (used by home.html + social cards)
   - tables
   - toc:
-      permalink: true
+      # permalink: false — hides the `¶` after every heading in the
+      # rendered UI. Headings still get stable anchors via
+      # pymdownx.superfences / markdown.extensions; deep links from
+      # other pages work because mkdocs still emits id="..." on the
+      # heading tags. Only the visible `¶` glyph is suppressed.
+      permalink: false
   - pymdownx.details
   - pymdownx.inlinehilite
   - pymdownx.snippets

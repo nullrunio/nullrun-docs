@@ -1,121 +1,145 @@
-# Control plane (WebSocket)
+# Control plane (real-time control)
 
-> **Current contract:** v3 (SDK ≥ 0.12.0, server ≥ 1.0.0).
-> The WS push catalog below is current. The `policy_invalidated`
-> and `key_rotated` events are server-driven — the SDK does not
-> poll for them.
+The **control plane** is the live channel between the dashboard and
+your running agent. When you click **Pause**, **Resume**, or **Kill**
+in the dashboard, the signal reaches your SDK within a second — even
+if the agent is in the middle of an LLM call.
 
-The control plane is a real-time channel between the NullRun gateway
-and connected SDKs. It carries the events that need to land at the
-agent **while it is running** — kill / pause decisions, policy
-changes, key rotations, and full-state resyncs.
+Without the control plane, the dashboard would only tell the agent
+something happened on its next call. With it, the agent learns in
+real time.
 
-Without the control plane, the SDK would only learn about a kill when
-the next gate call (`@protect`) does a synchronous `check_control_plane`
-poll. With it, the SDK learns in milliseconds and can raise the
-appropriate exception mid-call.
+## What the dashboard can do
 
-## Endpoint
+From the workflow detail page (or the top-level **Workflows** list):
 
+| Action | Effect on the agent |
+|---|---|
+| **Pause** | Every call starts raising `WorkflowPausedException` (an `Exception`). Resume to undo. |
+| **Resume** | Unpause — calls resume normally. |
+| **Kill** | Every call raises `WorkflowKilledInterrupt` (a `BaseException`). The agent loop dies. |
+
+For the agent, the difference between Pause and Kill:
+
+- **Pause** — recoverable. The exception is a regular `Exception`,
+  the agent can catch it, do clean-up, and either retry or wait.
+- **Kill** — terminal. The exception is a `BaseException`, the
+  agent cannot catch it in `except Exception:` blocks (which is the
+  point — you don't want a runaway loop swallowing the kill).
+
+The agent doesn't have to wait for the next `@protect` call to learn.
+If it's mid-LLM-call when you click Kill, the SDK raises the
+exception at the next yield boundary inside the agent's loop.
+
+## How the signal reaches your SDK
+
+The dashboard pushes signals over a WebSocket connection that the SDK
+opens automatically when `init()` runs. The connection is
+authenticated with the same API key the SDK uses for `/gate` and
+`/track`, plus HMAC signature verification.
+
+The SDK keeps the connection alive with background heartbeats. If
+the WebSocket disconnects (network blip, firewall, gateway restart),
+the SDK falls back to polling `GET /workflows/{id}` once per second
+until the WebSocket comes back. From the agent's perspective, there's
+no difference — kill/pause still arrive within ~1 second.
+
+In environments where the WebSocket is firewalled, you can force the
+SDK into polling mode by constructing the runtime directly:
+
+```python
+from nullrun.runtime import NullRunRuntime
+
+runtime = NullRunRuntime(api_key="...", polling=True)
 ```
-WSS /ws/control/{org_id}
+
+This is internal-only — `polling=True` is not exposed as an env var
+because it's a deploy-time decision, not something you want to flip
+per-request.
+
+## What your agent sees
+
+The two exceptions your agent code will encounter:
+
+```python
+from nullrun.breaker.exceptions import WorkflowKilledInterrupt
+
+@nullrun.protect
+def my_agent_step(prompt):
+    # ... agent logic ...
+    return result
+
+try:
+    my_agent_step("do something")
+except WorkflowKilledInterrupt:
+    # Operator killed the workflow. This is BaseException — propagate it.
+    raise
+except WorkflowPausedException:
+    # Operator paused the workflow. Wait or exit cleanly.
+    raise
 ```
 
-The handshake is authenticated with an `X-API-Key` + HMAC signature,
-identical to the SDK REST endpoints. The SDK opens the connection
-automatically once both `NULLRUN_API_KEY` and `NULLRUN_SECRET_KEY`
-are set. The control plane URL is **not** a public env var — the
-SDK constructs it from the API base URL (`NULLRUN_API_URL`,
-default `https://api.nullrun.io`) as `wss://<api-host>/ws/control`.
+In practice, if you use the zero-boilerplate `@guarded` decorator,
+you don't need to write this — `WorkflowKilledInterrupt` propagates
+through `@guarded` because `@guarded` only catches `NullRunError`
+subclasses, and the kill signal is `BaseException`.
 
-## Message types
+For Pause, you have more flexibility. Most production agents catch
+`WorkflowPausedException`, save their state to durable storage,
+wait a few seconds, and resume. Some simply exit and let a
+supervisor process restart them when the workflow is unpaused.
 
-The SDK implements the canonical message catalog from
-`nullrun.transport_websocket.WebSocketConnection`. Server →
-client types are dispatched by string equality on the `type`
-field; unknown types are logged at WARNING with a counter bump
-(`unknown_ws_message_type_total`) so an SRE can alert on a forward-
-compat break.
+## What if the SDK is disconnected?
 
-Server → client message types:
+If the WebSocket is down and polling is also blocked, the SDK can't
+learn about a kill until the next `/gate` call. In practice this
+window is at most one LLM-call duration — typically seconds, never
+minutes.
 
-| Type | When | SDK reaction |
-| --- | --- | --- |
-| `initial_state` | First message after subscribe; full per-workflow state snapshot (list of workflow dicts) | Dispatch each workflow entry to `on_state_change` (signed entries are parsed from `signed_payload` so the inner fields are trusted, not the outer envelope) |
-| `state_change` | A workflow's state flipped (Normal / Flagged / Tripped / Killed / Paused). Requires `ack` for `Killed` / `Paused` only. | Dispatch to `on_state_change`. For `Killed`/`Paused` the SDK sends an HMAC-signed `ack` with the `message_id` before invoking the callback. |
-| `policy_invalidated` | A policy in your workspace changed (saved via the dashboard); cached decisions must be re-evaluated | Drop cached policy decisions; next gate call re-evaluates. Callback signature: `(organization_id, policy_id, new_version)`. |
-| `key_rotated` | The HMAC secret for an API key was rotated; cached auth state must be refreshed | Refresh cached credentials; next call uses the new key. Callback signature: `(organization_id, key_id, new_version)`. |
-| `approval_resolved` | A pending human-approval request was approved or denied by an operator. Carries `approval_id`, `workflow_id`, `execution_id`, `outcome` (`approved`/`denied`), optional `note`, `resolved_at`. | On `approved`, release the gate reservation so the agent resumes on the same `execution_id`. On `denied`, surface `WorkflowKilledInterrupt`. Callback signature: `(full_message_dict)`. |
-| `resync_required` | Server overflowed its broadcast channel; client must drop local state and re-fetch | Close + reconnect (per ADR-007). Server publishes a fresh `initial_state` after reconnect. |
-| `subscribed` | Subscription confirmation (carries `organization_id`) | Logged at DEBUG; no SDK action. |
-| `pong` | Heartbeat reply to client `ping` | Logged at DEBUG; no SDK action. |
-| `error` | Server-side protocol error (`code` + `message`) | Logged at WARNING; no SDK action. |
-| *(unknown)* | Forward-compat: a `type` the SDK does not recognise | Logged at WARNING with the payload keys, counter incremented. **Not** a reconnect trigger. |
+The dashboard records the kill timestamp. When the SDK reconnects,
+it queries the workflow's state and acts on the most recent kill —
+even if the kill happened during the disconnection. The agent picks
+up the kill on the next call, with the original timestamp preserved
+in the audit log.
 
-Client → server:
+## Common operations
 
-| Type | When | Notes |
-| --- | --- | --- |
-| `ack` | Generic ack for any server message that requires one (carries `message_id`, `received_at`, HMAC signature) | Sent only for `Killed`/`Paused` `state_change` messages today. HMAC-signed via the same `generate_hmac_signature` helper the HTTP transport uses, so a future server-side ACK verifier needs no client-side wire change. |
+### Pause a runaway agent
 
-## How the SDK reacts
+1. Open **Workflows** in the sidebar.
+2. Find the row whose status is **Active** but whose spend is
+   suspiciously climbing.
+3. Click the row, then click **Pause**.
+4. The dashboard shows "Pause sent" with the timestamp.
+5. Within ~1 second, the agent stops calling LLM.
 
-| Server message | SDK action |
-| --- | --- |
-| `state_change` (killed) | Raise `WorkflowKilledInterrupt` on the next gate call. If a call is currently mid-execution, the interrupt is queued and raised at the next yield point. |
-| `state_change` (paused) | Raise `WorkflowPausedException` on the next gate call. |
-| `policy_invalidated` | Drop cached policy decisions; the next gate call re-evaluates. |
-| `key_rotated` | Refresh cached credentials; the next call uses the new key. |
-| `approval_resolved` (approved) | Release the gate reservation so the agent resumes on the same `execution_id` without polling `/status`. |
-| `approval_resolved` (denied) | Surface `WorkflowKilledInterrupt` on the next gate call. |
-| `resync_required` | Drop local workflow / policy state and re-fetch from `/api/v1/orgs/{org_id}/status`. |
+### Resume after a pause
 
-The kill contract (see `docs/kill-contract.md` in the gateway repo)
-defines which events are recoverable vs terminal.
+1. Same workflow page.
+2. Click **Resume**.
+3. The agent's next call succeeds.
 
-## Operator UI
+### Kill an agent that won't stop
 
-The dashboard's **Workflows → `<workflow_id>` → Actions** panel sends
-`state_change` messages. `policy_invalidated` is sent automatically
-when a policy is saved. `key_rotated` is sent when an API key's
-HMAC secret is rotated (via
-`POST /api/v1/orgs/{org_id}/api-keys/{key_id}/rotate`, **not** on
-key revocation/delete). `approval_resolved` is sent when a
-pending human-approval request is approved or denied by an operator
-(see [Concepts → Human approval](human-approval.md)).
+1. **Workflows** → workflow row → **Kill**.
+2. The agent receives `WorkflowKilledInterrupt` on the next yield
+   point inside its loop.
+3. If the agent's loop catches `Exception` (but not `BaseException`),
+   the kill propagates through. If the agent catches `BaseException`
+   explicitly, make sure it re-raises `WorkflowKilledInterrupt` —
+   the kill contract is "operator's word is final".
 
-## When the WebSocket is down
+### Verify the signal arrived
 
-If the WS endpoint is blocked by your network (corporate firewall,
-proxy in the way, etc.) the SDK falls back to HTTP polling on
-`/api/v1/orgs/{org_id}/workflows/{workflow_id}` — a 1-second round trip
-that surfaces kill/pause with at most 1s of latency.
-
-!!! info "No public env var for transport mode"
-    There is **no** `NULLRUN_TRANSPORT` env var. Earlier docs drafts
-    mentioned one; it was never wired up to the SDK. To force HTTP
-    polling from start (instead of letting WS push fail over), build
-    a `NullRunRuntime` directly:
-
-    ```python title="polling_runtime.py"
-    from nullrun.runtime import NullRunRuntime
-
-    runtime = NullRunRuntime(api_key="nr_live_...", polling=True)
-    ```
-
-    In practice the SDK is correct to keep this internal — selecting
-    the transport at runtime is a deploy-time concern, not a config
-    knob you want to flip per-request.
-
-The control-plane check on every `@protect` gate entry merges the
-local cached remote state with whatever the transport last delivered.
-A WS push and a `@protect` call can run concurrently — a kill that
-arrives between two gate calls lands before the next call (no lost
-state window).
+After clicking Pause / Kill, the workflow's status flips
+immediately in the dashboard. If the agent doesn't respond, check
+the SDK logs — the WebSocket connection state is logged at startup
+and on every reconnect.
 
 ## See also
 
-- [HTTP API](../reference/http-api.md#websocket-control-plane)
-- [Workflow context](workflow.md)
-- Kill contract (internal — available on request via
-  [support@nullrun.io](mailto:support@nullrun.io))
+- [Workflows → how to control one](workflow.md#how-to-control-one)
+- [Human approval](human-approval.md) — similar flow for tool
+  approvals
+- [Troubleshooting](../troubleshooting.md) — "why did my workflow
+  pause without me doing anything?"

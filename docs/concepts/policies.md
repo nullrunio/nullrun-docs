@@ -1,156 +1,135 @@
 # Policies
 
 A **policy** is a rule attached to your organization or a single
-workflow. Every gate / execute call is evaluated against the merged
-set of active policies for the key's workflow — the policy
-engine returns `allow`, `block`, or `approval_required` from that
-evaluation.
+workflow. In the dashboard they live under **Governance → Policies**.
+Each policy answers one question:
 
-## Types
+- "Is this call allowed, blocked, or does it need a human to approve?"
 
-Three policy types exist. Each has a JSON `config` payload whose
-shape is type-specific:
+The dashboard counter at the top of the page (`8 / 150`) tells you
+how many policies your org has versus your plan's cap.
 
-| Type | What it caps | `config` keys |
-| --- | --- | --- |
-| `RateLimit` | Calls per minute (per workflow + per org aggregate) | `max_calls_per_minute` (i64) |
-| `BudgetLimit` | Cumulative cost in cents (per workflow) | `budget_cents` (i64) |
-| `ToolBlock` | Glob match on tool names — blocks / requires approval | `tool_pattern`, `blocked_tools`, or `tools` (array of strings ≤ 4096 bytes) |
+## What you see in the dashboard
 
-`RateLimit` and `BudgetLimit` are core controls available on every
-plan. `ToolBlock` requires the `CustomPolicies` entitlement (Growth
-and above).
+The **Policies** page lists every policy in your org. Each row
+shows:
 
-### Per-policy fields outside `config`
+- **Name** — you set this when you created the policy
+- **Type** — what the policy caps (see the table below)
+- **Scope** — applies to the whole org, or only one workflow
+- **Active** toggle — on/off without deleting
+- **Effective from** — when the policy was last edited
 
-Three fields look like policy fields but are consumed by the
-**detector layer**, not by the gate engine:
+Click a policy to edit it. Changes apply to the next gate call —
+there's no need to redeploy your agent.
 
-| Field | Default | Consumer |
-| --- | --- | --- |
-| `loop_threshold` | `6` | Loop detector — see [Loop detection](loop-detection.md). |
-| `loop_window_secs` | `60` | Loop detector sliding window. |
-| `anomaly_mode` | `Moderate` | Anomaly detector σ multiplier — see [Anomaly detection](anomaly-detection.md). |
+## The three policy types
 
-## Scopes
+| Type | What it controls | Example value |
+|---|---|---|
+| **BudgetLimit** | Maximum spend per workflow per period | `5000` ($50.00) |
+| **RateLimit** | Maximum calls per minute | `60` (one call per second sustained) |
+| **ToolBlock** | Tools the agent must not call | `["send_*", "db.drop", "stripe.charge"]` |
 
-Every policy has a `scope` of either `Org` or `Workflow`.
+Each type has a JSON config payload — see the [Tool policies](tool-policies.md)
+page for the glob-match syntax inside `ToolBlock`.
 
-```mermaid
-flowchart TD
-    O["Org-scope policy<br/>applies to every workflow in the org"]
-    W["Workflow-scope policy<br/>applies to one workflow_id"]
-    X["Other org workflows"]
+You can also pair `ToolBlock` with the **require approval** action
+instead of **block**: the call pauses until a human clicks Approve
+in the dashboard. See [Human approval](human-approval.md).
 
-    O --> M["Effective policy set<br/>for workflow X"]
-    W --> M
-    X -. "not affected by W" .-> W
-```
+## Org-level vs workflow-level
 
-Org-scope policies are **inherited** by every workflow in the
-organization — they apply everywhere by default. Workflow-scope
-policies apply only to the bound workflow.
+A policy has one of two scopes:
 
-Both scopes are merged at evaluation time. There is no notion of
-one scope "overriding" another — both apply simultaneously.
+- **Org** — applies to every workflow in your organization. Useful
+  for "all our agents must block `db.drop`" or "everyone gets 60
+  calls/min".
+- **Workflow** — applies to one workflow only. Useful for "this
+  specific agent gets $500/month" or "this one agent can call
+  `send_email`".
 
-## Conflict resolution
+Both scopes apply at the same time. There's no "overrides" — both
+sets of rules run together. The dashboard's **Effective policy** tab
+on a workflow page shows the merged set.
 
-When two policies in the merged set compete, the engine uses
-**most-restrictive-wins** for numeric caps and **union** for tool
-block patterns.
+## How conflicting policies are resolved
 
-```mermaid
-flowchart LR
-    subgraph Merged["Effective policy set for workflow X"]
-      A["Org RateLimit<br/>max_calls_per_minute = 60"]
-      B["Workflow RateLimit<br/>max_calls_per_minute = 30"]
-    end
-    Merged --> E["Effective cap"]
-    A --> E
-    B --> E
-    E --> Res["min(60, 30) = 30 cpm"]
-```
+When two policies in the merged set compete, the engine picks the
+**most restrictive** one for numeric caps and the **union** for tool
+patterns:
 
-| Field | Aggregation across active policies |
-| --- | --- |
-| `budget_cents` | `min()` |
-| `max_calls_per_minute` | `min()` |
-| `loop_threshold` | `min()` |
-| `loop_window_secs` | `min()` |
-| `anomaly_mode` | Stored per policy; not aggregated |
-| `blocked_tools` / `tool_pattern` / `tools` | Union, deduplicated |
+| Field | If two policies disagree |
+|---|---|
+| `budget_cents` | The smaller number wins |
+| `max_calls_per_minute` | The smaller number wins |
+| `tool_pattern` / `blocked_tools` / `tools` | Both lists are merged (a tool blocked anywhere is blocked everywhere) |
 
-`policy_type` is **immutable** per row — updating a `RateLimit`
-into a `BudgetLimit` returns `400 policy_type_immutable`. Delete
-and recreate instead.
-
-### Concrete example
-
-```mermaid
-flowchart TD
-    subgraph Org[Org-level policies]
-      O1["BudgetLimit<br/>budget_cents = 5000"]
-      O2["RateLimit<br/>max_calls_per_minute = 60"]
-      O3["ToolBlock<br/>send_*, db.drop"]
-    end
-    subgraph Wf[Workflow-level policies]
-      W1["BudgetLimit<br/>budget_cents = 2000"]
-      W2["ToolBlock<br/>send_email"]
-    end
-
-    O1 --> M["Effective set"]
-    O2 --> M
-    O3 --> M
-    W1 --> M
-    W2 --> M
-
-    M --> R["budget_cents: min(5000, 2000) = 2000<br/>max_calls_per_minute: 60<br/>blocked_tools: send_*, db.drop, send_email (dedup)"]
-```
-
-## Plan gating
-
-| Resource | Gate |
-| --- | --- |
-| Total policy count per org | `plan_limits.policies_limit` (returns `429 plan_limit_exceeded`) |
-| Sum of `max_calls_per_minute` across org | `plan_features.aggregate_rate_limit_per_min` (enforced on policy create) |
-| `ToolBlock` policies | `Feature::CustomPolicies` (Growth+) |
-| `human_approvals_enabled = true` on a workflow | `Feature::Approvals` (Growth+) |
-
-## What's inherited, what's not
-
-| Property | Inherited by workflow from org? |
-| --- | --- |
-| `budget_cents` | **Yes** — merged via `min()` across scopes |
-| `max_calls_per_minute` | **Yes** — merged via `min()` |
-| `loop_threshold`, `loop_window_secs` | **Yes** — merged via `min()` |
-| `anomaly_mode` | **Yes** — read from any active policy |
-| `tool_pattern` / `blocked_tools` / `tools` | **Yes** — union of all ToolBlock policies |
-| `policy_type` | No — per-row attribute |
-| `scope`, `workflow_id`, `name`, `template_id`, `version` | No — per-row attribute |
-| `is_active` | No — a deactivated policy is excluded entirely |
-
-A workflow cannot un-block a tool the org blocks. The merge is
-union-only for tool patterns — there is no negative / allow rule.
+You can't accidentally un-block a tool the org blocks. There is no
+"allow" rule that overrides a "block" — the system is conservative
+on purpose.
 
 ## Templates
 
-The gateway ships a curated set of policy templates
-(`GET /policies/templates` → `enable_template`). Enabling a
-template materialises a policy row in your org using the
-template's `config` and `name`. Disable reverses it. Templates
-are useful for common patterns ("Cap dev workflow at 100c/min",
-"Block all write tools") without hand-authoring JSON.
+The dashboard ships with **templates** — pre-built policies for
+common patterns. To enable one:
+
+1. On the **Policies** page, click **Templates**.
+2. Pick a template (e.g. "Cap dev workflow at 100c/min" or "Block
+   all write tools").
+3. Click **Enable**.
+
+The template materialises as a real policy in your org using its
+config and name. Disable reverses it. Templates save you from
+hand-authoring JSON.
+
+## Plan gating
+
+Some policy features are plan-restricted:
+
+| Resource | Available on |
+|---|---|
+| Total policies per org | All plans (cap varies: Lite 5, Starter 25, Growth 150, Scale 500) |
+| `ToolBlock` policies | Growth+ |
+| Sum of `max_calls_per_minute` across org | Plan limit (call it out in plan picker) |
+| `human_approvals_enabled = true` on a workflow | Growth+ |
+
+If you try to create a feature your plan doesn't include, the
+dashboard shows the feature greyed out with an "Upgrade" link.
+
+## How to create one
+
+1. **Governance → Policies → New policy**.
+2. Pick the type (BudgetLimit / RateLimit / ToolBlock).
+3. Pick the scope (Org or specific workflow).
+4. Fill in the config. The dashboard validates the JSON in real
+   time and shows errors before you save.
+5. Save. The policy is active immediately.
+
+To test a new policy before rolling it out broadly, scope it to
+one workflow. The dashboard's **Effective policy** tab on that
+workflow's detail page shows the merged result so you can see exactly
+what your agent will see.
+
+## What gets logged
+
+Every policy decision is recorded in **Governance → Audit log**.
+You can filter by:
+
+- Workflow
+- Decision type (`allow` / `block` / `rate_limit` / `require_approval`)
+- Time window
+- Tool name (for `ToolBlock` matches)
+
+The audit log is the source of truth for "why did my agent stop
+working at 14:32 yesterday?". Pair it with [Traces](tracing.md) to
+see the exact request that triggered the decision.
 
 ## See also
 
-- [Tool policies](tool-policies.md) — glob match semantics,
-  validation.
-- [API keys](api-keys.md) — what scopes / keys gate.
-- [Loop detection](loop-detection.md) — `loop_threshold` /
-  `loop_window_secs`.
-- [Anomaly detection](anomaly-detection.md) — `anomaly_mode`.
-- [Budgets](budgets.md) — how `budget_cents` interacts with
-  `/gate` and `/execute`.
-- [Circuit breaker](circuit-breaker.md) — how a tripped breaker
-  reads the policy.
+- [Tool policies](tool-policies.md) — the `ToolBlock` matching rules
+- [Sensitive tools](sensitive-tools.md) — built-in defaults the
+  SDK applies regardless of policy
+- [Budgets](budgets.md) — how `BudgetLimit` interacts with the
+  period rollover
+- [Workflows](workflow.md) — where the merged policy is applied

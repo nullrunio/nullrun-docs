@@ -1,72 +1,126 @@
 # Circuit breaker
 
-A circuit breaker sits between your agent and the work it does. When
-something goes wrong (cost blowup, runaway loop, hostile input), the
-breaker **trips** and the agent stops, even if the code itself doesn't
-know to stop.
+A **circuit breaker** is what stops your agent when something goes
+wrong. When the agent is hitting the budget cap, stuck in a loop, or
+trying to call a sensitive tool — the breaker trips and the agent
+stops, even if the agent's code doesn't know to stop.
 
-## States
+In the dashboard, a tripped breaker shows up as the workflow's
+status flipping from **Active** to **Killed** or as a flood of
+**block** decisions in the Decision History.
 
-- **CLOSED** — normal. Calls flow through.
-- **OPEN** — tripped. Calls are blocked with `NullRunBlockedException`.
-- **HALF_OPEN** — testing recovery. One trial call goes through; if it
-  succeeds, the breaker closes again.
+## When does it trip?
 
-## Triggers
+The breaker reacts to four situations. Each is a separate decision
+the gate makes, but to you it all looks the same: the next call
+rejects.
 
-What causes the breaker to open depends on the **policy** attached to
-the workflow. Common triggers:
+| Situation | What you see | Where in the dashboard |
+|---|---|---|
+| **Budget exceeded** | Every call returns `block` with reason `BUDGET_EXCEEDED` | Decision History, then the spend bar hits 100% |
+| **Loop detected** | The same tool called 6+ times in 60 seconds | Decision History shows repeated `block` decisions |
+| **Rate limit hit** | 429-style block with `Retry-After` | Decision History, rate-limit counter on the workflow page |
+| **Sensitive tool blocked** | `block` with reason `SENSITIVE_TOOL` | Decision History with source `sdk` |
+| **Operator kill** | `WorkflowKilledInterrupt` raised mid-call | Workflow status flips to **Killed** |
 
-- Cost per call > threshold
-- Cumulative workflow cost > budget
-- Loop detected (same tool call N times)
-- Retry storm (consecutive failures > threshold)
-- Tool call to a sensitive resource without approval
-- Kill signal received via the [control plane](control-plane.md)
+The first three are automatic — the gate enforces them on every
+call. The fourth needs you to click **Kill** in the dashboard or
+call `POST /workflows/{id}/kill`.
 
-## Fallback modes
+## What the agent sees
 
-When the gateway is unreachable, the breaker uses one of three
-modes. The mode is **fixed per call-site** in the SDK code; there
-is no public `NULLRUN_FALLBACK_MODE` env var (a pre-0.6.0 docs
-draft mentioned one — it was never wired up).
+When the breaker trips, the SDK raises an exception. The exact
+exception depends on what tripped it:
 
-| Mode | Behaviour | Use when |
-| --- | --- | --- |
-| `STRICT` | Block all calls (fail closed) | Sensitive operations, regulated workloads — `_enforce_sensitive_tool` always uses STRICT |
-| `PERMISSIVE` *(default for `/gate` pre-flight)* | Allow all calls (fail open) | Best-effort UX; cost may slightly overshoot during an outage |
-| `CACHED` | Use the most recent successful decision | Steady-state workloads where a stale policy is safer than none. **Deprecated** — accepted on `FlushConfig.fallback_mode` for backward compatibility but no longer the default for any call-site |
+| Trip cause | Exception | BaseException? |
+|---|---|---|
+| Budget exceeded | `NullRunBudgetError` | No |
+| Loop detected | `NullRunBlockedException` | No |
+| Rate limit | `RateLimitError` | No |
+| Sensitive tool blocked | `NullRunBlockedException` | No |
+| Operator kill | `WorkflowKilledInterrupt` | **Yes** |
 
-> The default is `PERMISSIVE` for the `/gate` pre-flight. The
-> exception is **sensitive tools**, which always fail closed
-> (regardless of mode) — see [Sensitive tools](sensitive-tools.md).
-> To opt into STRICT for a single sensitive function for tests,
-> set `NULLRUN_SENSITIVE_FAIL_OPEN=1`; production must never set
-> this.
+The kill signal is a `BaseException`, not an `Exception`. This is
+deliberate: it propagates through `try/except Exception:` blocks so
+you can't accidentally swallow the kill. See
+[Error handling → Kill signal](../concepts/error-handling.md)
+for the full contract.
 
-The internal `decision_source` enum (visible to operators via the
-`decision` log line and the `on_error` hook's `ErrorContext`) tags
-every fallback verdict with one of `FALLBACK_NETWORK_ERROR`,
-`FALLBACK_GATEWAY_ERROR`, or `FALLBACK_BREAKER_OPEN` so a SRE can
-distinguish "Redis was down" from "Python lost the socket" from
-"the breaker tripped on its own budget" — see ADR-008 in the
-gateway repo for the full fail-CLOSED/OPEN matrix.
+If you use the zero-boilerplate helpers from the SDK, you don't have
+to write any of this — `@guarded` catches the standard exceptions
+and prints the catalog wording, `WorkflowKilledInterrupt` still
+propagates.
 
-## When the gateway recovers
+## When the gateway is unreachable
 
-After an outage, the breaker transitions `OPEN → HALF_OPEN`. The
-first call is treated as a probe:
+Sometimes the gateway itself is down — DNS, network, an outage.
+The breaker has to decide what to do without a policy decision. There
+are three modes:
 
-- success → close the breaker, resume normal flow.
-- failure → reopen, wait `breaker.recovery_timeout`
+| Mode | What happens when the gateway is unreachable | Use when |
+|---|---|---|
+| **Strict** | Block everything (fail closed) | Sensitive operations — this is the default for [sensitive tools](sensitive-tools.md) |
+| **Permissive** | Allow everything (fail open) | Best-effort UX where the cost of blocking is higher than the cost of a missed policy check |
+| **Cached** | Use the last known good decision | Steady-state workloads where stale is safer than none — **deprecated**, kept only for backward compatibility |
 
-The SDK surfaces the fallback decision via `NullRunTransportError`
-with `source=BREAKER_OPEN` so operators can alert on it (see
-[Errors](../reference/errors.md)).
+The default for the `/gate` pre-flight is **Permissive**. The
+exception is sensitive tools, which always fail closed.
+
+You don't pick the mode per-call — it's a deployment-wide setting.
+If your deployment handles sensitive operations, the SDK will block
+those locally (sensitive tool = always strict) while letting normal
+operations through (Permissive).
+
+## When the breaker recovers
+
+After the gateway comes back, the breaker transitions automatically
+to normal mode. No operator action needed — the next `/gate` call
+succeeds if the policy allows it.
+
+If the breaker is tripping too often (every call rejects), look at:
+
+1. **Decision History** for the workflow. The reason column tells
+   you why each call was blocked.
+2. **Spend** tab. If you're consistently hitting the budget, raise
+   the cap or switch to a cheaper model.
+3. **Effective policy**. A policy you added recently may be too
+   strict — try narrowing patterns or scoping to one workflow
+   before rolling out org-wide.
+
+## Common scenarios
+
+### "My agent suddenly stopped responding"
+
+Open the workflow in the dashboard. Check the state:
+
+| Status | What happened |
+|---|---|
+| **Active** | The agent is fine — check the application logs for the actual error |
+| **Paused** | You paused it (or an operator did). Click **Resume** to restart. |
+| **Killed** | You killed it (or an operator did). Create a new workflow or re-activate. |
+
+If the status is Active but every call rejects, open **Decision
+History** and filter by `decision = block`. The reason column shows
+the pattern that matched.
+
+### "My agent was working yesterday and is blocked today"
+
+Look at **Spend**. The budget probably rolled over (new month) and
+the new period started with empty budget. Raise the cap or wait
+for the next reset.
+
+### "I want to test my agent without the breaker tripping"
+
+Use a **test key** (`test_key: true` in the key creation form). Test
+keys bypass the budget cap so you can develop freely. Don't use a
+test key in production — the cap is what protects you.
 
 ## See also
 
-- [Budgets](budgets.md)
-- [Sensitive tools](sensitive-tools.md)
-- [Control plane](control-plane.md)
-- [How-to → Set a hard cost cap](../how-to/cost-cap.md)
+- [Budgets](budgets.md) — the most common trip cause
+- [Sensitive tools](sensitive-tools.md) — strict-mode default for
+  dangerous operations
+- [Human approval](human-approval.md) — the alternative to blocking
+  for sensitive operations you actually want to allow
+- [Troubleshooting](../troubleshooting.md) — common "why is my
+  agent blocked?" questions

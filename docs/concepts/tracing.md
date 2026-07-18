@@ -1,195 +1,160 @@
 # Tracing
 
-Every NullRun event carries a `trace_id` and a `span_id` so you can
-correlate SDK-side calls with the gateway's audit log. Multi-agent
-orchestrations additionally carry a `parent_trace_id` so the cost of
-LLM calls inside a sub-agent rolls up to the orchestration row.
+A **trace** is everything that happened during one run of your agent.
+In the dashboard they live under **Executions** and **Traces** in the
+sidebar. Each execution is one agent run; the trace view shows the
+nested structure of every LLM call, every tool call, and how long
+each took.
 
-This page covers what the SDK writes, what the backend stores, and how
-to query the unified view.
+If a user reports "the agent did something weird at 14:30", the
+tracing tab is where you go to see exactly what happened.
 
-## The three identifiers
+## What you see in the dashboard
 
-| Field | When written | Where it flows |
-|---|---|---|
-| `trace_id` | Created at SDK init (root) or when you call `with span(...)` for a nested span. Stays constant for the lifetime of a single workflow run. | Every `/gate`, `/track`, and `track_*` call |
-| `span_id` | Created for each `@protect` invocation and each `with span(...)` block. New on every gate entry. | Decision log + cost_events |
-| `parent_trace_id` | Set when a sub-agent runs under an orchestration root. The sub-agent's `trace_id` becomes its `parent_trace_id`. | Decision log (orchestration row only) |
+The **Executions** page lists every agent run. Each row shows:
 
-## Single-agent trace
+- **Workflow** — which workflow ran this
+- **Started at** — timestamp
+- **Duration** — total run time
+- **Status** — completed / failed / killed
+- **Cost** — total cost for this run
+- **LLM calls** — how many LLM invocations
 
-```python title="single_agent_trace.py"
-import nullrun
-from nullrun import init_or_die, protect, workflow, shutdown
-
-init_or_die()
-client = OpenAI()
-
-
-@protect
-def answer(prompt: str) -> str:
-    return client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-    ).choices[0].message.content
-
-
-with workflow("customer-onboarding"):
-    print(answer("What is LLM cost management?"))
-```
-
-The `with workflow("customer-onboarding")` block pins the
-`workflow_id` for every `@protect` call inside. The SDK assigns a
-fresh `trace_id` at `init()` time and reuses it across every
-`/gate`, `/track`, and `track_*` call within the run. Each
-`@protect` invocation creates a new `span_id`, so the audit log
-shows distinct entries per call.
-
-In the dashboard **Workflows → customer-onboarding → Decisions**:
+Click an execution to open the **Trace** view. The trace is a
+hierarchical tree:
 
 ```
-trace_id    span_id       decision  reason            cost_cents
---------    --------      --------  ------            ----------
-a1b2c3...   span-001      allow     —                 2.30
-a1b2c3...   span-002      allow     —                 1.85
-a1b2c3...   span-003      block     BUDGET_EXCEEDED   —
+Run "user-123-research"     2m 14s   $0.42
+├─ Step 1: plan             0.3s    $0.01
+│  └─ llm.call (claude-sonnet-4-5)    0.3s    $0.01
+├─ Step 2: research         45s     $0.18
+│  ├─ llm.call (claude-sonnet-4-5)    12s     $0.06
+│  ├─ tool.call (tavily_search)       8s      —
+│  └─ llm.call (claude-sonnet-4-5)    22s     $0.12
+├─ Step 3: write             30s     $0.12
+│  └─ llm.call (claude-sonnet-4-5)    30s     $0.12
+└─ Step 4: review            17s     $0.11
+   └─ llm.call (claude-sonnet-4-5)    17s     $0.11
 ```
 
-Three rows, one trace, three spans, one workflow.
+Three things you can read off this tree at a glance:
 
-## Multi-agent trace (parent / child)
+- **Where the time went** — the longest step is where to optimise.
+- **Where the money went** — same, but for cost.
+- **What the agent did** — each tool call and LLM call is
+  clickable, showing the full request/response.
 
-When an orchestrator delegates to sub-agents, the SDK sets
-`parent_trace_id` so the cost rolls up correctly:
+## How a trace is built
 
-```python title="multi_agent_trace.py"
-from langgraph.graph import StateGraph
-import nullrun
-from nullrun import init_or_die, protect, workflow, span, shutdown
+When you use the SDK's `@protect` decorator or `with workflow(...)`
+context manager, the SDK automatically creates spans:
 
-init_or_die()
-
-
-@protect
-def research_node(state): ...
-@protect
-def writer_node(state): ...
-
-
-# Outer block pins the orchestration root.
-with workflow("research-supervisor"):
-    graph = StateGraph(...)
-    graph.add_node("research", research_node)
-    graph.add_node("writer", writer_node)
-    app = graph.compile()
-    app.invoke({"topic": "LLM cost trends"})
-
-
-if __name__ == "__main__":
-    try:
-        with workflow("research-supervisor"):
-            app.invoke({"topic": "LLM cost trends"})
-    finally:
-        shutdown()
-```
-
-If a sub-agent runs under its own `with workflow("research-subagent")`
-context, the SDK captures the orchestration's `trace_id` as the
-sub-agent's `parent_trace_id`. In the cost_events JOIN, the
-orchestration row carries the rolled-up spend across every sub-agent
-LLM call.
-
-In the dashboard the orchestration view shows:
-
-```
-trace_id    parent_trace_id  workflow              span_id      cost_cents
---------    ---------------  --------              --------     ----------
-root-001    —                research-supervisor   orchestration  8.40
-root-001    sub-tr-002       research-subagent     span-007      3.10
-root-001    sub-tr-003       writer-subagent       span-008      5.30
-```
-
-The orchestration row sums to `8.40` because it's the parent of the
-two sub-agent spans.
-
-## Manual spans with `with span(...)`
-
-Use `with span(...)` when you want to group several `@protect` calls
-under one logical operation:
-
-```python title="span_grouping.py"
-import nullrun
-from nullrun import init_or_die, protect, span, shutdown
-
-init_or_die()
-
-
-@protect
-def step_a(): ...
-@protect
-def step_b(): ...
-@protect
-def step_c(): ...
-
-
-with span("phase-1"):
-    step_a()  # span_id=phase-1
-    step_b()  # still under phase-1
-with span("phase-2"):
-    step_c()  # new span_id=phase-2
-```
-
-Each `with span(...)` creates a new `span_id`. The `trace_id` stays
-the same across both blocks (the workflow-level trace). Useful when
-you want to filter the decision log by phase without needing separate
-workflows.
-
-## How the SDK handles nested context
-
-The SDK uses Python `ContextVar`s for `trace_id`, `span_id`,
-`workflow_id`, and `chain_id`. Token-based resets mean nested `with`
-blocks restore the prior values on exit:
-
-```python title="nested_context.py"
-with workflow("outer"):
-    # workflow_id = "outer"
-    with workflow("inner"):
-        # workflow_id = "inner"
-        step()
-    # workflow_id restored to "outer"
-    step()
-```
-
-This works across threads inside the same process (each thread gets
-its own contextvar copy) and across async tasks (each task inherits
-the parent context).
-
-## When to use which
-
-| Pattern | Use when |
+| Action | What gets a span |
 |---|---|
-| `with workflow("name")` | One logical agent run (one cap, one kill target) |
-| `with chain("id")` | Soft-mode gate for a multi-step loop inside one workflow |
-| `with span("name")` | Group several calls under one trace without changing workflow boundaries |
-| `with agent("id")` | Tag events with an agent identity distinct from the workflow (multi-tenant routing) |
+| `@protect` decorator | One span per gate call |
+| `with workflow("name"):` | One span for the whole workflow run |
+| `with chain("id"):` | One span for the chain |
+| `with span("phase"):` | One span for the named phase |
 
-## Querying the unified view
+You don't have to add tracing manually — it comes from the
+decorators and context managers you already use. The SDK sends
+trace metadata alongside every `/gate` and `/track` call.
 
-The cost_events table joins three ways depending on what you're
-asking:
+For nested agent orchestrations (a supervisor calling sub-agents),
+each sub-agent's spans are nested under the supervisor's. The trace
+view shows the tree; the **Cost** column rolls up automatically.
 
-| Question | Query |
+## What each span contains
+
+Click any span in the trace tree to see:
+
+- **Span ID** — unique identifier (UUID)
+- **Parent span ID** — for nesting
+- **Started at** / **Duration** — timing
+- **Status** — completed / failed / killed
+- **Inputs** — the prompt sent to the LLM (truncated if huge)
+- **Outputs** — the LLM's response (truncated)
+- **Cost** — input + output tokens × model rate
+- **Tool calls** — every tool the span invoked (with arguments)
+- **Decision** — the gate verdict (allow / block / rate_limit) and
+  which policy triggered it
+
+For blocked calls, the **Decision** row is the most useful — it
+links to the policy that matched and shows the rule.
+
+## How long traces are kept
+
+By default, the dashboard keeps traces for **30 days**. On paid
+plans you can extend to 90 days. After the retention window expires,
+the trace is removed from the dashboard; the aggregated cost
+information stays (it's summarised per workflow per period).
+
+If you need longer retention for compliance, you can export traces
+from the dashboard as JSON via the **Export** button on the
+Executions page. The exported shape matches the wire format.
+
+## Span identifiers and correlation
+
+Each span has three identifiers:
+
+| Field | Purpose |
 |---|---|
-| What's the total spend per workflow this period? | `SELECT workflow_id, SUM(cost_cents) FROM cost_events WHERE period = ? GROUP BY workflow_id` |
-| What did this agent run cost, including sub-agents? | `WHERE trace_id = ?` (the orchestration trace_id; sub-agent rows have it as `parent_trace_id`) |
-| What's the slowest gate decision in this run? | `WHERE trace_id = ? ORDER BY lua_eval_ms DESC LIMIT 10` |
-| How much did this particular tool call cost? | `WHERE span_id = ?` |
+| `trace_id` | The whole agent run — same across every span in one execution |
+| `span_id` | One call — unique per `@protect` invocation |
+| `parent_trace_id` | For sub-agents — the orchestration trace they belong to |
 
-The `parent_trace_id` column is the join key for the orchestration
-rollup. See [Reference → HTTP API → cost_events](../reference/http-api.md#sdk-endpoints)
-for the full schema.
+You can search the dashboard by any of these. If a customer reports
+a problem with `trace_id = abc-123`, you can pull the full trace and
+every decision tied to it from the audit log.
+
+## How to use tracing during development
+
+When you're building a new agent, traces tell you:
+
+- **Is the agent looping?** — look for repeated spans with the same
+  tool call. The dashboard highlights this with a warning indicator.
+- **Is the agent slow?** — sort by duration, see which LLM call
+  takes the most time.
+- **Is the agent hitting the budget?** — look for spans with
+  `decision = block / BUDGET_EXCEEDED`.
+- **Is the agent calling tools you didn't expect?** — the trace
+  shows every tool call with arguments.
+
+When you're debugging a production issue, traces answer:
+
+- **What did the agent do at 14:30 yesterday?** — filter by time
+  range, click each execution, walk the trace.
+- **Why did the call to `send_email` fail?** — the trace shows
+  the call's status and decision. If it was blocked, the linked
+  policy explains why.
+- **How much did this single run cost?** — the top of the trace
+  shows the total; the leaves show the per-call breakdown.
+
+## Common questions
+
+### "My trace shows nothing"
+
+If `init()` was never called or the API key is missing, the SDK
+runs in error mode and no spans are recorded. Check the SDK logs for
+`NullRunAuthenticationError` (NR-C001).
+
+### "My trace is incomplete — only some spans show up"
+
+The SDK buffers events and flushes on a timer. If your process
+crashes before the flush, the in-flight spans are lost. Use
+`nullrun.shutdown(flush=True)` in your `finally` block to ensure
+everything reaches the gateway.
+
+### "Why are some spans duplicated?"
+
+The SDK's auto-instrumentation emits one span per LLM call. If you
+also call `track_llm` manually for the same call, you'll see two
+spans. Pick one or the other — the auto-instrumentation is enough for
+the standard OpenAI / Anthropic / Gemini / Cohere clients.
 
 ## See also
 
-- [Workflow context](workflow.md) — workflow_id and chain_id
-- [Span API in the SDK reference](../reference/sdk-api.md)
+- [Workflow context](workflow.md) — how `workflow()` scopes spans
+- [Error handling](error-handling.md) — errors that span blocks
+- [Reference → SDK API → track_*](../reference/sdk-api.md) — manual
+  span creation

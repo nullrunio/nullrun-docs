@@ -1,131 +1,149 @@
 # Loop detection
 
-The loop detector catches **repetition patterns** in tool calls —
-the same tool being invoked N times within a sliding window. This
-is the failure mode where an agent's retry logic, recursion bug,
-or compromised prompt wedges itself on a tool and burns cost.
+A **loop** is when the agent calls the same tool with the same
+arguments repeatedly without making progress. Loops burn budget
+without producing useful work — every iteration spends tokens
+but doesn't move the task forward.
 
-## Why it's needed
+The loop detector catches this and blocks the agent before the
+budget is wasted. In the dashboard, a loop shows up in **Decision
+History** as repeated `block` decisions with reason `LOOP_DETECTED`.
 
-A budget cap stops a runaway workflow. A rate limit stops a
-flooding one. Neither stops a workflow that legitimately stays
-under both, but issues the **same tool call** in a tight loop —
-each call cheap in isolation, the aggregate bleeds cost while
-making zero progress. Loop detection is the tripwire for "the
-agent is stuck."
+## What is a loop?
 
-## How it works
+The detector triggers when the same tool is called with the same
+arguments more than `loop_threshold` times in `loop_window_secs`.
+The defaults are 6 calls in 60 seconds — both are policy fields
+you can override per workflow.
 
-Loop detection is **window-based, exact-match on tool name**.
-For every gate / execute evaluation, the detector counts how
-often each `tool_name` appears in the workflow's recent call
-history within the last `loop_window_secs` seconds. If any count
-reaches `loop_threshold`, the detector fires at **Critical**
-severity.
+Examples of what counts as a loop:
 
-```mermaid
-flowchart LR
-    H["tool history<br/>(last 60s)"]
-    C["count by tool_name<br/>exact match"]
-    M{"max count ≥<br/>loop_threshold?"}
+- `tavily_search("latest LLM benchmarks")` called 10 times in a
+  minute → loop detected, agent blocked
+- `read_file("/etc/passwd")` called 8 times in 40 seconds → loop
+  detected
+- The agent calls `tavily_search` 5 times with different queries →
+  not a loop (different arguments)
+- The agent calls `tavily_search` 4 times with the same query,
+  then `read_file` 3 times → not a loop (different tools)
 
-    H --> C
-    C --> M
-    M -->|yes| D["Critical severity<br/>→ throttle_factor → 0.0"]
-    M -->|no| OK["proceed (allow)"]
+The detector is **content-aware**: it compares the arguments, not
+just the tool name. Two calls to `tavily_search("foo")` and
+`tavily_search("bar")` are different.
+
+## Why loops happen
+
+Common causes:
+
+- **The agent's prompt doesn't include enough context** to know it
+  already searched for something
+- **The tool returns ambiguous results** and the agent retries
+  hoping for different output
+- **A retry loop** — the agent's framework retries on failure but
+  the failure isn't transient
+- **A bug in the agent** — the tool returns success but the agent
+  doesn't update its internal state
+
+Most loops are fixable: improve the prompt, dedupe tool results
+inside the agent, or detect "same args" before calling.
+
+## What the agent sees
+
+When a loop is detected, the SDK raises `NullRunBlockedException`
+with reason `LOOP_DETECTED`. The agent's loop dies on the next
+iteration:
+
+```python
+from nullrun import NullRunBlockedException
+
+try:
+    for _ in range(100):
+        search_results = search(prompt)
+        # agent forgets to update prompt — calls search() with same prompt
+except NullRunBlockedException:
+    # Loop detected. Stop and ask the user for guidance.
+    return "I'm stuck in a loop — could you clarify what you're looking for?"
 ```
 
-The trigger is exact-match — not glob, not semantic. The detector
-matches `"send_email"` to `"send_email"` and nothing else. Glob
-patterns are for [ToolBlock policies](tool-policies.md), not
-loops.
+With `@guarded`, the SDK prints a friendly message and exits with
+code 1. The agent dies cleanly.
 
-## Configuration
+## How to configure loop detection
 
-Two per-policy fields control the detector (see
-[Policies](policies.md) for where they live):
+Two policy fields control the detector:
 
-| Field | Default | Notes |
-| --- | --- | --- |
-| `loop_threshold` | `6` | Number of identical tool calls within the window before the detector fires. |
-| `loop_window_secs` | `60` | Sliding window size, in seconds. Calls older than this are not counted. |
+| Field | Default | What it does |
+|---|---|---|
+| `loop_threshold` | `6` | Number of identical calls in the window that triggers detection |
+| `loop_window_secs` | `60` | Time window for counting |
 
-Both fields are aggregated across active policies via `min()`
-([Policies — conflict resolution](policies.md#conflict-resolution))
-— the tightest config wins.
+To make the detector more or less strict, edit the workflow's
+policy in **Governance → Policies**. Lower the threshold for stricter
+detection; raise it if your agent legitimately makes repeated calls
+(e.g. polling for status).
 
-### Sliding window in action
+The detector uses **most-restrictive-wins** — if you have an
+org-scope policy with `loop_threshold: 3` and a workflow-scope
+policy with `loop_threshold: 10`, the effective threshold is 3.
 
-```mermaid
-flowchart LR
-    subgraph Now["t = 60s"]
-      N1["send_email (now)"]
-    end
-    subgraph Older["t = 0s … 60s ago"]
-      H1["send_email"]
-      H2["send_email"]
-      H3["send_email"]
-      H4["send_email"]
-      H5["send_email"]
-    end
-    subgraph Dropped["t > 60s ago"]
-      D1["send_email (60s ago) — dropped"]
-      D2["send_email (90s ago) — dropped"]
-    end
+## What the dashboard shows
 
-    Now --> C["count = 6<br/>(+ 1 from now)"]
-    Older --> C
-    Dropped -.->|"excluded"| C
-    C -->|"≥ 6 → fire"| F["Critical severity"]
-```
+When a loop is detected, you'll see:
 
-## What happens on detection
+- **Decision History** — a row with `decision = block`,
+  `reason = LOOP_DETECTED`, the tool name, and the argument hash
+  (so you can see which call repeated).
+- **Workflow status** — the workflow doesn't auto-pause or kill
+  on a loop block. The agent's code decides whether to retry or
+  give up. If the agent has `@guarded`, it exits and the workflow
+  stays **Active** waiting for the next user request.
+- **Audit log** — the full history of loop blocks for this
+  workflow.
 
-Loop detection returns **Critical** severity. A Critical finding
-reduces the workflow's `throttle_factor`. Once `throttle_factor
-< 0.1`, the next gate / execute is rejected with
-`circuit_breaker_tripped`.
+## What to do when you see repeated loops
 
-```mermaid
-sequenceDiagram
-    participant SDK
-    participant GW as Gateway
-    participant LD as Loop detector
-    participant CB as Circuit breaker
+Open the workflow's **Traces** tab and look at the failing
+execution. Walk through:
 
-    SDK->>GW: POST /gate (call #6 of send_email)
-    GW->>LD: evaluate(history)
-    LD-->>GW: Critical (loop)
-    GW->>CB: throttle_factor → 0.0
-    GW-->>SDK: 429 circuit_breaker_tripped
-    Note over CB: HALF_OPEN probe after recovery_timeout
-```
+1. **Which tool is looping?** — the trace shows the tool name and
+   arguments on every call.
+2. **Are the arguments identical?** — if yes, the agent's prompt
+   isn't progressing. If different, the detector might be too
+   sensitive (lower `loop_threshold` won't help; raise it).
+3. **What's the agent trying to do?** — the trace's prompt content
+   shows the agent's reasoning. Look for "I'll try again" or
+   "let me search for..." patterns that suggest the agent doesn't
+   know it already searched.
 
-The breaker then transitions `OPEN → HALF_OPEN` per the recovery
-contract in [Circuit breaker — when the gateway recovers](circuit-breaker.md#when-the-gateway-recovers)
-— one trial call is allowed; success closes the breaker, failure
-reopens it.
+Common fixes:
 
-## Tuning
+- **Add deduplication** in the agent — before calling a tool,
+  check if you've already called it with the same args in the
+  current trace.
+- **Improve the prompt** — tell the agent "before calling a tool,
+  check your previous tool results".
+- **Switch to a different model** — some models are more prone to
+  loops than others.
+- **Lower the loop threshold** — catch loops earlier, give the
+  agent less rope to hang itself.
 
-- The defaults (6 calls / 60s) catch clear loops without false-
-  positives on legitimate retries.
-- If you have a workflow that legitimately needs to retry the same
-  tool > 6 times in a minute (e.g. polling an API), raise
-  `loop_threshold` on that workflow's policy.
-- For noisy pipelines that retry aggressively, raise the
-  threshold or widen the window. Lowering either tightens the
-  catch at the cost of more false-positives.
+## Related: anomaly detection
 
-Loop detection is per-workflow; cross-workflow patterns (e.g. an
-agent triggering the same tool across many concurrent workflows)
-are not detected today.
+The loop detector catches **structural** repetition (same tool,
+same args). The **anomaly detector** (Growth+ plan) catches
+**statistical** outliers — sudden spikes in cost, latency, or token
+count that don't match the workflow's normal pattern.
+
+See [Anomaly detection](anomaly-detection.md) for the broader
+picture.
 
 ## See also
 
-- [Anomaly detection](anomaly-detection.md) — companion detector
-  for cost outliers.
-- [Circuit breaker](circuit-breaker.md) — how Critical findings
-  trip the breaker.
-- [Policies](policies.md) — where `loop_threshold` /
-  `loop_window_secs` live.
+- [Circuit breaker](circuit-breaker.md) — what happens when loops
+  trip the breaker
+- [Anomaly detection](anomaly-detection.md) — the statistical
+  cousin of loop detection
+- [Tracing](tracing.md) — how to read the trace to understand the
+  loop
+- [Policies](policies.md) — how `loop_threshold` and
+  `loop_window_secs` are configured
