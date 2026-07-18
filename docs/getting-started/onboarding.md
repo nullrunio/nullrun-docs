@@ -103,9 +103,10 @@ You'll see every `/gate` call (one per `@protect`-wrapped invocation),
 the policy verdict (`allow` / `block` / `rate_limit`), and the cost.
 
 For real-time spend, hit
-[`GET /api/v1/orgs/{org_id}/status`](../reference/http-api.md#status)
+[`GET /api/v1/orgs/{org_id}/status`](../reference/http-api.md#common-request-patterns)
 — it returns `current_spend_cents`, `budget_cents`, `time_to_exhaustion`,
-and your plan caps in a single call.
+and your plan caps in a single call (see the **Single-call status**
+example under "Common request patterns").
 
 ## 6. Tighten or loosen (remaining time)
 
@@ -117,7 +118,7 @@ Common next steps, in rough order of how often they're needed:
 2. **Allow over-budget for long agents** — see
    [Chain context → soft mode](../concepts/workflow.md#chain-context-soft-mode-budget-gate).
 3. **Forward every error to Sentry** — see
-   [Error handling → on_error hook](../concepts/error-handling.md#layer-2-the-on-error-hook-for-observability).
+   [Error handling → on_error hook](../concepts/error-handling.md).
 4. **Pre-flight keys before risky calls** — see
    [Human approval](../concepts/human-approval.md).
 

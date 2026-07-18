@@ -140,4 +140,4 @@ same two-phase pattern auto-instrumentation uses.
 - [SDK API → track_llm / track_tool / track_event](../reference/sdk-api.md#track_llm-manual-usage)
 - [Use with Bedrock](../how-to/bedrock.md) — example of a non-httpx
   vendor that uses manual tracking
-- [Errors → what goes through the decision log](errors.md)
+- [Errors → what goes through the decision log](../reference/errors.md)

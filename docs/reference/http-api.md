@@ -231,7 +231,7 @@ ORG_ID=8a3b1c7d-...
     For SDK endpoints the `X-Signature` and `X-Signature-Timestamp`
     headers are required. The signature is
     `HMAC-SHA256(secret_key, "<timestamp>:<api_key>:<sha256(body)>")`.
-    See [Authentication → X-API-Key + HMAC](#x-api-key--hmac-sdk-gateway).
+    See [Authentication → X-API-Key + HMAC](#x-api-key-hmac-sdk-gateway).
 
 ### Create a workflow
 
