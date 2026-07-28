@@ -111,7 +111,8 @@ Common next steps, in rough order of how often they're needed:
 
 1. **Block a tool** the agent shouldn't touch — see
    [Tool policies](../concepts/tool-policies.md) and the
-   [recommended `@sensitive` starter list](../reference/llm-tool-catalog.md#recommended-sensitive-starter-list).
+   recommended ToolBlock starter list in the
+   [Tool catalog](../reference/llm-tool-catalog.md#recommended-toolblock-starter-list).
 2. **Allow over-budget for long agents** — see
    [Chain context → soft mode](../concepts/workflow.md#chain-context-soft-mode-budget-gate).
 3. **Forward every error to Sentry** — see
