@@ -12,7 +12,7 @@ Verify:
 python -c "from nullrun import protect; print('ok')"
 ```
 
-Current version: `0.13.11` (platform `1.0.0`).
+Current version: `0.14.x` (platform `1.0.0`).
 
 > **No local mode.** If `init()` is called without an API key, the
 > SDK raises `NullRunAuthenticationError` at first use. There is no

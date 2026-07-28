@@ -1,5 +1,5 @@
 site_name: NullRun Docs
-site_description: Enforcement gateway for AI agents — user-facing documentation
+site_description: Runtime decision layer for tool-using AI agents — user-facing documentation
 site_url: https://docs.nullrun.io
 repo_url: https://github.com/nullrunio/nullrun-docs
 repo_name: nullrunio/nullrun-docs
@@ -81,8 +81,6 @@ nav:
       - API keys: concepts/api-keys.md
       - Policies: concepts/policies.md
       - Tool policies: concepts/tool-policies.md
-      - Loop detection: concepts/loop-detection.md
-      - Anomaly detection: concepts/anomaly-detection.md
       - Human approval: concepts/human-approval.md
       - Error handling: concepts/error-handling.md
   - How-to:

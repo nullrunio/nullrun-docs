@@ -38,7 +38,6 @@ needed.
 - Cost in cents (per-call and aggregate)
 - Latency
 - Tool calls (if you use a framework integration)
-- Loop / retry patterns
 
 ## What can go wrong
 

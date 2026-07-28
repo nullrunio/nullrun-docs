@@ -1,47 +1,28 @@
 # NullRun
 
-Enforcement platform for AI agents — a set of products that let
-teams ship agents without losing control of cost, scope, or behaviour.
+NullRun is a runtime decision layer for tool-using AI agents. Before an
+agent executes a supported tool or model call, the SDK sends a
+structured request to the gate. The gate evaluates applicable policies
+and runtime state, then returns `allow`, `block`, or `require_approval`.
+The SDK or calling application must honor that decision.
+
+**Managed runtime control plane. Not a self-hosted deployment.**
 
 ## What you get
 
-- A **circuit breaker** for agents — auto-halt on cost blowups, retry
-  storms, and loops (`@protect` gate)
-- A **policy layer** with per-workspace / per-agent / per-tool rules
-  (first-match-wins composition — ADR-007)
-- **Signed capability tokens** — time-bounded, HMAC-SHA256 permissions
-  for sensitive tool calls
-- **Cost intelligence** — real-time attribution + per-workflow
-  budget + `time-to-exhaustion` (single-call status endpoint:
-  `GET /api/v1/orgs/{org_id}/status`)
-- **Audit logging** — full traceability
-- **Adaptive enforcement** — risk- and context-aware detectors
-
-## Products
-
-NullRun is layered as seven cooperating subsystems. The names below
-are a navigation aid, not a marketing taxonomy — each one maps to a
-real module in the gateway.
-
-- **Breaker** — cost control + circuit breaker (the flagship). Halt
-  triggers: budget cap, loop, rate, sensitive-tool.
-- **Gate** — the `@protect` enforcement point. Every `track_llm` /
-  `track_tool` call from the SDK flows through it. Returns allow /
-  block / require-approval.
-- **Flow** — durable workflow runtime, with control-plane
-  `state_change` events over `WS /ws/control/{org_id}`. Supports
-  kill / pause / resume at any gate call.
-- **Identity** — HMAC-SHA256 signed capability headers. Replaces
-  client-side secrets: the SDK signs every request with `NULLRUN_SECRET_KEY`,
-  the gateway verifies the signature. **NULLRUN never stores customer
-  LLM API keys** — credentials stay in your environment.
-- **Trace** — execution telemetry + audit log. Surfaces token counts,
-  cost, latency, and policy decisions per workflow.
-- **Policy** — declarative rules with first-match-wins composition.
-  Per-org / per-agent / per-tool scopes (see ADR-007).
-- **Detectors** — adaptive enforcement. Loop / rate / drift /
-  retry-storm analysis on the event stream feeds signals back to
-  the Gate.
+- A **gate** for every agent action — `@protect`-decorated functions
+  flow through `/api/v1/gate` before execution
+- **Tool-pattern policies** — glob-match tool names, route sensitive
+  calls through human approval or block outright
+- **Budget enforcement** — hard limit by default, soft mode available
+  when an active `chain_id` exists with a configured overdraft cap
+- **Action-bound approvals** — typed `BusinessImpact` predicates
+  (`money_amount` / `tool_parameters`) bound by SHA-256 `action_digest`.
+  The grant is refused on `/execute` if the action payload changed
+- **Rate limiting** — token bucket per subject (per-key fails open,
+  aggregate fails closed)
+- **Audit trail** — every decision logged with budget snapshot,
+  chain state, and decision path
 
 ## Where to start
 
@@ -50,14 +31,25 @@ real module in the gateway.
 - [Concepts](concepts/circuit-breaker.md)
 - [How-to guides](how-to/langgraph.md)
 
+## Trust boundary
+
+NullRun evaluates structured action requests before execution. It does
+not inspect prompts, tool arguments, or model output semantics. Cost
+enforcement relies on SDK-reported estimates and usage — a malicious
+SDK that controls its own cost reports is not protected by the gate.
+
+The SDK is Python-only. TypeScript, JavaScript, and Go do not have
+equivalent runtime SDKs (a generator script produces low-level HTTP
+clients only). The control plane (policies, approvals, audit, billing,
+team) is reachable via the dashboard, not via the SDK.
+
 ## Repositories
 
 - [`nullrunio/nullrun-sdk-python`](https://github.com/nullrunio/nullrun-sdk-python) —
-  Python SDK (`pip install nullrun`), current release `0.13.11`
-  against platform contract `1.0.0`
+  Python SDK (`pip install nullrun`), active branch
+  `release/0.14.x-toolparameters`
 - [`nullrunio/nullrun-examples`](https://github.com/nullrunio/nullrun-examples) —
-  runnable examples (`examples/crewai_basic.py` requires CrewAI
-  ≥ 1.15)
+  runnable examples
 - [`nullrunio/nullrun-docs`](https://github.com/nullrunio/nullrun-docs) —
   this documentation site (https://docs.nullrun.io)
 - [`nullrunio/.github`](https://github.com/nullrunio/.github) — org profile

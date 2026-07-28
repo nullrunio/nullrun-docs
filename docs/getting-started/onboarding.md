@@ -77,10 +77,7 @@ Most of the time the only line you add is the `init()` call.
 ## 4. Set a budget (1 min)
 
 In the dashboard, open the workflow your key is bound to and set a
-`budget_cents`. The default is `0` (every call blocks immediately),
-so the agent will fail closed until you set a cap.
-
-A reasonable starter budget:
+`budget_cents`. A reasonable starter budget:
 
 | Use case | Suggestion |
 |---|---|

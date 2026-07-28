@@ -106,7 +106,7 @@ documents every field.
 | `POST` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}/enable` | Enable a template |
 | `DELETE` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}` | Disable a template |
 
-First-match-wins composition — see ADR-007.
+Most-restrictive-wins composition across applicable policies — see [Concepts → Policies](../concepts/policies.md).
 
 ## Executions, audit, observability
 
