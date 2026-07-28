@@ -25,7 +25,13 @@ handles `api.openai.com` handles `api.mistral.ai` — it pulls
 `usage.prompt_tokens` / `usage.completion_tokens` from the response
 body.
 
-## See also
+## Test coverage
 
-- [Auto-instrumentation overview](auto-instrumented-frameworks.md)
-- [Quickstart](../getting-started/quickstart.md)
+Per NullRun's testing policy (see the SDK README), Mistral /
+Gemini / Cohere / Bedrock patches have **extractor unit tests only**
+— no full transport-to-track integration test. The per-vendor
+extractor shape is exercised by isolated tests, but no
+multi-roundtrip end-to-end test confirms the cost actually flows
+through `/api/v1/track`. This is documented per §8 of the source-of-
+truth positioning — verify behaviour against your real workload
+before relying on it.

@@ -27,6 +27,16 @@ the response body, extracts `usage.input_tokens` /
 extracted tokens. Cost is recomputed on the backend from the org's
 pricing policy.
 
+## Test coverage
+
+Per NullRun's testing policy (see the SDK README), transport patches
+have dedicated end-to-end HTTP tests for **OpenAI** only. Anthropic
+patches have extractor support but no dedicated end-to-end transport
+test. Cost tracking therefore flows through the same code path as
+the OpenAI patch — same `track_llm` event shape, same aggregator,
+same `cost_events` row — but is not exercised by a per-vendor
+integration test in this repo.
+
 ## See also
 
 - [Auto-instrumentation overview](auto-instrumented-frameworks.md)

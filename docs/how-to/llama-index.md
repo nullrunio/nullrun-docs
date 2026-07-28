@@ -23,6 +23,13 @@ call so the SDK sees the raw usage. The vendor import is wrapped in
 `try/except ImportError`, so installing only this extra group does
 not crash on `init()`.
 
+## Test coverage
+
+Per NullRun's testing policy (see the SDK README), LlamaIndex
+patches have a dedicated end-to-end test
+(`tests/test_llama_index_patch.py`) covering the decorator plus
+behaviour.
+
 ## See also
 
 - [Auto-instrumentation overview](auto-instrumented-frameworks.md)

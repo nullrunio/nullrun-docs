@@ -27,7 +27,12 @@ Patched via the per-vendor extractor in `nullrun.instrumentation.auto`.
 The extractor reads `usageMetadata.promptTokenCount` /
 `usageMetadata.candidatesTokenCount` from the response body.
 
-## See also
+## Test coverage
 
-- [Auto-instrumentation overview](auto-instrumented-frameworks.md)
-- [Quickstart](../getting-started/quickstart.md)
+Per NullRun's testing policy (see the SDK README), Gemini patches
+have **extractor unit tests only** — no full transport-to-track
+integration test. The extractor shape is exercised by isolated
+tests, but no multi-roundtrip end-to-end test confirms the cost
+actually flows through `/api/v1/track`. This is documented per §8
+of the source-of-truth positioning — verify behaviour against your
+real workload before relying on it.
