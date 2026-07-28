@@ -25,8 +25,8 @@ from nullrun import init, init_or_die, protect, workflow, span, agent, chain, tr
 
 | Helper | Behaviour | Use when |
 |---|---|---|
-| `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` (NR-C001) if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI) |
-| `init_or_die(api_key=None, api_url=None, debug=False)` | Catches the NR-C001 exception, prints the catalog user-message to stderr, calls `sys.exit(1)`. Returns the runtime otherwise. | One-shot scripts, CLI tools, examples, anything where a missing key is a hard error |
+| `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI) |
+| `init_or_die(api_key=None, api_url=None, debug=False)` | Catches the `NullRunAuthenticationError` exception, prints the catalog user-message to stderr, calls `sys.exit(1)`. Returns the runtime otherwise. | One-shot scripts, CLI tools, examples, anything where a missing key is a hard error |
 
 `init_or_die` is `init` plus an `try/except NullRunAuthenticationError → sys.exit(1)`. The chain `@guarded` decorator does the same for callsite-level errors.
 
@@ -35,11 +35,11 @@ from nullrun import init, init_or_die, protect, workflow, span, agent, chain, tr
 | `init(api_key=None, api_url=None, debug=False)` | Initialise the SDK singleton. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars or by constructing `NullRunRuntime` directly. Probes `GET /api/v1/capabilities` on first call to validate v3 contract. | ✅ |
 | `init_or_die(api_key=None, api_url=None, debug=False)` | Like `init` but exits cleanly with code 1 if no API key is configured. See the table above. | ✅ |
 | `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. Always pair with `@guarded` for the zero-boilerplate exit-on-block pattern. | ✅ |
-| `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check `runtime.execute(...)` before the body runs. **Fails CLOSED on transport error** (ADR-008) regardless of the runtime's fallback mode. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
+| `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check `runtime.execute(...)` before the body runs. **Fails CLOSED on transport error** regardless of the runtime's fallback mode. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
 | `@guarded` | Decorator that wraps a function so any `NullRunError` raised inside is converted to `format_user_message(exc)` on stderr and `sys.exit(1)`. `WorkflowKilledInterrupt` (BaseException) propagates unchanged. | ✅ |
 | `with nullrun.handle(*, exit_code=1):` | Context manager form of `@guarded` — apply to a region of code rather than a single function. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
-| `chain(name=None, *, op="auto")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
+| `chain(name=None, *, chain_op="auto")` | Context manager for soft-mode budget gate. `chain_op="start"` registers the chain; `chain_op="continue"` extends TTL; `chain_op="end"` closes it. | (lazy) |
 | `span(name=None)` | Context manager for nested trace spans. | (lazy) |
 | `agent(name=None)` | Context manager for agent identity. | (lazy) |
 | `set_call_context(model=None, tools=None)` | Per-call context the SDK forwards to `/gate` so the backend's budget + tool-block enforcement sees real values (was `"budget-precheck"` sentinel + empty tool list pre-0.6.0). | (lazy) |
@@ -118,13 +118,15 @@ that you want in the decision log alongside `track_llm` /
 import nullrun
 
 # Override the default message for budget-exceeded. Pass "" to clear.
+# Canonical code (positioning §13); legacy NR-B004 still works for
+# backward compatibility.
 nullrun.set_user_message(
-    "NR-B004",
+    "BUDGET_HARD_BLOCKED",
     "You've used all your support credits. Upgrade to keep chatting.",
 )
 
 # Look up the message for an error_code at runtime:
-msg = nullrun.get_user_message("NR-R001")
+msg = nullrun.get_user_message("RATE_LIMIT_EXCEEDED")
 ```
 
 Overrides live in a per-process dict and are checked before the
@@ -147,31 +149,31 @@ but no longer appear in `dir(nullrun)`.
 
 All raised from `nullrun.breaker.exceptions`. Every public SDK
 exception inherits from `NullRunError` and carries four structured
-fields: `error_code` (e.g. `"NR-B004"`), `user_action` (imperative
-hint), `retryable` (bool), `docs_url`. See
+fields: `error_code` (machine-readable, e.g. `"BUDGET_HARD_BLOCKED"`),
+`user_action` (imperative hint), `retryable` (bool), `docs_url`. See
 [Errors](errors.md#sdk-exception-hierarchy-python) for the full
 hierarchy diagram.
 
 | Class | When | Notes |
 | --- | --- | --- |
 | `NullRunError` | Structured base for every user-facing SDK exception | Inherits `BreakerError`. Carries `.error_code`, `.user_action`, `.retryable`, `.docs_url`. |
-| `NullRunConfigError` | SDK misconfigured (e.g. missing `api_key`) | `error_code="NR-C000"`-family. Never retryable. |
+| `NullRunConfigError` | SDK misconfigured (e.g. missing `api_key`) | Code family for config errors. Never retryable. |
 | `NullRunAuthenticationError` | Missing / invalid `X-API-Key`, bad HMAC | 401 / 403. Carries `.message` for backward compat. |
-| `NullRunAuthError` | 401 specifically (key rejected) | Subclass of `NullRunAuthenticationError` (`NR-A003`). Carries `.status_code` (the wire HTTP status). |
-| `NullRunTransportError` | Gateway unreachable | Carries `.source` (`NETWORK_ERROR` / `GATEWAY_ERROR` / `BREAKER_OPEN` / `AUTH_ERROR`) and `.endpoint`. Retryable. |
-| `NullRunBackendError` | 5xx from the gateway | Subclass of `NullRunTransportError`. `NR-B002`. Retryable. |
-| `RateLimitError` | HTTP 429 | Subclass of `NullRunTransportError`. Carries `.retry_after`, `.upgrade_url`, `.body`. `NR-R001`. Retryable. |
-| `NullRunRateLimitRedisError` | 503 — Redis reservation failed | Subclass of `NullRunInfrastructureError`. `NR-R002`. **Fail-CLOSED.** |
-| `NullRunProtocolError` | Backend returned 400 `PROTOCOL_TOO_OLD` | Carries `.min_required_version`. Upgrade SDK past `SDK_MIN_VERSION_FOR_V3`. |
-| `NullRunBlockedException` | Generic policy block | Inspect `.workflow_id`, `.reason`, `.action`, `.tool_name`, `.details`. Carries `.status_code` (the wire HTTP status, e.g. 402 budget, 403 cross-org, 422 `CONSUME_OVERBUDGET`, 429 cap-reached). **No** `.message` — use `str(exc)`. `NR-X001`. |
-| `NullRunBudgetError` | Budget exhausted | Subclass of `NullRunBlockedException`. `NR-B004`. |
-| `NullRunToolBlockedError` | Tool in block list | Subclass of `NullRunBlockedException`. `NR-T001`. Carries `.tool_name`. |
-| `NullRunChainError` | Chain-mode gate check failed | Subclass of `NullRunDecision`. `NR-CH001`. |
+| `NullRunAuthError` | 401 specifically (key rejected) | Subclass of `NullRunAuthenticationError`. Carries `.status_code` (the wire HTTP status). |
+| `NullRunTransportError` | Gateway unreachable | Carries `.source` (e.g. `NETWORK_ERROR` / `GATEWAY_ERROR` / `BREAKER_OPEN` / `AUTH_ERROR`) and `.endpoint`. Retryable. |
+| `NullRunBackendError` | 5xx from the gateway | Subclass of `NullRunTransportError`. Code `REDIS_UNAVAILABLE` family. Retryable. |
+| `RateLimitError` | HTTP 429 | Subclass of `NullRunTransportError`. Carries `.retry_after`, `.upgrade_url`, `.body`. Code `RATE_LIMIT_EXCEEDED`. Retryable. |
+| `NullRunRateLimitRedisError` | 503 — Redis reservation failed | Subclass of `NullRunInfrastructureError`. Code `RATE_LIMIT_REDIS_UNAVAILABLE`. **Fail-CLOSED.** |
+| `NullRunProtocolError` | Backend returned 400 `PROTOCOL_TOO_OLD` | Carries `.min_required_version`. Upgrade SDK past the min required v3 version. |
+| `NullRunBlockedException` | Generic policy block | Inspect `.workflow_id`, `.reason`, `.action`, `.tool_name`, `.details`. Carries `.status_code` (the wire HTTP status, e.g. 402 budget, 403 cross-org, 422 `CONSUME_OVERBUDGET`, 429 cap-reached). **No** `.message` — use `str(exc)`. |
+| `NullRunBudgetError` | Budget exhausted | Subclass of `NullRunBlockedException`. Code `BUDGET_HARD_BLOCKED`. |
+| `NullRunToolBlockedError` | Tool in block list | Subclass of `NullRunBlockedException`. Code `TOOL_BLOCKED`. Carries `.tool_name`. |
+| `NullRunChainError` | Chain-mode gate check failed | Subclass of `NullRunDecision`. Code `CHAIN_ORG_MISMATCH` or `CHAIN_MAX_DURATION_EXCEEDED`. |
 | `NullRunConsumeOverbudgetError` | 422 — actual cost > reservation + ε | Subclass of `NullRunDecision`. Surfaces over-budget commit events. |
-| `NullRunWorkflowInactiveError` | 403 — workflow paused / killed cross-org | Subclass of `NullRunDecision`. `NR-W004`. |
+| `NullRunWorkflowInactiveError` | 403 — workflow paused / killed cross-org | Subclass of `NullRunDecision`. Code `WORKFLOW_INACTIVE`. |
 | `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
 | `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
-| `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunError`. `NR-W003`. Carries `.workflow_id`, `.reason`, `.resume_after`. |
+| `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunError`. Carries `.workflow_id`, `.reason`, `.resume_after`. |
 | `WorkflowKilledException` | Killed via control plane (parent) | `Exception` subclass. **Deprecated** — emits `DeprecationWarning` on construction. Use `WorkflowKilledInterrupt` directly. |
 | `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `BaseException` (NOT `Exception`) per the kill contract — catch before `except Exception`. |
 
@@ -179,6 +181,18 @@ Removed in 0.4.0: `CostLimitExceeded`, `ApprovalRequired`,
 `BreakerTimeout`, `LoopDetectedException`, `RetryStormException`,
 `RateLimitExceededException`. These classes had no remaining callers
 and are no longer reachable under any import path.
+
+> **Honest disclosure on error codes**: the catalog above mixes
+> canonical machine-readable codes from
+> [positioning.md §13](https://docs.nullrun.io/) (e.g.
+> `BUDGET_HARD_BLOCKED`, `RATE_LIMIT_EXCEEDED`, `TOOL_BLOCKED`,
+> `WORKFLOW_INACTIVE`, `REDIS_UNAVAILABLE`, `CHAIN_MAX_DURATION_EXCEEDED`,
+> `PROTOCOL_TOO_OLD`, `CONSUME_OVERBUDGET`) with legacy SDK-internal
+> code families (`NR-C000`-family for config, `NR-CH001` for chain,
+> etc.) that some older SDK clients still surface. The canonical
+> set is the uppercase snake-case enum from the gateway; legacy
+> `NR-XXXX` codes are kept for backward compatibility but should
+> not appear in new integrations.
 
 ## Catch-all pattern
 
@@ -253,7 +267,7 @@ except NullRunBudgetError as exc:
 
 The catalog of default messages is part of the NullRun product, not the
 customer's integration code. Every Customer Support Bot built on
-NullRun that hits `NR-B004` shows the same "You've reached the usage
+NullRun that hits `BUDGET_HARD_BLOCKED` shows the same "You've reached the usage
 limit for this conversation. Please try again later." string. This
 keeps the UX consistent across deployments and lets the product team
 A/B test wording for upgrade-conversion without touching customer
@@ -270,7 +284,7 @@ import nullrun
 
 # Override the default message for budget-exceeded. Pass "" to clear.
 nullrun.set_user_message(
-    "NR-B004",
+    "BUDGET_HARD_BLOCKED",
     "You've used all your support credits. Upgrade to keep chatting.",
 )
 ```

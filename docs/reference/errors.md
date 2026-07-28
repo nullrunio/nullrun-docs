@@ -45,29 +45,30 @@ compatibility.
 ## SDK exception hierarchy (Python)
 
 Every public SDK exception inherits from `NullRunError` and carries
-four structured fields: `error_code` (e.g. `"NR-B004"`), `user_action`
-(imperative hint), `retryable` (bool), `docs_url`.
+four structured fields: `error_code` (machine-readable, e.g.
+`"BUDGET_HARD_BLOCKED"`), `user_action` (imperative hint), `retryable`
+(bool), `docs_url`.
 
 ```
 BreakerError                          (Exception)
 ├── NullRunError                      (structured base — every field above)
 │   ├── NullRunDecision               (marker — expected policy outcomes)
 │   │   ├── NullRunBlockedException   (policy / budget / loop / sensitive block)
-│   │   │   ├── NullRunBudgetError    (budget exhausted — NR-B004)
-│   │   │   └── NullRunToolBlockedError (tool in block list — NR-T001)
-│   │   └── WorkflowPausedException   (paused via control plane — NR-W003)
+│   │   │   ├── NullRunBudgetError    (budget exhausted — BUDGET_HARD_BLOCKED)
+│   │   │   └── NullRunToolBlockedError (tool in block list — TOOL_BLOCKED)
+│   │   └── WorkflowPausedException   (paused via control plane)
 │   ├── NullRunInfrastructureError    (marker — system failures)
 │   │   ├── NullRunConfigError        (misconfiguration, e.g. missing api_key)
 │   │   ├── NullRunAuthenticationError (401 / 403)
-│   │   │   └── NullRunAuthError      (401 specifically — NR-A003)
+│   │   │   └── NullRunAuthError      (401 specifically)
 │   │   └── NullRunTransportError     (transport failures)
-│   │       ├── NullRunBackendError   (5xx — retryable, NR-B002)
+│   │       ├── NullRunBackendError   (5xx — retryable, REDIS_UNAVAILABLE)
 │   │       └── RateLimitError        (429 — carries .retry_after, .upgrade_url)
 └── BreakerTransportError
     └── InsecureTransportError        (HTTP used where HTTPS required)
 
 BaseException
-└── WorkflowKilledException           (NR-W002 — parent; emits DeprecationWarning on construction)
+└── WorkflowKilledException           (parent)
     └── WorkflowKilledInterrupt       (kill via control plane — BaseException,
                                        not Exception; per the kill contract)
 ```
@@ -118,7 +119,7 @@ if __name__ == "__main__":
 
 | Helper | Catches | For |
 |---|---|---|
-| `init_or_die(api_key=...)` | `NullRunError` raised by `init()` (typically `NR-C001`) | Startup; one-shot script entry point |
+| `init_or_die(api_key=...)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
 | `@guarded` | Any `NullRunError` raised inside the wrapped function | Standard agent loop |
 | `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) |
 
@@ -177,14 +178,14 @@ status:
 
 | Category | HTTP status | Notes |
 | --- | --- | --- |
-| `NullRunDecision` — budget exhausted (`NR-B004`) | `429` (or backend `402`) | Honour `.retry_after` from the `RateLimitError` if set; budget-exhausted `NullRunBudgetError` exposes the same field via `.details.retry_after` |
-| `NullRunDecision` — tool blocked (`NR-T001`) | `403` | User did nothing wrong, but the action is forbidden |
-| `NullRunDecision` — workflow paused (`NR-W003`) | `503` | Set `Retry-After` from `.resume_after` |
+| `NullRunDecision` — budget exhausted (`BUDGET_HARD_BLOCKED`) | `429` (or backend `402`) | Honour `.retry_after` from the `RateLimitError` if set; budget-exhausted `NullRunBudgetError` exposes the same field via `.details.retry_after` |
+| `NullRunDecision` — tool blocked (`TOOL_BLOCKED`) | `403` | User did nothing wrong, but the action is forbidden |
+| `NullRunDecision` — workflow paused | `503` | Set `Retry-After` from `.resume_after` |
 | `NullRunDecision` — consume overbudget (`CONSUME_OVERBUDGET`) | `422` | Subclass `NullRunConsumeOverbudgetError`; actual cost > reservation + ε |
-| `NullRunDecision` — chain error (`NR-CH001`) | `409` | Subclass `NullRunChainError`; chain_id mismatch / expired |
-| `NullRunDecision` — workflow inactive (`NR-W004`) | `403` | Subclass `NullRunWorkflowInactiveError`; workflow paused or killed in cross-org scenario |
-| `NullRunInfrastructureError` — rate-limit Redis (`NR-R002`) | `503` | `NullRunRateLimitRedisError`. **Fail-CLOSED** — do not retry blindly |
-| `NullRunInfrastructureError` — protocol too old (`PROTOCOL_TOO_OLD`) | `400` | `NullRunProtocolError`. Carries `.min_required_version`; SDK must be upgraded past `SDK_MIN_VERSION_FOR_V3` |
+| `NullRunDecision` — chain error (`CHAIN_ORG_MISMATCH` / `CHAIN_MAX_DURATION_EXCEEDED`) | `409` / `402` | Subclass `NullRunChainError`; chain_id mismatch / expired |
+| `NullRunDecision` — workflow inactive (`WORKFLOW_INACTIVE`) | `403` | Subclass `NullRunWorkflowInactiveError`; workflow paused or killed in cross-org scenario |
+| `NullRunInfrastructureError` — rate-limit Redis (`RATE_LIMIT_REDIS_UNAVAILABLE`) | `503` | `NullRunRateLimitRedisError`. **Fail-CLOSED** — do not retry blindly |
+| `NullRunInfrastructureError` — protocol too old (`PROTOCOL_TOO_OLD`) | `400` | `NullRunProtocolError`. Carries `.min_required_version`; SDK must be upgraded past the protocol's minimum supported version |
 | `NullRunInfrastructureError` (any other subclass) | `503` | The failure is on our side, not the user's |
 | `WorkflowKilledInterrupt` | `503` | Special ASGI middleware required — see [Use with FastAPI](../how-to/fastapi.md) |
 

@@ -136,58 +136,62 @@ rather than enumerating them.
     theft). `browser_navigate` and `browser_click` are `medium`
     because they take actions on whatever URL the agent picks.
 
-## Recommended `@sensitive` starter list
+## Recommended ToolBlock starter list
 
-Use this as a starting point, then narrow or widen based on what
-your agent actually does. Register on SDK init by calling
-`runtime.add_sensitive_tool(...)` (or the batch helper
-`runtime.register_sensitive_tools([...])`) — the public `init()`
-signature has **no** `sensitive_tool_patterns` kwarg, so the example
-below shows the supported pattern:
+The SDK does **not** ship a built-in sensitive tool list (see
+[Sensitive tools](../concepts/sensitive-tools.md) for the rationale).
+You express "this tool needs review" with a `ToolBlock` policy on
+the server, evaluated by the gate on every `/gate` call. The
+recommended starter patterns below map to that policy mechanism.
 
-```python title="sensitive_patterns.py"
-import nullrun
-from nullrun import init
+Create a ToolBlock policy in the dashboard under
+**Policies → Tool policies → Create**. The dashboard renders the
+canonical tool name for every framework integration so you can
+match against the right string:
 
-init(api_key="nr_live_...")
-
-# Pull the runtime back out and register the starter list. The
-# runtime.handle.add_sensitive_tool / register_sensitive_tools API
-# is stable; init() does not accept these patterns as a kwarg.
-runtime = nullrun.status().__class__
-# Real call — see nullrun.runtime.add_sensitive_tool:
-from nullrun.decorators import get_protected_runtime
-get_protected_runtime().register_sensitive_tools([
-    # Finance
-    "stripe.*", "charge", "send_payment", "create_invoice", "refund",
-    # Email & messaging (anything that "sends")
-    "send_email", "send_gmail", "send_message", "send_sms",
-    "slack_send.*", "office365_send.*",
-    # Destructive file ops
-    "delete_file", "file_delete", "write_file", "file_write",
-    # Destructive DB ops
-    "execute_sql", "run_sql", "db_write", "db_delete",
-    "write_query", "create_table",
-    # Destructive cloud / infra
-    "s3_delete.*", "ec2_terminate.*", "ec2_stop.*",
-    "lambda_invoke", "kubernetes_delete", "kubernetes_apply",
-    # Any code execution
-    "python_repl.*", "bash", "shell", "terminal",
-    "execute_.*", "run_command", "run_bash_command",
-    # Git / GitHub writes
-    "git_commit", "github_merge.*", "github_push.*", "github_delete.*",
-    # Memory / vector destructive
-    "memory_delete", "vector_store_delete", "delete_entities",
-])
+```json title="tool_block_policy.json"
+{
+  "policies": [
+    {
+      "name": "Sensitive starter (matches the catalog)",
+      "type": "ToolBlock",
+      "scope": "Org",
+      "config": {
+        "tool_pattern": [
+          "stripe.*", "charge", "send_payment", "create_invoice", "refund",
+          "send_email", "send_gmail", "send_message", "send_sms",
+          "slack_send.*", "office365_send.*",
+          "delete_file", "file_delete", "write_file", "file_write",
+          "execute_sql", "run_sql", "db_write", "db_delete",
+          "write_query", "create_table",
+          "s3_delete.*", "ec2_terminate.*", "ec2_stop.*",
+          "lambda_invoke", "kubernetes_delete", "kubernetes_apply",
+          "python_repl.*", "bash", "shell", "terminal",
+          "execute_.*", "run_command", "run_bash_command",
+          "git_commit", "github_merge.*", "github_push.*", "github_delete.*",
+          "memory_delete", "vector_store_delete", "delete_entities"
+        ]
+      }
+    }
+  ]
+}
 ```
 
 Patterns are glob-matched against the tool name the agent requested,
 case-insensitively — `"Stripe.Charge"` will match `"stripe.*"`.
 
+For finer-grained rules (e.g. "block refunds over $500", "require
+approval for sends to non-`@internal` addresses"), use the Phase 1
+typed `BusinessImpact` predicate (`money_amount` or
+`tool_parameters`) — see
+[Human approval → typed predicates](../concepts/human-approval.md#phase-1-typed-predicates-2-2026-07-27).
+
 ## See also
 
-- [Sensitive tools](../concepts/sensitive-tools.md) — the fail-CLOSED
-  enforcement policy behind `@sensitive`
+- [Sensitive tools](../concepts/sensitive-tools.md) — the policy-
+  driven way to express "this tool needs review" (no built-in SDK
+  list, all server-side via ToolBlock)
 - [Tool policies](../concepts/tool-policies.md) — glob patterns,
   per-tool block / allow rules
-- [SDK API](sdk-api.md) — `runtime.add_sensitive_tool(...)` etc.
+- [Human approval](../concepts/human-approval.md) — typed
+  `BusinessImpact` predicates for narrower rules

@@ -43,7 +43,7 @@ exception depends on what tripped it:
 
 | Trip cause | Exception | `BaseException`? |
 |---|---|---|
-| Budget exceeded | `NullRunBudgetError` (NR-B004) | No |
+| Budget exceeded | `NullRunBudgetError` (`BUDGET_HARD_BLOCKED`) | No |
 | Tool blocked | `NullRunBlockedException` | No |
 | Operator kill | `WorkflowKilledInterrupt` | **Yes** |
 

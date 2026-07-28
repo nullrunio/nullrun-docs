@@ -70,7 +70,7 @@ Three scenarios, depending on the workflow's [enforcement
 Spending → $49.95 of $50.00
 Next @protect call:        #2.00 projected
 gate decision:             block
-SDK raises:                 NullRunBudgetError (NR-B004)
+SDK raises:                 NullRunBudgetError (BUDGET_HARD_BLOCKED)
 @guarded:                   prints friendly message, sys.exit(1)
 ```
 
@@ -101,7 +101,7 @@ chain.
 overdraft_used: $4.95 of $5.00 cap
 Next @protect call:        #2.00 projected
 gate decision:             block
-SDK raises:                 NullRunBudgetError (NR-B004)
+SDK raises:                 NullRunBudgetError (BUDGET_HARD_BLOCKED)
 ```
 
 ## How to set the budget
