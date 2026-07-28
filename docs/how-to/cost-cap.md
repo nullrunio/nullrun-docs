@@ -15,7 +15,7 @@ HTTP API:
 
 ```bash title="set_budget.sh"
 curl -X PATCH https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/$WORKFLOW_ID \
-  -H "X-API-Key: $NULLRUN_API_KEY" \
+  -H "X-API-Key: *** \
   -H "X-Signature: $(compute_hmac)" \
   -H "X-Signature-Timestamp: $(date +%s)" \
   -H "Content-Type: application/json" \
@@ -23,7 +23,8 @@ curl -X PATCH https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/$WORKFLOW_ID 
 ```
 
 > Auth uses `X-API-Key` plus an HMAC-SHA256 signature over
-> `timestamp:api_key:body_hash` (see the [HTTP API reference](../reference/http-api.md#authentication))
+> `timestamp:api_key:body_hash` (see the
+> [HTTP API reference](../reference/http-api.md#authentication))
 > and the SDK's `NULLRUN_SECRET_KEY`. Bearer session tokens are for
 > dashboard / admin endpoints only.
 
@@ -40,27 +41,33 @@ with nullrun.workflow("my-workflow"):
     def run(): ...
 ```
 
-Cumulative cost > 500¢ → `NullRunBudgetError` (`NR-B004`, a
-`NullRunBlockedException` subclass) raised on the next gate call.
-For non-budget policy blocks (tool block, sensitive tool, loop
-detection) the generic `NullRunBlockedException` (`NR-X001`) is
-raised instead. See [Errors](../reference/errors.md) for the full
-exception hierarchy and the recommended `except` pattern.
+Cumulative cost > 500¢ → `NullRunBudgetError` raised on the next
+gate call with `error_code = "BUDGET_HARD_BLOCKED"`. For non-budget
+policy blocks (tool block, sensitive tool) the generic
+`NullRunBlockedException` is raised with `error_code = "TOOL_BLOCKED"`.
+See [Errors](../reference/errors.md) for the full catalog and the
+recommended `except` pattern.
+
+`max_budget_cents == 0` means **"no per-key budget configured"**, not
+"block everything" — the gate passes through to the org-level plan
+cap. See [Budgets → How to set the budget](../concepts/budgets.md#how-to-set-the-budget).
 
 ## Per-call
 
 The SDK does not project per-call cost on its own — the per-call
 cap is enforced by the workspace policy on the gateway. When the
-policy carries a `max_per_call_cents` limit, the v3 `/gate` call
-rejects any single call whose projected cost would exceed the cap
-*before* the model is invoked (see [Budgets](../concepts/budgets.md)
-for the v3 reservation flow). The SDK raises `NullRunBlockedException`
-with `.reason="per_call_cap"` and `.workflow_id` set.
+policy carries a per-call threshold, the v3 `/gate` call rejects
+any single call whose projected cost would exceed the cap *before*
+the model is invoked (see [Budgets → v3 wire contract](../concepts/budgets.md#v3-wire-contract)
+for the v3 reservation flow). The SDK raises
+`NullRunBlockedException` with `error_code = "BUDGET_HARD_BLOCKED"`.
 
 If you need to skip the pre-flight check in test environments
 only, set `NULLRUN_SKIP_BUDGET_CHECK=1`. The SDK emits a
-`RuntimeWarning` at import so this can't slip into production
-unnoticed.
+`RuntimeWarning` at import so this can't slip into production —
+and `BREAKER_ENV=production` refuses-to-start the gateway with
+that flag set (no escape hatch). See
+[Configuration → Server-side fail-CLOSED guards](../getting-started/configuration.md#server-side-fail-closed-guards).
 
 ## See also
 

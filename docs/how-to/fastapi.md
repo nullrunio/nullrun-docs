@@ -8,11 +8,11 @@ pip install "nullrun[fastapi]" fastapi uvicorn
 ```
 
 `nullrun.integrations.fastapi.install(app)` is a one-line setup that
-turns every NullRun exception in your Customer Support Bot / agent
-API into a clean JSON response — no per-endpoint `try/except` blocks
-required. Your route handlers stay focused on the happy path; kill
-signals, budget caps, transport outages, and tool blocks all render
-as proper HTTP responses with end-user-safe text in the body.
+turns every NullRun exception in your agent API into a clean JSON
+response — no per-endpoint `try/except` blocks required. Your route
+handlers stay focused on the happy path; kill signals, budget
+caps, transport outages, and tool blocks all render as proper HTTP
+responses with end-user-safe text in the body.
 
 ```python title="fastapi_app.py"
 from fastapi import FastAPI
@@ -27,21 +27,13 @@ install(app)
 @nullrun.protect
 def chat(message: str) -> dict:
     return {"reply": agent.run(message)}
-
-# POST /chat that triggers a budget cap returns:
-#   HTTP 429
-#   {"error_code": "NR-B004",
-#    "user_message": "You've reached the usage limit for this conversation. Please try again later.",
-#    "category": "decision",
-#    "retryable": false}
-#
-# POST /chat that triggers a NullRun backend outage returns:
-#   HTTP 503
-#   {"error_code": "NR-B001",
-#    "user_message": "I'm having trouble connecting. Please try again in a moment.",
-#    "category": "infrastructure",
-#    "retryable": true}
 ```
+
+The integration emits canonical machine-readable error codes per
+[Reference → Errors](../reference/errors.md). The full catalog lives
+in that reference page (e.g. `BUDGET_HARD_BLOCKED`,
+`RATE_LIMIT_EXCEEDED`, `TOOL_BLOCKED`, `WORKFLOW_INACTIVE`,
+`REDIS_UNAVAILABLE`).
 
 ## What `install()` registers
 
@@ -54,8 +46,8 @@ operator kills).
 
 | Exception | Mechanism | HTTP | Body |
 | --- | --- | --- | --- |
-| `NullRunDecision` (budget, tool block, rate limit, loop, pause) | `app.add_exception_handler` | `429` or `403` or `503` per `error_code` | `user_message`, `category: "decision"`, `retryable` |
-| `NullRunInfrastructureError` (transport, 5xx, auth, config) | `app.add_exception_handler` | `503` | `user_message`, `category: "infrastructure"`, `retryable` |
+| `NullRunError` (budget, tool block, rate limit, soft block, etc.) | `app.add_exception_handler` | per `error_code` | `user_message`, `category: "decision"`, `retryable` |
+| Infrastructure errors (transport, 5xx, auth, config) | `app.add_exception_handler` | `503` | `user_message`, `category: "infrastructure"`, `retryable` |
 | `WorkflowKilledInterrupt` (BaseException) | `NullRunMiddleware` (ASGI) | `503` | `user_message`, `category: "killed"` |
 
 `Retry-After` is set on the response whenever the exception carries a
@@ -64,22 +56,25 @@ attribute.
 
 ## HTTP status mapping
 
+The mapping from gate `error_code` to HTTP status:
+
 | `error_code` | Category | HTTP | Notes |
 | --- | --- | --- | --- |
-| `NR-B004` (budget exhausted) | decision | `429` | `retryable: false` — user must upgrade or wait for next cycle |
-| `NR-L001` (loop detected) | decision | `429` | User can retry after the loop window |
-| `NR-R001` (rate limit) | decision | `429` | `Retry-After` from `.retry_after` |
-| `NR-T001` (tool blocked) | decision | `403` | The action itself is forbidden |
-| `NR-X001` (generic block) | decision | `403` | Catch-all for unclassified blocks |
-| `NR-W003` (workflow paused) | decision | `503` | `Retry-After` from `.resume_after` |
-| `NR-W002` (killed) | killed | `503` | Operator-initiated |
-| `NR-B001` (network) | infrastructure | `503` | `retryable: true` |
-| `NR-B002` (backend 5xx) | infrastructure | `503` | `retryable: true` |
-| `NR-B005` (breaker open) | infrastructure | `503` | `retryable: true` |
-| `NR-A003` (auth rejected) | infrastructure | `503` | Misconfiguration on the host side |
+| `BUDGET_HARD_BLOCKED` | decision | `429` | `retryable: false` — user must upgrade or wait for next cycle |
+| `BUDGET_OVERDRAFT_EXCEEDED` | decision | `429` | Soft mode exhausted its cap |
+| `BUDGET_ANTI_DOS_RESERVED_CAP` | decision | `429` | 30% reservation anti-DoS cap |
+| `RATE_LIMIT_EXCEEDED` | decision | `429` | `Retry-After` from `.retry_after` |
+| `RATE_LIMIT_REDIS_UNAVAILABLE` | decision | `503` | Aggregate rate limit fails closed |
+| `TOOL_BLOCKED` | decision | `403` | The action itself is forbidden |
+| `WORKFLOW_INACTIVE` | decision | `403` | Workflow was soft-deleted or killed |
+| `CHAIN_MAX_DURATION_EXCEEDED` | decision | `402` | Chain exceeded `max_chain_duration_seconds` |
+| `REDIS_UNAVAILABLE` | infrastructure | `503` | `retryable: true` |
+| `BUDGET_DATA_UNAVAILABLE` | infrastructure | `503` | ApproximateBudget endpoint: all sources down |
 
-For the rationale behind the Decision vs. Infrastructure split, see
-[Errors → Decision vs. infrastructure](../reference/errors.md#decision-vs-infrastructure).
+`WorkflowKilledInterrupt` always maps to `503`. The base exception
+classes (`NullRunError`, infrastructure variants) carry the
+machine-readable `error_code` field — see the catalog in
+[Reference → Errors](../reference/errors.md).
 
 ## Locale resolution
 
@@ -115,7 +110,7 @@ branch on `category` without parsing strings:
 
 ```json
 {
-  "error_code": "NR-B004",
+  "error_code": "BUDGET_HARD_BLOCKED",
   "user_message": "You've reached the usage limit for this conversation. Please try again later.",
   "category": "decision",
   "retryable": false
@@ -124,14 +119,14 @@ branch on `category` without parsing strings:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `error_code` | `string` | Stable `NR-XXXXX` identifier from the SDK catalog |
+| `error_code` | `string` | Stable machine-readable identifier from the catalog |
 | `user_message` | `string` | End-user-safe text. Safe to render verbatim in a UI. |
 | `category` | `"decision"` \| `"infrastructure"` \| `"killed"` | Coarse classification for client-side branching |
 | `retryable` | `bool` | Mirrors the SDK exception's `.retryable` |
 
 The `retryable` field is also surfaced to ops dashboards via the
 existing `nullrun.on_error(...)` hook — see
-[SDK API → on_error](../reference/sdk-api.md#top-level).
+[SDK API → on_error](../reference/sdk-api.md).
 
 ## Per-deployment wording overrides
 
@@ -143,14 +138,14 @@ call `nullrun.set_user_message(...)` once at startup:
 import nullrun
 
 nullrun.set_user_message(
-    "NR-B004",
+    "BUDGET_HARD_BLOCKED",
     "You've used all your support credits. Upgrade to keep chatting.",
 )
 ```
 
 Overrides are per-process. See
-[SDK API → User-facing messages](../reference/sdk-api.md#user-facing-messages)
-for the full override API and the rationale for SDK-owned wording.
+[Errors → Layer 3 → Branded wording](../concepts/error-handling.md#branded-wording)
+for the full override API.
 
 ## Limitations
 
@@ -158,11 +153,12 @@ for the full override API and the rationale for SDK-owned wording.
   last-wins.** If you already register a `NullRunError` handler on
   the same app, `install()` overwrites it. Re-order your `install()`
   call to last if you need custom precedence.
-- **Kill middleware is process-global state.** The locale resolver is
-  stored at module level. If you serve multiple FastAPI apps from one
-  process with different locale policies, the last `install()` call
-  wins. Per-app middleware (`app.add_middleware(NullRunMiddleware,
-  locale_resolver=...)`) is the supported escape hatch.
+- **Kill middleware is process-global state.** The locale resolver
+  is stored at module level. If you serve multiple FastAPI apps
+  from one process with different locale policies, the last
+  `install()` call wins. Per-app middleware
+  (`app.add_middleware(NullRunMiddleware, locale_resolver=...)`) is
+  the supported escape hatch.
 - **Streaming responses kill recovery is best-effort.** If a kill
   signal fires after the response has started streaming, the
   middleware cannot rewrite the headers — it re-raises the
@@ -173,5 +169,5 @@ for the full override API and the rationale for SDK-owned wording.
 
 - [Quickstart](../getting-started/quickstart.md)
 - [SDK API](../reference/sdk-api.md)
-- [Errors → Decision vs. infrastructure](../reference/errors.md#decision-vs-infrastructure)
+- [Errors → Decision vs. infrastructure](../reference/errors.md)
 - [Control plane](../concepts/control-plane.md) — kill mechanism reference

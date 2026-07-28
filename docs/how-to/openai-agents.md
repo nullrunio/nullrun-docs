@@ -30,8 +30,11 @@ def ask(prompt: str) -> str:
 print(ask("What is the capital of France?"))
 ```
 
-`@protect` tracks every tool call the agent makes and halts the run if
-the workflow exceeds budget, loops, or hits a sensitive tool.
+`@protect` tracks every tool call the agent makes and halts the run
+if the workflow exceeds budget, hits a sensitive tool, or is
+rate-limited by the policy. Loop detection is not part of the
+shipped gate surface — it lives in `aggregate_policies()` as an enum
+arm but is not wired into a dedicated detection path.
 
 ## See also
 
