@@ -271,7 +271,7 @@ curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../api
 
 The raw `key` and `secret_key` are **never returned again** —
 losing them means rotating the key. See
-[API keys → Creating a key](../concepts/api-keys.md#creating-a-key).
+[API keys → How to create a key](../concepts/api-keys.md#how-to-create-a-key).
 
 ### Update a workflow's budget
 
@@ -319,7 +319,7 @@ curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/api-keys/key_.../rotate
 
 The old key stays valid for a brief overlap window while the SDK
 picks up the new credentials via the `key_rotated` WS push. See
-[API keys → Expiration and rotation](../concepts/api-keys.md#expiration-and-rotation)
+[API keys → How to rotate a key](../concepts/api-keys.md#how-to-rotate-a-key)
 for the full flow.
 
 ### Revoke an API key
@@ -344,7 +344,7 @@ curl "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals?status=pending" \
 ```
 
 Sorted by `risk_level` desc — the highest-stakes decisions surface
-first. See [Human approval](../concepts/human-approval.md#operator-flow).
+first. See [Human approval → How to approve or deny](../concepts/human-approval.md#how-to-approve-or-deny).
 
 ### Single-call status (current spend / budget / time-to-exhaustion)
 

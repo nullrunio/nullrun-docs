@@ -99,7 +99,7 @@ operator clicks Approve or Deny on the dashboard. The
 agent with the operator's outcome.
 
 The complete approval flow is documented in
-[Human approval](human-approval.md#approval-resume-flow-разрыв-1c).
+[Human approval](human-approval.md#approval-resume-flow-1c).
 The wire-level failure mode is **fail-CLOSED**: if the WS push is
 silent for `NULLRUN_APPROVAL_TIMEOUT_SECONDS` (default 300s), the
 SDK raises `WorkflowKilledInterrupt` and the agent dies — silent

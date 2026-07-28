@@ -51,7 +51,7 @@ two calls to the same tool by payload. If you want a narrower rule
 predicate (Разрыв 2 / 2026-07-27): the SDK extracts the argument bag
 and the gate evaluates a DNF of up to 5 named parameters against
 Equals / OneOf / NumericRange / Regex / Exists matchers. See
-[Human approval → typed predicates](human-approval.md#typed-predicates-phase-1--mvp-10).
+[Human approval → typed predicates](human-approval.md#phase-1-typed-predicates-2-2026-07-27).
 
 ## Why ToolBlock is fail-CLOSED
 

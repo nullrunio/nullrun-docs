@@ -6,9 +6,6 @@ Each policy answers one question:
 
 - "Is this call allowed, blocked, or does it need a human to approve?"
 
-The dashboard counter at the top of the page (`8 / 150`) tells you
-how many policies your org has versus your plan's cap.
-
 ## What you see in the dashboard
 
 The **Policies** page lists every policy in your org. Each row
@@ -34,9 +31,41 @@ there's no need to redeploy your agent.
 Each type has a JSON config payload — see the [Tool policies](tool-policies.md)
 page for the glob-match syntax inside `ToolBlock`.
 
-You can also pair `ToolBlock` with the **require approval** action
-instead of **block**: the call pauses until a human clicks Approve
-in the dashboard. See [Human approval](human-approval.md).
+## BudgetLimit — extra fields
+
+A `BudgetLimit` policy can carry these optional fields (Phase 1 / MVP 1.0
+audit fix, positioning §3.4.2 + §7):
+
+| Field | Default | What it does |
+|---|---|---|
+| `enforcement_mode` | `"Hard"` | `Hard` blocks on budget exceeded. `Soft` allows a bounded overdraft when an active chain is present. |
+| `max_overdraft_cents` | `0` | Maximum overdraft in cents (per-org aggregate). Both `cents` and `percent` apply — the lower cap wins. |
+| `max_overdraft_percent` | `0` | Maximum overdraft as percent of the budget. |
+| `max_chain_duration_seconds` | `3600` | Maximum duration of a chain started under this policy before the gate refuses. |
+
+The gate's `aggregate_policies()` reads these fields from every
+applicable `BudgetLimit` and uses **most-restrictive-wins**:
+`enforcement_mode` (Hard > Soft), `max_overdraft_cents` (min),
+`max_overdraft_percent` (min).
+
+## Aggregation
+
+When two policies in the merged set compete, the engine picks the
+**most restrictive** one for numeric caps and the **union** for tool
+patterns.
+
+| Field | If two policies disagree |
+|---|---|
+| `budget_cents` | The smaller number wins |
+| `max_calls_per_minute` | The smaller number wins |
+| `enforcement_mode` | `Hard` beats `Soft` |
+| `max_overdraft_cents` | The smaller number wins |
+| `max_overdraft_percent` | The smaller number wins |
+| `tool_pattern` / `blocked_tools` / `tools` | Both lists are merged (a tool blocked anywhere is blocked everywhere) |
+
+You can't accidentally un-block a tool the org blocks. There is no
+"allow" rule that overrides a "block" — the system is conservative
+on purpose.
 
 ## Org-level vs workflow-level
 
@@ -52,22 +81,6 @@ A policy has one of two scopes:
 Both scopes apply at the same time. There's no "overrides" — both
 sets of rules run together. The dashboard's **Effective policy** tab
 on a workflow page shows the merged set.
-
-## How conflicting policies are resolved
-
-When two policies in the merged set compete, the engine picks the
-**most restrictive** one for numeric caps and the **union** for tool
-patterns:
-
-| Field | If two policies disagree |
-|---|---|
-| `budget_cents` | The smaller number wins |
-| `max_calls_per_minute` | The smaller number wins |
-| `tool_pattern` / `blocked_tools` / `tools` | Both lists are merged (a tool blocked anywhere is blocked everywhere) |
-
-You can't accidentally un-block a tool the org blocks. There is no
-"allow" rule that overrides a "block" — the system is conservative
-on purpose.
 
 ## Templates
 
@@ -85,17 +98,38 @@ hand-authoring JSON.
 
 ## Plan gating
 
-Some policy features are plan-restricted:
+Some policy features are plan-restricted. Per the entitlements
+matrix in CLAUDE.md §17.7:
 
-| Resource | Available on |
+| Feature | Available on |
 |---|---|
-| Total policies per org | All plans (cap varies: Lite 5, Starter 25, Growth 150, Scale 500) |
-| `ToolBlock` policies | Growth+ |
-| Sum of `max_calls_per_minute` across org | Plan limit (call it out in plan picker) |
-| `human_approvals_enabled = true` on a workflow | Growth+ |
+| `BudgetLimit` policies | All plans |
+| `RateLimit` policies | All plans |
+| `ToolBlock` policies | Growth+ (`Feature::CustomPolicies`) |
+| Approval rules (Phase 1 typed predicates) | Growth+ (`Feature::Approvals`) |
+| `audit_log` feature | Growth+ |
 
 If you try to create a feature your plan doesn't include, the
 dashboard shows the feature greyed out with an "Upgrade" link.
+
+## Approval rules — separate from ToolBlock
+
+Approval rules are **not** a `ToolBlock` policy with an `action =
+require_approval` field. They are a separate entity in the
+`approval_rules` table with:
+
+- `tool_patterns TEXT[]` — the glob patterns
+- `per_call_threshold_cents BIGINT NULLABLE` — Phase 0 projected-cost threshold
+- `action_predicate JSONB NULLABLE` — Phase 1 typed `BusinessImpact`
+  predicate (`{"kind":"money_amount",...}` or
+  `{"kind":"tool_parameters",...}`)
+- `priority`, `expires_in_seconds`, `action_label`
+
+When a rule fires, the gate returns `decision = "require_approval"`
+and the SDK parks on `event.wait(timeout=...)` until the operator
+clicks Approve / Deny on the dashboard. See
+[Human approval](human-approval.md) for the full flow including the
+Разрыв 1c WebSocket push and the typed `action_digest` binding.
 
 ## How to create one
 
@@ -117,7 +151,7 @@ Every policy decision is recorded in **Governance → Audit log**.
 You can filter by:
 
 - Workflow
-- Decision type (`allow` / `block` / `rate_limit` / `require_approval`)
+- Decision type (`allow` / `block` / `require_approval`)
 - Time window
 - Tool name (for `ToolBlock` matches)
 
@@ -128,8 +162,8 @@ see the exact request that triggered the decision.
 ## See also
 
 - [Tool policies](tool-policies.md) — the `ToolBlock` matching rules
-- [Sensitive tools](sensitive-tools.md) — built-in defaults the
-  SDK applies regardless of policy
 - [Budgets](budgets.md) — how `BudgetLimit` interacts with the
   period rollover
+- [Human approval](human-approval.md) — typed `BusinessImpact` rules
+  that produce `require_approval`
 - [Workflows](workflow.md) — where the merged policy is applied

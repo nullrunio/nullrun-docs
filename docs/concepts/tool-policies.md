@@ -16,15 +16,13 @@ matches — useful for debugging.
 
 ## What a tool name looks like
 
-The agent calls tools by name. Each framework uses its own
-convention, but the SDK normalises them to `snake_case`:
+The agent calls tools by name. The canonical tool name format:
 
-| Framework | Tool name in the SDK | Example |
+| Type | Format | Example |
 |---|---|---|
-| LangChain | toolkit function name | `tavily_search`, `sql_db_query` |
-| OpenAI hosted | OpenAI tool id | `code_interpreter` |
-| MCP server | `mcp://server/tool` | `mcp://filesystem/read` |
-| Custom | `custom:{name}` | `custom:my_internal_api` |
+| Built-in tool | lowercase string | `bash`, `file_write`, `execute_code` |
+| MCP tool | `mcp://{server}/{tool}` | `mcp://filesystem/read` |
+| Custom tool | `custom:{name}` | `custom:my_tool` |
 
 The policy matcher is name-based. The SDK sends the tool name to the
 gate, the gate checks it against every active ToolBlock policy, and
@@ -35,26 +33,33 @@ the verdict comes back as `allow`, `block`, or `require_approval`.
 Each entry in a ToolBlock policy is one of:
 
 - **Exact name** — `"stripe.charge"` blocks only that one tool.
-- **Prefix glob** — `"send_*"` blocks anything starting with
-  `send_`.
-- **Suffix glob** — `"_test"` blocks anything ending with `_test`.
-- **Prefix-suffix glob** — `"send_*_test"` blocks anything starting
-  with `send_` and ending with `_test`.
+- **Glob** — `"send_*"` blocks anything starting with `send_`.
 - **`*` alone** — blocks everything.
 
-The matcher is case-insensitive. `stripe.charge`, `STRIPE.CHARGE`,
-and `Stripe.Charge` are the same name to the matcher.
+Each entry is capped at **4096 bytes** (`MAX_POLICY_PATTERN_BYTES`).
+The cap exists because the matcher scans every pattern on every
+gate call — a 10 MB pattern would burn CPU on each call.
 
-Only one `*` is allowed per pattern. `a*b*c` is interpreted as
-"starts with `a`, ends with `c`" — anything in between is fine.
+The matcher runs case-insensitively against the canonical tool name.
 
-## What's blocked by default
+## What a ToolBlock policy does
 
-The SDK ships a built-in **sensitive** list that always blocks,
-regardless of your policies. See [Sensitive tools](sensitive-tools.md)
-for the full list and how to extend it. Your ToolBlock policy is
-**in addition** to the built-in defaults — you can make things
-stricter, never looser.
+A ToolBlock policy **blocks** tool calls whose name matches one of
+its patterns. There is no `action = require_approval` field on a
+ToolBlock — for "I want a human to approve before this tool runs",
+create an **approval rule** instead (see
+[Human approval](human-approval.md)). The two are separate entities
+on the backend (`policies` vs `approval_rules`).
+
+ToolBlock is **always Hard**: it never lets through, regardless of
+the budget's `enforcement_mode`. Per positioning §5 + §4:
+
+> ToolBlock — 403 `TOOL_BLOCKED` — ALWAYS Hard, regardless of budget
+> enforcement_mode
+
+If the gate cannot evaluate the ToolBlock check (Redis or policy
+cache unavailable), it fails closed — `403 TOOL_BLOCKED`. The agent
+never runs an unverified sensitive operation.
 
 ## A worked example
 
@@ -68,62 +73,36 @@ You want to:
 - Require approval for any outbound communication (`send_email`)
 - Allow normal DB writes (`db.write`) but block `db.drop`
 
-Three policies:
+Two ToolBlock policies and one approval rule:
 
 ```json title="tool_block_policy.json"
 {
   "policies": [
     {
-      "name": "Block destructive ops",
+      "name": "Block destructive",
       "type": "ToolBlock",
       "scope": "Org",
       "config": {
-        "tool_pattern": ["db.drop", "stripe.*", "send_*"]
+        "tool_pattern": ["db.drop", "stripe.*"]
       }
-    },
+    }
+  ],
+  "approval_rules": [
     {
-      "name": "Require approval for outbound",
-      "type": "ToolBlock",
-      "scope": "Org",
-      "config": {
-        "tool_pattern": ["send_*"],
-        "action": "require_approval"
-      }
+      "name": "Outbound needs approval",
+      "tool_patterns": ["send_email"],
+      "action_label": "send email to customer",
+      "expires_in_seconds": 300
     }
   ]
 }
 ```
 
-When the agent calls `send_email`, the gate sees two matches: the
-"Block" pattern and the "Require approval" pattern. Most-restrictive
-wins — **block** beats **require approval**. You typically want one
-rule per tool category, not overlapping.
-
-A cleaner version:
-
-```json title="tool_block_policy_clean.json"
-{
-  "name": "Outbound needs approval",
-  "type": "ToolBlock",
-  "scope": "Org",
-  "config": {
-    "tool_pattern": ["send_*", "post_*"],
-    "action": "require_approval"
-  }
-},
-{
-  "name": "Block destructive",
-  "type": "ToolBlock",
-  "scope": "Org",
-  "config": {
-    "tool_pattern": ["db.drop", "stripe.charge", "stripe.refund"]
-  }
-}
-```
-
-Now `send_email` triggers the approval flow (a human clicks
-**Approve** in the dashboard before the call goes through). See
-[Human approval](human-approval.md) for the operator experience.
+`send_email` now triggers the approval flow (a human clicks
+**Approve** in the dashboard before the call goes through). `db.drop`
+and `stripe.charge` are blocked outright. The two policies do not
+interact — ToolBlock checks and approval-rule checks are independent
+paths in the gate.
 
 ## Validation at policy creation
 
@@ -135,14 +114,11 @@ The dashboard rejects invalid patterns at save time:
 | `400 pattern_too_long` | An entry longer than 4096 bytes | Split into multiple patterns |
 | `400 invalid_glob` | Contains control characters | Remove `\n`, `\r`, `\t` |
 
-The 4096-byte cap exists because the matcher scans every pattern
-on every gate call. A 10 MB pattern would burn CPU on each call.
-
 ## Plan gating
 
-`ToolBlock` policies require `CustomPolicies`, which is on
-**Growth+** plans. Lite and Starter can have BudgetLimit and
-RateLimit policies, but not ToolBlock.
+`ToolBlock` policies require `Feature::CustomPolicies`, which is on
+**Growth+** plans. Lite and Starter can have `BudgetLimit` and
+`RateLimit` policies, but not ToolBlock.
 
 On Lite / Starter, the dashboard shows ToolBlock policy creation
 greyed out with an "Upgrade" link.
@@ -164,8 +140,11 @@ allowed:
 
 ## See also
 
-- [Sensitive tools](sensitive-tools.md) — built-in defaults
-- [Policies](policies.md) — the dashboard view
+- [Policies](policies.md) — the dashboard view, aggregation rules,
+  and most-restrictive-wins semantics
+- [Sensitive tools](sensitive-tools.md) — the policy-driven way to
+  express "this tool needs review" (not a built-in SDK list)
 - [Tool catalog](../reference/llm-tool-catalog.md) — common tool
   names with risk ratings
-- [Human approval](human-approval.md) — the `require_approval` action
+- [Human approval](human-approval.md) — the approval-rule path,
+  distinct from ToolBlock

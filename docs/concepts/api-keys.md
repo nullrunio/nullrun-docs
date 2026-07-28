@@ -7,18 +7,18 @@ permissions it needs, and (optionally) expires on a date you choose.
 ## Where you see it in the dashboard
 
 API keys live under **Access → API keys** in the left sidebar. The
-counter at the top of the page (`13 / 350`) tells you how many keys
-your org has versus your plan's cap. The page shows every key with
-its name, workflow, last-used timestamp, and expiration date.
+counter at the top of the page (`N / <plan-cap>`) tells you how many
+keys your org has versus your plan's cap. The page shows every key
+with its name, workflow, last-used timestamp, and expiration date.
 
 ## The mental model
 
-Each workflow needs at least one API key to run. The key is what
-the SDK uses to identify itself when it talks to the gateway. The
-gateway uses the key to look up:
+Each workflow needs at least one API key to run. The key is what the
+SDK uses to identify itself when it talks to the gateway. The gateway
+uses the key to look up:
 
 - Which workflow is calling (so it can apply the right policies)
-- Which permissions the key has (gate / track / verify)
+- Which permissions the key has (`gate` / `execute` / `track` / `verify`)
 - Whether the key is still valid (not revoked, not expired)
 
 You mint keys through the dashboard, paste them into your
@@ -28,27 +28,26 @@ application's environment, and the SDK takes care of the rest.
 
 1. **Access → API keys → New API key**.
 2. Pick a workflow to bind the key to. The dropdown lists every
-   workflow in your org.
+   workflow in your org. (Each key is **workflow-scoped** since
+   Phase 139 — one key represents one agent run, not one workspace.)
 3. Pick the permissions the key needs. The defaults
-   (`gate`, `track`, `verify`) work for most agents.
+   (`gate`, `execute`, `track`) work for most agents.
 4. Optionally set an expiration date. Keys without an expiration
    are valid until revoked.
-5. Optionally mark as a **test key** if you're developing locally.
-   Test keys bypass the budget cap — useful for trying things
-   without setting up billing. Never use a test key in production.
-6. Click **Create**.
+5. Click **Create**.
 
 The dashboard shows the new key value **once** — a string starting
-with `nr_live_...`. Copy it into your secret manager
-**immediately**. The dashboard will never show it again.
+with `nr_live_...`. Copy it into your secret manager **immediately**.
+The dashboard will never show it again.
 
 ## What's in the response
 
 When you create a key, the dashboard shows:
 
 - **Key** — the public value (`nr_live_xxx...`). Use this in your SDK.
-- **Secret key** — a second string for HMAC signing. Treat it like
-  a password; never commit it to source control.
+- **HMAC secret key** — a second 32-byte hex string for request
+  signing. Treat it like a password; never commit it to source
+  control. The SDK stores it under `NULLRUN_SECRET_KEY`.
 - **Key prefix** — the first 12 characters, used in list views.
 - **Workflow** — the bound workflow (you picked this on creation).
 - **Scopes** — the permissions you granted.
@@ -63,12 +62,17 @@ The SDK needs two values from you:
 
 ```bash title="env"
 export NULLRUN_API_KEY=nr_live_xxx...
-export NULLRUN_SECRET_KEY=sk_xxx...
+export NULLRUN_SECRET_KEY=...
 ```
 
 The `api_key` is the public value the SDK sends on every request.
-The `secret_key` is used for HMAC request signing — the gateway
-verifies every request came from a holder of the secret.
+The `hmac_secret` is used for HMAC-SHA256 request signing — the
+gateway verifies every request came from a holder of the secret.
+
+In production deployments, the gateway refuses to start if
+`NULLRUN_HMAC_REQUIRED != true` (see
+[Configuration → Server-side fail-CLOSED guards](../getting-started/configuration.md#server-side-fail-closed-guards)).
+Without HMAC, every SDK request returns 401.
 
 You can pass the API key directly to `init()`:
 
@@ -86,20 +90,23 @@ export NULLRUN_API_KEY=nr_live_xxx...
 python my_agent.py
 ```
 
-For the secret key, the SDK reads `NULLRUN_SECRET_KEY` from the
-environment. You can't pass it to `init()` — it has to be an env
-var or read from your secret manager.
+The HMAC secret is read from `NULLRUN_SECRET_KEY` in the
+environment. It cannot be passed to `init()` — you set it once per
+process.
 
 ## Scopes
 
-Each key has a list of permissions — what it can do:
+Each key has a list of permissions — what it can do. Only the four
+values below are accepted; any other value is rejected at the API
+key creation step.
 
 | Scope | What it allows |
 |---|---|
-| `gate` | Call `/gate` (the policy decision endpoint). Required for any `@protect`-wrapped call. |
-| `track` | Call `/track` (the spend tracking endpoint). Required for any LLM call. |
-| `verify` | Call `/auth/verify` (the auth handshake). Almost always needed. |
-| `*` | All of the above. The default if you don't specify. |
+| `gate` | Call `/api/v1/gate` (the policy decision endpoint). Required for any `@protect`-wrapped call. |
+| `execute` | Call `/api/v1/execute` (the post-approval re-check after a `require_approval` decision). |
+| `track` | Call `/api/v1/track` (the spend tracking endpoint). Required for any LLM call. |
+| `verify` | Call `/api/v1/auth/verify` (the auth handshake on first use). Almost always needed. |
+| `*` | Wildcard — all of the above. The default if you don't specify. |
 
 For most agents, the defaults work. A telemetry-only ingestor needs
 just `track`. A read-only CI checker needs just `verify`.
@@ -107,18 +114,23 @@ just `track`. A read-only CI checker needs just `verify`.
 ## How to rotate a key
 
 Rotating means replacing the secret on an existing key without
-changing the public key value. Useful when the secret leaks but
-the key itself is still safe.
+changing the public key value. Useful when the secret leaks but the
+key itself is still safe.
 
-1. **Access → API keys → find the key → Rotate**.
-2. The dashboard generates a new secret and shows it once.
-3. Update `NULLRUN_SECRET_KEY` in your environment / secret
-manager / deployment config.
-4. Restart the agent so it picks up the new secret.
+The current rotation path is a two-phase drain:
 
-The old secret stops working immediately. Any in-flight requests
-with the old secret get a 401 — the agent's next call retries with
-the new secret and succeeds.
+1. Insert the new key with `status = 'active'`.
+2. Update the old key to `status = 'rotating'` (NOT `revoked` directly).
+3. The in-process `auth_cache` (300s TTL) is invalidated
+   synchronously on both the rotate and the revoke paths.
+4. Background drain (max 60s) waits for in-flight `/check` and
+   `/track` calls against the old key to finish.
+5. After drain (or timeout): old key → `status = 'revoked'`.
+
+The SDK receives a `key_rotated` event on the WebSocket control
+plane and re-fetches its credentials. The `/track` invocation that
+would otherwise produce a double-billing stays bound to the old key
+id, so the budget counter is not corrupted.
 
 ## How to revoke a key
 
@@ -128,12 +140,14 @@ Revoking means deleting the key. Useful when:
 - The agent is decommissioned
 - The workflow is being deleted
 
-1. **Access → API keys → find the key → Revoke**.
-2. Confirm.
+Use `POST /api/v1/orgs/{org_id}/api-keys/{key_id}/rotate` first to
+generate a replacement, then `DELETE` the old one. Direct revoke
+without rotation loses the budget attribution of any in-flight
+reservations (per the audit anchor model).
 
-The key stops working **immediately** — no grace period. If you
-need zero-downtime rotation, rotate first (which gives the agent
-time to pick up the new secret) and then revoke the old one.
+The key stops working immediately — no grace period. Both the
+in-process `auth_cache` and the cross-pod `policy_cache` are
+invalidated.
 
 ## Listing and searching
 
@@ -165,15 +179,18 @@ One per workflow, minimum. For production:
 - **One key per service** — if your agent runs in three
   containers, give each its own key. Makes it easy to rotate one
   without restarting the others.
-- **One test key** — for local development. Bypasses the budget
-  cap. Never deploys to production.
+
+Do NOT use bypass-flag keys in production. `NULLRUN_SKIP_BUDGET_CHECK=1`
+is refuse-to-start in production (see
+[Configuration → Server-side fail-CLOSED guards](../getting-started/configuration.md#server-side-fail-closed-guards))
+and is meant for SDK tests + CI fixtures only.
 
 ### "Can I share a key between two workflows?"
 
-No. Each key is bound to exactly one workflow at creation time.
-If you need the same agent logic against two workflows (for
-example, A/B testing), create two keys and switch between them
-based on your A/B routing.
+No. Each key is bound to exactly one workflow at creation time
+(Phase 139 invariant). If you need the same agent logic against two
+workflows (for example, A/B testing), create two keys and switch
+between them based on your A/B routing.
 
 ### "What happens when my key expires?"
 

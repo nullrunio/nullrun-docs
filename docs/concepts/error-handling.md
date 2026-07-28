@@ -10,11 +10,11 @@ Every error the SDK raises lands in **Governance → Decision History**
 and **Governance → Audit log**:
 
 - **Decision History** — the most recent N decisions per workflow,
-  with the reason (budget exceeded, rate limit, sensitive tool,
-  loop). Useful for "what just happened?"
-- **Audit log** — every decision ever, filterable by workflow, time
-  range, decision type, tool name. Useful for compliance review
-  and incident forensics.
+  with the reason (`BUDGET_HARD_BLOCKED`, `TOOL_BLOCKED`,
+  `RATE_LIMIT_EXCEEDED`, etc.). Useful for "what just happened?"
+- **Audit log** — every decision ever, hash-chained and
+  filterable by workflow, time range, decision type, tool name.
+  Useful for compliance review and incident forensics.
 
 The audit log is the source of truth for "did the agent call the
 right thing?". Pair it with [Traces](tracing.md) for full context.
@@ -35,10 +35,22 @@ Every NullRun exception carries four fields your code can branch on:
 
 | Field | What it is | Example |
 |---|---|---|
-| `error_code` | Stable identifier | `"NR-B004"` (budget), `"NR-R001"` (rate limit), `"NR-T001"` (tool blocked) |
-| `user_action` | What to do next | `"Wait 30s, then retry"` |
-| `retryable` | True if retry-after-backoff makes sense | `True` for rate limit, `False` for budget |
-| `docs_url` | URL to the per-code docs page | `"https://docs.nullrun.io/reference/errors#NR-R001"` |
+| `error_code` | Stable machine-readable identifier | `BUDGET_HARD_BLOCKED`, `RATE_LIMIT_EXCEEDED`, `TOOL_BLOCKED` |
+| `user_action` | What to do next | `Wait 30s, then retry` |
+| `retryable` | True if retry-after-backoff makes sense | True for rate limit, False for budget |
+| `docs_url` | URL to the per-code docs page | `https://docs.nullrun.io/reference/errors#BUDGET_HARD_BLOCKED` |
+
+Error codes are uppercase snake-case enum values per
+[Reference → Errors](../reference/errors.md). The full catalog lives
+in that reference page; the canonical set per positioning §13
+includes `BUDGET_HARD_BLOCKED`, `BUDGET_SOFT_BLOCKED`,
+`BUDGET_OVERDRAFT_EXCEEDED`, `BUDGET_ANTI_DOS_RESERVED_CAP`,
+`BUDGET_PERIOD_NOT_STARTED`, `REDIS_UNAVAILABLE`,
+`CHAIN_MAX_DURATION_EXCEEDED`, `TOOL_BLOCKED`, `CHAIN_CROSS_ORG`,
+`CHAIN_ORG_MISMATCH`, `WORKFLOW_INACTIVE`, `RATE_LIMIT_EXCEEDED`,
+`RATE_LIMIT_REDIS_UNAVAILABLE`, `BUDGET_DATA_UNAVAILABLE`,
+`API_KEY_REVOKED`, `PROTOCOL_TOO_OLD`, `PROTOCOL_TOO_NEW`,
+`CONSUME_OVERBUDGET`.
 
 You catch a specific exception type and inspect the fields:
 
@@ -50,7 +62,7 @@ def my_agent(prompt):
     try:
         return call_llm(prompt)
     except RateLimitError as exc:
-        # exc.error_code = "NR-R001"
+        # exc.error_code = "RATE_LIMIT_EXCEEDED"
         # exc.retryable = True
         # exc.retry_after = 30  (seconds)
         # exc.upgrade_url = "..."  (link to upgrade plan)
@@ -58,7 +70,6 @@ def my_agent(prompt):
         return call_llm(prompt)
 ```
 
-The full exception catalog is in [Reference → Errors](../reference/errors.md).
 For most cases you don't need to import specific types — catching
 the parent `NullRunError` and reading `error_code` is enough.
 
@@ -156,7 +167,7 @@ support credits" instead of the default wording), call
 import nullrun
 
 nullrun.set_user_message(
-    "NR-B004",
+    "BUDGET_HARD_BLOCKED",
     "You've used all your support credits. Upgrade to keep chatting.",
 )
 ```
@@ -189,6 +200,58 @@ async def chat(req: ChatRequest):
 
 The mapping from exception to HTTP status is documented in
 [Reference → Errors → Decision subclasses to HTTP](../reference/errors.md#mapping-decision-subclasses-to-http).
+
+## Audit trail
+
+Every gate decision — `allow`, `block`, `require_approval` — is
+written to `audit_events` with hash-chained `content_hash` +
+`previous_hash`. The chain is recompute-verifiable on demand via
+`GET /api/v1/orgs/{org_id}/audit-log/verify`.
+
+Row-level immutability for the runtime role is enforced by a
+`BEFORE UPDATE/DELETE` trigger `reject_audit_event_mutation`, an
+`event` trigger `prevent_audit_ddl`, and `RLS FORCE` on
+`audit_events` with `REVOKE UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER`.
+This is the integrity anchor today.
+
+Honest disclosure (positioning §5.2):
+
+- The reader trusts Postgres only — there is no external
+  attestation. An attacker with DB write access can rewrite the
+  chain because rows are mutable at the SQL level outside the
+  runtime role's triggers.
+- The `since`-cursor semantics limit the re-walked window.
+- The HTTP verify response is **unsigned** (no HMAC over the
+  verify result).
+- The live JSONL export is **unsigned** (the S3 path uses
+  presigned URLs but no body HMAC).
+
+Signed exports, signed HTTP verify responses, and externally
+anchored proofs are roadmap items.
+
+## What is NOT stored
+
+NullRun never persists:
+
+- **Prompt content** or **LLM response payloads**. The gate
+  receives only `model`, `tool`, `tools`, `estimated_tokens`,
+  optional `business_impact` typed payload, and (Разрыв 2) the
+  `tool_params` argument bag for `BusinessImpact::ToolCall` impacts.
+- **Tool arguments** beyond the typed `BusinessImpact` extraction.
+  Operators do not write JSONPath rules over tool payloads.
+- **MCP interaction payloads** — only the canonical tool name is
+  logged.
+- **Card numbers, CVC, expiry month/year** — Polar is the
+  merchant of record. `billing_subscriptions` carries only
+  `payment_method_brand` and `payment_method_last4`.
+- **OAuth refresh tokens** — the IdP owns session lifetime.
+
+`src/pii.rs::EmailHash` and `proxy/redaction.rs` redact at the
+log boundary and the trace-span boundary so plaintext email and
+raw prompts do not reach the structured log store. The
+`SecretScrubberLayer` + `ScrubWriter` (mounted at startup in
+`main.rs`) rewrite any uppercase `KEY=VALUE` pair on the line to
+`KEY=[REDACTED]` before bytes reach stdout.
 
 ## Kill signal — special case
 
