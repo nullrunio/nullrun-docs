@@ -285,7 +285,7 @@ curl -X PATCH "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc..." \
 ```
 
 `budget_cents` is the per-period cap. Period rollover is automatic —
-see [Budgets → Set a budget](../concepts/budgets.md#set-a-budget).
+see [Budgets → Set a budget](../concepts/budgets.md#how-to-set-the-budget).
 
 ### Kill / pause / resume a running workflow
 

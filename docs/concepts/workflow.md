@@ -58,9 +58,8 @@ or via the API:
 | **Paused** | You want a temporary stop | Every call raises `WorkflowPausedException` until you unpause |
 | **Killed** | You want it stopped | Every call raises `WorkflowKilledInterrupt` — `BaseException`, your loop must catch it explicitly |
 
-Both Pause and Kill reach your running SDK over a WebSocket push —
-typically within a second. The agent doesn't have to wait for the
-next call to learn.
+Both Pause and Kill reach your running SDK over a WebSocket push.
+The agent doesn't have to wait for the next call to learn.
 
 To pause a runaway agent immediately, click the workflow's
 **Pause** button (or hit `POST /workflows/{id}/pause`). The SDK
@@ -82,7 +81,7 @@ Five things you control per workflow:
   cap.
 - **Enforcement mode** — `Hard` (block on budget exceeded) or
   `Soft` (allow over-budget up to an overdraft cap, when there's an
-  active chain). See the [Soft mode](#soft-mode) section below.
+  active chain). See the [Soft mode](#chain-context-soft-mode-budget-gate) section below.
 - **Human approvals** — turn on to require operator approval for
   dangerous tools (payments, deletes, external API mutations).
   Available on Growth+ plans.
@@ -91,17 +90,23 @@ Five things you control per workflow:
 - **Trace retention** — how long to keep detailed per-call traces
   (default 30 days, plan-gated up to 90).
 
-## Soft mode
+## Chain context — soft-mode budget gate
 
 A workflow with `enforcement_mode = Soft` lets the agent run past
 its budget when it has an **active chain** — a logical grouping
 across multiple `@protect` calls inside one user request. The agent
 keeps running until it hits an **overdraft cap** (`max_overdraft_cents`
-or `max_overdraft_percent`).
+or `max_overdraft_percent`, whichever is lower).
 
-Soft mode is for long multi-step tasks where one budget decision
-across the whole task makes more sense than one per step. To use it,
-your SDK code must declare a chain:
+Soft mode requires **all three** of:
+
+1. The policy uses `enforcement_mode = Soft` (not Hard)
+2. An **active `chain_id`** exists (declared via `with chain(...)`)
+3. The projected cost stays within `max_overdraft_cents` and
+   `max_overdraft_percent`
+
+If any of the three is missing, soft mode is unavailable and the
+gate behaves as Hard.
 
 ```python
 from nullrun import chain
@@ -116,6 +121,35 @@ with chain("user-123-research-task"):
 If a chain runs past its budget and then past the overdraft cap, the
 gate blocks the next call and the workflow returns to normal Hard
 mode for that chain.
+
+### Chain lifecycle and heartbeat
+
+The chain has three lifecycle states: REGISTERED (only on explicit
+`chain_op=start`), ACTIVE, and CLOSED. Chains are auto-registered:
+the first `/gate` call with a new `chain_id` atomically creates the
+chain (`null → ACTIVE`), without a separate REGISTERED state.
+
+`chain_op="end"` closes the chain explicitly. Otherwise the chain
+dies after 5 minutes of `/gate` inactivity (idle TTL), or when the
+configured `max_chain_duration_seconds` is exceeded (default 3600).
+
+If your agent streams long responses, send a `POST /heartbeat` call
+every 30 seconds while the stream is in progress — this is
+**time-based, not chunk-based**. The capability response advertises
+a 30-second heartbeat interval, a 5-second skew allowance, and a
+300-second idle TTL. See
+[Heartbeat → how-to](../how-to/streaming.md#chain-heartbeat) for the
+SDK snippet.
+
+Chain time is read from `redis.call('TIME')` inside the Lua scripts
+(server-side), not from the backend process clock — this eliminates
+clock skew between backend nodes.
+
+### Parallel chains
+
+Multiple parallel chains on the same org share **one** `overdraft_used`
+counter. N concurrent chains do NOT multiply the overdraft cap.
+Lua checks the aggregate per-org, not per-chain.
 
 ## How the workflow ends
 

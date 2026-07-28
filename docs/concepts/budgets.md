@@ -62,7 +62,7 @@ zero and the budget applies fresh.
 ## What happens at the boundary
 
 Three scenarios, depending on the workflow's [enforcement
-mode](workflow.md#soft-mode):
+[mode](workflow.md#chain-context-soft-mode-budget-gate):
 
 ### Hard mode (default)
 
@@ -106,8 +106,13 @@ SDK raises:                 NullRunBudgetError (NR-B004)
 
 ## How to set the budget
 
-The first time you create a workflow, the budget is zero. Every call
-blocks until you raise it. To set it:
+The first time you create a workflow, no budget cap is configured.
+`max_budget_cents == 0` means **"no per-key budget configured"** —
+the gate passes through to the org-level plan cap, not "block
+everything" — so the agent runs against the org's default policy
+until you raise the per-key cap.
+
+To set the budget:
 
 1. Open the workflow.
 2. Click **Settings**.
@@ -142,9 +147,34 @@ rounding in pricing math. The `budget_cents` field in the API is
 always an integer. If you set `budget_cents: 5000`, your cap is
 exactly $50.00, no rounding errors.
 
+## v3 wire contract
+
+The v3 path splits the budget interaction into two phases:
+
+1. **`/api/v1/gate` reservation** — before execution. The gate
+   computes the projected cost from `estimated_tokens`, atomically
+   reserves it in Redis (`budget:reserved:{org}:{exec}`, TTL 300s),
+   and returns `allow` / `block` / `require_approval`.
+2. **`/api/v1/track` consumption** — after the LLM returns. The
+   SDK reports the actual cost. The reservation is consumed and the
+   period counter is incremented.
+
+The two phases share an **invariant**: `actual_cost ≤ reserved × (1 + ε_cents)`
+with `ε_cents = 1` by default. If the SDK reports a larger cost,
+`/track` returns `422 CONSUME_OVERBUDGET` (fail-CLOSED — no implicit
+re-reserve).
+
+The `/track` ingestion goes through a Postgres outbox
+(`NULLRUN_USE_OUTBOX_FOR_TRACK=1`, default ON). The Redis
+authoritative counter is updated synchronously; the Postgres
+`cost_events` row is drained asynchronously. A Postgres outage
+does not block the inference — events stay in `outbox_events`
+pending and drain when Postgres recovers (retry × 5, exponential
+backoff to 16s, then `dead_letter` with 30-day retention).
+
 ## See also
 
 - [Workflows](workflow.md) — where the budget lives
 - [Policies](policies.md) — rate limits (separate from budget)
-- [Soft mode](workflow.md#soft-mode) — letting the agent exceed the budget
+- [Soft mode](workflow.md#chain-context-soft-mode-budget-gate) — letting the agent exceed the budget
 - [Troubleshooting](../troubleshooting.md#why-is-my-call-being-rejected-with-nullrunblockedexception)

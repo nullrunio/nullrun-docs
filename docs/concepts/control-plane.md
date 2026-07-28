@@ -2,12 +2,10 @@
 
 The **control plane** is the live channel between the dashboard and
 your running agent. When you click **Pause**, **Resume**, or **Kill**
-in the dashboard, the signal reaches your SDK within a second — even
-if the agent is in the middle of an LLM call.
-
-Without the control plane, the dashboard would only tell the agent
-something happened on its next call. With it, the agent learns in
-real time.
+in the dashboard, the signal reaches your SDK through the WebSocket
+push channel. Without the control plane, the dashboard would only
+tell the agent something happened on its next `/gate` call. With it,
+the agent learns in real time.
 
 ## What the dashboard can do
 
@@ -41,8 +39,9 @@ authenticated with the same API key the SDK uses for `/gate` and
 The SDK keeps the connection alive with background heartbeats. If
 the WebSocket disconnects (network blip, firewall, gateway restart),
 the SDK falls back to polling `GET /workflows/{id}` once per second
-until the WebSocket comes back. From the agent's perspective, there's
-no difference — kill/pause still arrive within ~1 second.
+until the WebSocket comes back. From the agent's perspective, the
+control plane still applies — kill/pause still arrive on the next
+gate or yield boundary.
 
 In environments where the WebSocket is firewalled, you can force the
 SDK into polling mode by constructing the runtime directly:
@@ -88,6 +87,23 @@ For Pause, you have more flexibility. Most production agents catch
 `WorkflowPausedException`, save their state to durable storage,
 wait a few seconds, and resume. Some simply exit and let a
 supervisor process restart them when the workflow is unpaused.
+
+## Approval events
+
+The same WebSocket push channel carries the second event type the SDK
+needs: **`approval_resolved`** (Разрыв 1c / 2026-07-25). When the
+gate returns `decision = require_approval` on a `/gate` call, the
+parked SDK agent's thread waits on a `threading.Event` until the
+operator clicks Approve or Deny on the dashboard. The
+`approval_resolved` WS push wakes the event; the SDK resumes the
+agent with the operator's outcome.
+
+The complete approval flow is documented in
+[Human approval](human-approval.md#approval-resume-flow-разрыв-1c).
+The wire-level failure mode is **fail-CLOSED**: if the WS push is
+silent for `NULLRUN_APPROVAL_TIMEOUT_SECONDS` (default 300s), the
+SDK raises `WorkflowKilledInterrupt` and the agent dies — silent
+networks must not silently approve a privileged action.
 
 ## What if the SDK is disconnected?
 

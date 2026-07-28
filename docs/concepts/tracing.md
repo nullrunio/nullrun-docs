@@ -72,12 +72,16 @@ Click any span in the trace tree to see:
 - **Parent span ID** — for nesting
 - **Started at** / **Duration** — timing
 - **Status** — completed / failed / killed
-- **Inputs** — the prompt sent to the LLM (truncated if huge)
-- **Outputs** — the LLM's response (truncated)
+- **Inputs** — the prompt metadata sent to the LLM (truncated if
+  huge). **Prompt content is NOT stored** — NullRun never persists
+  raw prompt text or LLM response bodies. See
+  [Audit records → What is NOT stored](../concepts/error-handling.md#what-is-not-stored).
+- **Outputs** — the LLM's response metadata (token counts, model,
+  finish reason). **Raw completions are NOT stored.**
 - **Cost** — input + output tokens × model rate
 - **Tool calls** — every tool the span invoked (with arguments)
-- **Decision** — the gate verdict (allow / block / rate_limit) and
-  which policy triggered it
+- **Decision** — the gate verdict (`allow` / `block` /
+  `require_approval`) and which policy triggered it
 
 For blocked calls, the **Decision** row is the most useful — it
 links to the policy that matched and shows the rule.
@@ -111,12 +115,10 @@ every decision tied to it from the audit log.
 
 When you're building a new agent, traces tell you:
 
-- **Is the agent looping?** — look for repeated spans with the same
-  tool call. The dashboard highlights this with a warning indicator.
 - **Is the agent slow?** — sort by duration, see which LLM call
   takes the most time.
 - **Is the agent hitting the budget?** — look for spans with
-  `decision = block / BUDGET_EXCEEDED`.
+  `decision = block / BUDGET_HARD_BLOCKED`.
 - **Is the agent calling tools you didn't expect?** — the trace
   shows every tool call with arguments.
 
