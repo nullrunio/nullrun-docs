@@ -35,7 +35,7 @@ internally so the final `usage` block is read before the SDK emits
 `/track` — your user sees chunks in real time, but the cost is
 accurate.
 
-## Long streams: keep the chain alive
+## Long streams: keep the chain alive {#chain-heartbeat}
 
 A long stream that exceeds the chain idle TTL (300s by default) will
 be killed mid-chunk. To keep it alive, the SDK's background WS
@@ -62,7 +62,7 @@ def long_stream(prompt: str):
     # duration of the call. While inside the block, the SDK
     # automatically extends the chain TTL as long as the WebSocket
     # connection is up.
-    with chain("my-long-stream", op="start"):
+    with chain("my-long-stream", chain_op="start"):
         stream = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
@@ -72,13 +72,14 @@ def long_stream(prompt: str):
             yield chunk.choices[0].delta.content or ""
 ```
 
-!!! warning "Heartbeat is automatic — do not roll your own"
-    The SDK's WS push listener sends a heartbeat at the chain
-    cadence. Rolling your own heartbeat (e.g. every N chunks) is
-    **wrong** — a slow stream that produces 5 chunks in 5 minutes
-    will look "healthy" by chunk count but the chain will still die
-    from idle timeout. The cadence is wall-clock based (30s
-    default), not chunk-count based.
+!!! warning "Heartbeat is wall-clock based, not chunk-based"
+    The SDK sends a heartbeat every **30 seconds** (configurable per
+    policy in `[10s, 120s]`) regardless of how many chunks arrived.
+    A slow stream that produces 5 chunks in 5 minutes will look
+    "healthy" by chunk count but the chain will still die from idle
+    timeout if no heartbeat is sent. Rolling your own per-chunk
+    heartbeat is **wrong** — use the SDK's automatic cadence, or
+    call `POST /heartbeat` from a wall-clock timer.
 
 ## Soft mode for streams
 
@@ -96,7 +97,7 @@ client = OpenAI()
 
 @protect
 def stream_with_overdraft(prompt: str):
-    with chain("research-stream", op="start"):
+    with chain("research-stream", chain_op="start"):
         stream = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],

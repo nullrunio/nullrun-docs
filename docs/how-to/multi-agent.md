@@ -1,9 +1,11 @@
 # Run multiple agents (multi-key / multi-process)
 
-NullRun's `init()` binds one API key to one process. The SDK
-intentionally shuts down any prior runtime on a second `init()` call
-so you cannot accidentally keep stale daemon threads pointing at a
-different key.
+NullRun's `init()` is intended to be called **once per process**.
+The SDK's runtime is a process-scoped singleton — transport pool,
+WebSocket subscription, and event batch buffer. If you call `init()`
+twice in the same process, behaviour depends on the runtime
+implementation; the supported pattern is one `init()` per process
+and one process per workflow key.
 
 For everything beyond a single one-shot script, run **one process per
 key**. This page shows the three patterns that cover real workloads.
@@ -143,25 +145,11 @@ Pattern 2 — multiprocessing keeps workers warm in a pool.
 
 ## What doesn't work
 
-Calling `init()` more than once in the **same** process. The SDK
-detects this and shuts down the prior runtime:
-
-```python title="broken_multi_key.py"
-import nullrun
-from nullrun import init
-
-init(api_key="nr_live_aaa")   # first runtime lives here
-init(api_key="nr_live_bbb")   # ← first runtime is shut down here
-                               #   (with a WARNING log); only the second one
-                               #   survives. Subsequent /gate and /track
-                               #   calls go out under nr_live_bbb.
-```
-
-If you actually need multiple keys to coexist in one process — for
-example, a single FastAPI process that serves many customers each
-with their own NullRun key — you have to keep the keys **server-side**
-and route per-request, with one SDK subprocess or one dedicated
-process per customer. There is no in-process SDK API for that.
+Calling `init()` more than once in the same process is not a
+supported pattern. The runtime singleton is process-scoped, and
+mixing multiple keys in one process leads to interleaved events
+on the wrong workflow. The supported alternative is one process per
+key (Pattern 1) or one subprocess per request (Pattern 3).
 
 ## What if I want a single dashboard view across all my processes?
 

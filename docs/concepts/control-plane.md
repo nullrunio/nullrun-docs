@@ -56,7 +56,7 @@ This is internal-only — `polling=True` is not exposed as an env var
 because it's a deploy-time decision, not something you want to flip
 per-request.
 
-## What your agent sees
+## What your agent sees {#how-the-sdk-reacts}
 
 The two exceptions your agent code will encounter:
 
