@@ -18,7 +18,7 @@ the gate on every `/gate` call. You express "sensitive" with a
 `ToolBlock` policy that matches the tool's canonical name.
 
 Recommended starter patterns (see
-[Tool catalog](../reference/llm-tool-catalog.md#recommended-sensitive-starter-list)
+[Tool catalog → Recommended ToolBlock starter list](../reference/llm-tool-catalog.md#recommended-toolblock-starter-list)
 for the maintained list):
 
 | Category | Pattern examples |
