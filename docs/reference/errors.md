@@ -43,7 +43,7 @@ compatibility.
 
 Every public SDK exception inherits from `NullRunError` and carries
 four structured fields: `error_code` (machine-readable, e.g.
-`"BUDGET_HARD_BLOCKED"`), `user_action` (imperative hint), `retryable`
+`"NR-B004"`), `user_action` (imperative hint), `retryable`
 (bool), `docs_url`.
 
 ```
@@ -51,15 +51,15 @@ BreakerError                          (Exception)
 ├── NullRunError                      (structured base — every field above)
 │   ├── NullRunDecision               (marker — expected policy outcomes)
 │   │   ├── NullRunBlockedException   (policy / budget / loop / sensitive block)
-│   │   │   ├── NullRunBudgetError    (budget exhausted — BUDGET_HARD_BLOCKED)
-│   │   │   └── NullRunToolBlockedError (tool in block list — TOOL_BLOCKED)
+│   │   │   ├── NullRunBudgetError    (budget exhausted — NR-B004)
+│   │   │   └── NullRunToolBlockedError (tool in block list — NR-T001)
 │   │   └── WorkflowPausedException   (paused via control plane)
 │   ├── NullRunInfrastructureError    (marker — system failures)
 │   │   ├── NullRunConfigError        (misconfiguration, e.g. missing api_key)
 │   │   ├── NullRunAuthenticationError (401 / 403)
 │   │   │   └── NullRunAuthError      (401 specifically)
 │   │   └── NullRunTransportError     (transport failures)
-│   │       ├── NullRunBackendError   (5xx — retryable, REDIS_UNAVAILABLE)
+│   │       ├── NullRunBackendError   (5xx — retryable, BUDGET_REDIS_UNAVAILABLE)
 │   │       └── RateLimitError        (429 — carries .retry_after, .upgrade_url)
 └── BreakerTransportError
     └── InsecureTransportError        (HTTP used where HTTPS required)
@@ -155,14 +155,14 @@ the field directly instead of hard-coding.
 
 | Category | HTTP status | Notes |
 | --- | --- | --- |
-| `NullRunDecision` — budget exhausted (`BUDGET_HARD_BLOCKED`) | `429` (or backend `402`) | Honour `.retry_after` from the `RateLimitError` if set; budget-exhausted `NullRunBudgetError` exposes the same field via `.details.retry_after` |
+| `NullRunDecision` — budget exhausted (`NR-B004`) | `402` | Honour `.retry_after` from the `RateLimitError` if set; budget-exhausted `NullRunBudgetError` exposes the same field via `.details.retry_after` |
 | `NullRunDecision` — tool blocked (`TOOL_BLOCKED`) | `403` | User did nothing wrong, but the action is forbidden |
 | `NullRunDecision` — workflow paused | `503` | Set `Retry-After` from `.resume_after` |
 | `NullRunInfrastructureError` — rate-limit Redis (`RATE_LIMIT_REDIS_UNAVAILABLE`) | `503` | `NullRunRateLimitRedisError`. Fails closed — do not retry blindly |
 | `WorkflowKilledInterrupt` | `503` | Special ASGI middleware required — see [Use with FastAPI](../how-to/fastapi.md) |
 
 Other decision categories (`CONSUME_OVERBUDGET` → 422,
-`CHAIN_ORG_MISMATCH` / `CHAIN_MAX_DURATION_EXCEEDED` → 409 / 402,
+`CHAIN_ORG_MISMATCH` → 403, `CHAIN_MAX_DURATION_EXCEEDED` → 402,
 `WORKFLOW_INACTIVE` → 403, `PROTOCOL_TOO_OLD` → 400, generic
 `NullRunInfrastructureError` → 503) follow the same pattern: read
 `exc.status_code` from the wire and map it directly.

@@ -45,7 +45,7 @@ Error codes are uppercase snake-case enum values per
 in that reference page; the standard set includes
 `BUDGET_HARD_BLOCKED`, `BUDGET_SOFT_BLOCKED`,
 `BUDGET_OVERDRAFT_EXCEEDED`, `BUDGET_ANTI_DOS_RESERVED_CAP`,
-`BUDGET_PERIOD_NOT_STARTED`, `REDIS_UNAVAILABLE`,
+`BUDGET_PERIOD_NOT_STARTED`, `BUDGET_REDIS_UNAVAILABLE`,
 `CHAIN_MAX_DURATION_EXCEEDED`, `TOOL_BLOCKED`, `CHAIN_CROSS_ORG`,
 `CHAIN_ORG_MISMATCH`, `WORKFLOW_INACTIVE`, `RATE_LIMIT_EXCEEDED`,
 `RATE_LIMIT_REDIS_UNAVAILABLE`, `BUDGET_DATA_UNAVAILABLE`,
@@ -62,7 +62,7 @@ def my_agent(prompt):
     try:
         return call_llm(prompt)
     except RateLimitError as exc:
-        # exc.error_code = "RATE_LIMIT_EXCEEDED"
+        # exc.error_code = "NR-R001"
         # exc.retryable = True
         # exc.retry_after = 30  (seconds)
         # exc.upgrade_url = "..."  (link to upgrade plan)
@@ -167,7 +167,7 @@ support credits" instead of the default wording), call
 import nullrun
 
 nullrun.set_user_message(
-    "BUDGET_HARD_BLOCKED",
+    "NR-B004",
     "You've used all your support credits. Upgrade to keep chatting.",
 )
 ```
