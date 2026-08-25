@@ -67,7 +67,7 @@ gate.
 | Failure | What it means | Fix |
 |---|---|---|
 | `NullRunBudgetError` on every request | Your pre-prod budget is too tight for synthetic traffic | Raise `budget_cents` on the pre-prod workflow, or use a higher-cap test key |
-| `429 RATE_LIMIT_EXCEEDED` | `max_calls_per_minute` is too low for the synthetic load | Raise the rate limit on the pre-prod workflow |
+| `429 NR-R001` | `max_calls_per_minute` is too low for the synthetic load | Raise the rate limit on the pre-prod workflow |
 | Connection refused / DNS error | `NULLRUN_API_URL` is wrong or the gateway is down in this environment | Verify the URL; add a `/health/live` check before the load step |
 | HMAC 401 | `NULLRUN_SECRET_KEY` is not set in CI | Add the secret to the repo / org / environment secrets store |
 
@@ -77,7 +77,7 @@ gate.
   workflow that needs `$50/day` to run, the pre-prod load surfaces
   it before prod.
 - **Tool block too broad** — a `ToolBlock` pattern that
-  accidentally matches every tool name surfaces as `TOOL_BLOCKED`
+  accidentally matches every tool name surfaces as `NR-T001`
   on every call.
 - **Workflow not bound to the right key** — if the pre-prod key was
   rotated but the workflow binding is stale, the load fails with a

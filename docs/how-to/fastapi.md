@@ -50,15 +50,13 @@ attribute.
 
 | `error_code` | Category | HTTP | Notes |
 | --- | --- | --- | --- |
-| `BUDGET_HARD_BLOCKED` | decision | `429` | `retryable: false` — user must upgrade or wait for next cycle |
-| `BUDGET_OVERDRAFT_EXCEEDED` | decision | `429` | Soft mode exhausted its cap |
-| `BUDGET_ANTI_DOS_RESERVED_CAP` | decision | `429` | 30% reservation anti-DoS cap |
-| `RATE_LIMIT_EXCEEDED` | decision | `429` | `Retry-After` from `.retry_after` |
+| `NR-B004` | decision | `402` | `retryable: false` — user must upgrade or wait for next cycle. Covers `BUDGET_HARD_BLOCKED`, `BUDGET_SOFT_BLOCKED`, `BUDGET_OVERDRAFT_EXCEEDED`, `BUDGET_ANTI_DOS_RESERVED_CAP`, `BUDGET_PERIOD_NOT_STARTED` |
+| `NR-R001` | decision | `429` | `Retry-After` from `.retry_after` |
 | `RATE_LIMIT_REDIS_UNAVAILABLE` | decision | `503` | Aggregate rate limit fails closed |
-| `TOOL_BLOCKED` | decision | `403` | The action itself is forbidden |
+| `NR-T001` | decision | `403` | The action itself is forbidden |
 | `WORKFLOW_INACTIVE` | decision | `403` | Workflow was soft-deleted or killed |
 | `CHAIN_MAX_DURATION_EXCEEDED` | decision | `402` | Chain exceeded `max_chain_duration_seconds` |
-| `REDIS_UNAVAILABLE` | infrastructure | `503` | `retryable: true` |
+| `BUDGET_REDIS_UNAVAILABLE` | infrastructure | `402` | `retryable: true` — money math fail-CLOSED |
 | `BUDGET_DATA_UNAVAILABLE` | infrastructure | `503` | ApproximateBudget endpoint: all sources down |
 
 `WorkflowKilledInterrupt` always maps to `503`. See
@@ -86,7 +84,7 @@ A buggy resolver degrades silently to `"en"`.
 
 ```json
 {
-  "error_code": "BUDGET_HARD_BLOCKED",
+  "error_code": "NR-B004",
   "user_message": "You've reached the usage limit for this conversation. Please try again later.",
   "category": "decision",
   "retryable": false
@@ -107,7 +105,7 @@ To brand the wording for a single deployment, call
 
 ```python
 nullrun.set_user_message(
-    "BUDGET_HARD_BLOCKED",
+    "NR-B004",
     "You've used all your support credits. Upgrade to keep chatting.",
 )
 ```

@@ -42,9 +42,10 @@ with nullrun.workflow("my-workflow"):
 ```
 
 Cumulative cost > 500¢ → `NullRunBudgetError` raised on the next
-gate call with `error_code = "BUDGET_HARD_BLOCKED"`. For non-budget
-policy blocks (tool block, sensitive tool) the generic
-`NullRunBlockedException` is raised with `error_code = "TOOL_BLOCKED"`.
+gate call with `error_code = "NR-B004"` (wire `BUDGET_HARD_BLOCKED`).
+For non-budget policy blocks (tool block, sensitive tool) the generic
+`NullRunBlockedException` is raised with
+`error_code = "NR-T001"` (wire `TOOL_BLOCKED`).
 See [Errors](../reference/errors.md) for the full catalog and the
 recommended `except` pattern.
 
@@ -59,7 +60,7 @@ cap is enforced by the workspace policy on the gateway. When the
 policy carries a per-call threshold, the `/gate` call rejects any
 single call whose projected cost would exceed the cap *before* the
 model is invoked. The SDK raises `NullRunBlockedException` with
-`error_code = "BUDGET_HARD_BLOCKED"`.
+`error_code = "NR-B004"` (wire `BUDGET_HARD_BLOCKED`).
 
 If you need to skip the pre-flight check in test environments
 only, set `NULLRUN_SKIP_BUDGET_CHECK=1`. The SDK emits a
