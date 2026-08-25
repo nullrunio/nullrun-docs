@@ -60,6 +60,19 @@ fail-CLOSED guard refuses to start the gateway in production
 opens both the geo-IP bypass and the sanctions bypass simultaneously
 because the two are two sides of the same compliance control.
 
+### Server-side fail-CLOSED guards
+
+When any of the following are set, the gateway refuses to start unless
+the corresponding guard is enabled:
+
+- `NULLRUN_HMAC_REQUIRED=true` — required in production
+- `NULLRUN_GEOBLOCK_DISABLED=false` (default) — IP geo-block enforced
+- `NULLRUN_SANCTIONS_SCREENING_DISABLED=false` (default) — OFAC name screening
+- `NULLRUN_COST_ROUNDING=Nearest` (default) — `up` rejected in production
+
+Without these guards in production, the gateway either refuses to start
+or silently fail-OPENs on the corresponding enforcement path.
+
 ### Server-side runtime flags
 
 Runtime switches, not safety controls. Defaults are tuned for

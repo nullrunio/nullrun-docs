@@ -137,7 +137,7 @@ but no longer appear in `dir(nullrun)`.
 
 All raised from `nullrun.breaker.exceptions`. Every public SDK
 exception inherits from `NullRunError` and carries four structured
-fields: `error_code` (machine-readable, e.g. `"BUDGET_HARD_BLOCKED"`),
+fields: `error_code` (machine-readable, e.g. `"NR-B004"`),
 `user_action` (imperative hint), `retryable` (bool), `docs_url`. See
 [Errors](errors.md#sdk-exception-hierarchy-python) for the full
 hierarchy diagram.
@@ -149,16 +149,16 @@ hierarchy diagram.
 | `NullRunAuthenticationError` | Missing / invalid `X-API-Key`, bad HMAC | 401 / 403. Carries `.message` for backward compat. |
 | `NullRunAuthError` | 401 specifically (key rejected) | Subclass of `NullRunAuthenticationError`. Carries `.status_code` (the wire HTTP status). |
 | `NullRunTransportError` | Gateway unreachable | Carries `.source` (e.g. `NETWORK_ERROR` / `GATEWAY_ERROR` / `BREAKER_OPEN` / `AUTH_ERROR`) and `.endpoint`. Retryable. |
-| `NullRunBackendError` | 5xx from the gateway | Subclass of `NullRunTransportError`. Code `REDIS_UNAVAILABLE` family. Retryable. |
-| `RateLimitError` | HTTP 429 | Subclass of `NullRunTransportError`. Carries `.retry_after`, `.upgrade_url`, `.body`. Code `RATE_LIMIT_EXCEEDED`. Retryable. |
-| `NullRunRateLimitRedisError` | 503 — Redis reservation failed | Subclass of `NullRunInfrastructureError`. Code `RATE_LIMIT_REDIS_UNAVAILABLE`. Fails closed. |
+| `NullRunBackendError` | 5xx from the gateway | Subclass of `NullRunTransportError`. Code `NR-B002` family (wire: `BUDGET_REDIS_UNAVAILABLE`). Retryable. |
+| `RateLimitError` | HTTP 429 | Subclass of `NullRunTransportError`. Carries `.retry_after`, `.upgrade_url`, `.body`. Code `NR-R001`. Retryable. |
+| `NullRunRateLimitRedisError` | 503 — Redis reservation failed | Subclass of `NullRunInfrastructureError`. Code `NR-R002` (wire: `RATE_LIMIT_REDIS_UNAVAILABLE`). Fails closed. |
 | `NullRunProtocolError` | Backend returned 400 `PROTOCOL_TOO_OLD` | Carries `.min_required_version`. Upgrade SDK past the min required protocol version. |
 | `NullRunBlockedException` | Generic policy block | Inspect `.workflow_id`, `.reason`, `.action`, `.tool_name`, `.details`. Carries `.status_code` (the wire HTTP status, e.g. 402 budget, 403 cross-org, 422 `CONSUME_OVERBUDGET`, 429 cap-reached). **No** `.message` — use `str(exc)`. |
-| `NullRunBudgetError` | Budget exhausted | Subclass of `NullRunBlockedException`. Code `BUDGET_HARD_BLOCKED`. |
-| `NullRunToolBlockedError` | Tool in block list | Subclass of `NullRunBlockedException`. Code `TOOL_BLOCKED`. Carries `.tool_name`. |
-| `NullRunChainError` | Chain-mode gate check failed | Subclass of `NullRunDecision`. Code `CHAIN_ORG_MISMATCH` or `CHAIN_MAX_DURATION_EXCEEDED`. |
+| `NullRunBudgetError` | Budget exhausted | Subclass of `NullRunBlockedException`. Code `NR-B004`. |
+| `NullRunToolBlockedError` | Tool in block list | Subclass of `NullRunBlockedException`. Code `NR-T001`. Carries `.tool_name`. |
+| `NullRunChainError` | Chain-mode gate check failed | Subclass of `NullRunDecision`. Code `NR-CH001` (wire: `CHAIN_ORG_MISMATCH` or `CHAIN_CROSS_ORG` or `CHAIN_MAX_DURATION_EXCEEDED`). |
 | `NullRunConsumeOverbudgetError` | 422 — actual cost > reservation + ε | Subclass of `NullRunDecision`. Surfaces over-budget commit events. |
-| `NullRunWorkflowInactiveError` | 403 — workflow paused / killed cross-org | Subclass of `NullRunDecision`. Code `WORKFLOW_INACTIVE`. |
+| `NullRunWorkflowInactiveError` | 403 — workflow paused / killed cross-org | Subclass of `NullRunDecision`. Code `NR-W004`. |
 | `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
 | `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
 | `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunError`. Carries `.workflow_id`, `.reason`, `.resume_after`. |

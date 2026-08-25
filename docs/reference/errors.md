@@ -156,9 +156,9 @@ the field directly instead of hard-coding.
 | Category | HTTP status | Notes |
 | --- | --- | --- |
 | `NullRunDecision` — budget exhausted (`NR-B004`) | `402` | Honour `.retry_after` from the `RateLimitError` if set; budget-exhausted `NullRunBudgetError` exposes the same field via `.details.retry_after` |
-| `NullRunDecision` — tool blocked (`TOOL_BLOCKED`) | `403` | User did nothing wrong, but the action is forbidden |
+| `NullRunDecision` — tool blocked (`NR-T001`) | `403` | User did nothing wrong, but the action is forbidden |
 | `NullRunDecision` — workflow paused | `503` | Set `Retry-After` from `.resume_after` |
-| `NullRunInfrastructureError` — rate-limit Redis (`RATE_LIMIT_REDIS_UNAVAILABLE`) | `503` | `NullRunRateLimitRedisError`. Fails closed — do not retry blindly |
+| `NullRunInfrastructureError` — rate-limit Redis (`NR-R002`) | `503` | `NullRunRateLimitRedisError`. Fails closed — do not retry blindly |
 | `WorkflowKilledInterrupt` | `503` | Special ASGI middleware required — see [Use with FastAPI](../how-to/fastapi.md) |
 
 Other decision categories (`CONSUME_OVERBUDGET` → 422,

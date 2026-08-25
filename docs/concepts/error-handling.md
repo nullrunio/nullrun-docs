@@ -35,22 +35,32 @@ Every NullRun exception carries four fields your code can branch on:
 
 | Field | What it is | Example |
 |---|---|---|
-| `error_code` | Stable machine-readable identifier | `BUDGET_HARD_BLOCKED`, `RATE_LIMIT_EXCEEDED`, `TOOL_BLOCKED` |
+| `error_code` | Stable machine-readable identifier | `NR-B004`, `NR-R001`, `NR-T001` |
 | `user_action` | What to do next | `Wait 30s, then retry` |
 | `retryable` | True if retry-after-backoff makes sense | True for rate limit, False for budget |
-| `docs_url` | URL to the per-code docs page | `https://docs.nullrun.io/reference/errors#BUDGET_HARD_BLOCKED` |
+| `docs_url` | URL to the per-code docs page | `https://docs.nullrun.io/reference/errors#sdk-exception-hierarchy-python` |
 
-Error codes are uppercase snake-case enum values per
-[Reference → Errors](../reference/errors.md). The full catalog lives
-in that reference page; the standard set includes
-`BUDGET_HARD_BLOCKED`, `BUDGET_SOFT_BLOCKED`,
-`BUDGET_OVERDRAFT_EXCEEDED`, `BUDGET_ANTI_DOS_RESERVED_CAP`,
-`BUDGET_PERIOD_NOT_STARTED`, `BUDGET_REDIS_UNAVAILABLE`,
-`CHAIN_MAX_DURATION_EXCEEDED`, `TOOL_BLOCKED`, `CHAIN_CROSS_ORG`,
-`CHAIN_ORG_MISMATCH`, `WORKFLOW_INACTIVE`, `RATE_LIMIT_EXCEEDED`,
-`RATE_LIMIT_REDIS_UNAVAILABLE`, `BUDGET_DATA_UNAVAILABLE`,
-`API_KEY_REVOKED`, `PROTOCOL_TOO_OLD`, `PROTOCOL_TOO_NEW`,
-`CONSUME_OVERBUDGET`.
+The full catalog lives in that reference page; the standard set is:
+
+- `NR-B004` — workflow budget exhausted (wire: `BUDGET_HARD_BLOCKED`,
+  `BUDGET_SOFT_BLOCKED`, `BUDGET_OVERDRAFT_EXCEEDED`,
+  `BUDGET_ANTI_DOS_RESERVED_CAP`, `BUDGET_PERIOD_NOT_STARTED`,
+  `BUDGET_DATA_UNAVAILABLE`)
+- `NR-B002` — gateway 5xx (wire: `BUDGET_REDIS_UNAVAILABLE`)
+- `NR-R001` — per-workflow rate limit (wire: `RATE_LIMIT_EXCEEDED`)
+- `NR-R002` — rate-limit Redis unavailable (wire: `RATE_LIMIT_REDIS_UNAVAILABLE`)
+- `NR-T001` — tool block list hit (wire: `TOOL_BLOCKED`)
+- `NR-CH001` — chain context invalid (wire: `CHAIN_ORG_MISMATCH`,
+  `CHAIN_CROSS_ORG`, `CHAIN_MAX_DURATION_EXCEEDED`)
+- `NR-W004` — workflow soft-deleted or killed (wire: `WORKFLOW_INACTIVE`)
+- `NR-A003` — API key rejected (wire: `API_KEY_REVOKED`)
+- `NR-P001` — wire-protocol version mismatch (wire: `PROTOCOL_TOO_OLD`,
+  `PROTOCOL_TOO_NEW`)
+- `NR-O001` — actual cost > reservation + ε (wire: `CONSUME_OVERBUDGET`,
+  HTTP 422)
+
+The wire code is still available via the response body or `.status_code`
+when you need it for metrics / dashboards.
 
 You catch a specific exception type and inspect the fields:
 
