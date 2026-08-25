@@ -34,9 +34,6 @@ compatibility.
 | `not_implemented` | 501 | Feature not yet implemented | `NullRunError` |
 | (also `internal_error`) | 503 | `ApiError::ServiceUnavailable` — transient downstream failure on an enforcement path. Carries `retry_after`. | `NullRunBackendError` (retryable) |
 
-> **Phase 0.5:** `trial_limit_exceeded` was removed — NullRun has no
-> trial state. Lite plan is permanently free with hard limits.
->
 > **Plan limit slugs (api_keys / seats / policies / executions)** all
 > surface as `plan_limit_exceeded` with `details.resource` set to the
 > dimension name (`"api_keys"`, `"seats"`, `"workflows"`, …). There
@@ -86,36 +83,18 @@ below for the recommended handling pattern.
 tool-scoped), and `.details` (free-form). There is **no** `.message`
 attribute — use `str(exc)`.
 
-Removed in SDK 0.4.0: `CostLimitExceeded`, `ApprovalRequired`,
-`BreakerTimeout`, `LoopDetectedException`, `RetryStormException`,
+Removed: `CostLimitExceeded`, `ApprovalRequired`, `BreakerTimeout`,
+`LoopDetectedException`, `RetryStormException`,
 `RateLimitExceededException` (no remaining callers).
 
-Catch `WorkflowKilledInterrupt` **explicitly and before** any `except
-Exception` — it does not subclass `Exception`.
+`WorkflowKilledInterrupt` does not subclass `Exception` — catch it
+explicitly and before any `except Exception`.
 
 ## The default path: zero lines of error handling
 
 For the common "run an agent and print a friendly message on failure"
 case, the three public helpers do the work — no `try/except NullRunError`
 required.
-
-```python title="minimal_boilerplate.py"
-import nullrun
-from nullrun import init_or_die, guarded, protect, shutdown
-
-init_or_die(api_key="nr_live_...")        # exits cleanly if api_key missing
-
-@guarded                                 # catches NullRunError,
-@protect                                 # prints catalog wording,
-def my_agent(prompt):                    # sys.exit(1)
-    return call_llm(prompt)
-
-if __name__ == "__main__":
-    try:
-        print(my_agent("hello"))
-    finally:
-        shutdown()
-```
 
 | Helper | Catches | For |
 |---|---|---|
@@ -164,30 +143,29 @@ except NullRunInfrastructureError as e:
     # generic message for every infrastructure error code.
     sentry.capture_exception(e)
     return nullrun.format_user_message(e)
-except WorkflowKilledInterrupt:
-    # Operator kill (BaseException, not Exception) — re-raise
-    # unless you are the top of the agent loop.
-    raise
 ```
 
 ### Mapping decision subclasses to HTTP
 
 When you build a server-framework integration (FastAPI, aiohttp,
 Telegram bot, Slack handler), map each category to the right HTTP
-status:
+status. The headline cases are below; every `NullRunDecision`
+subclass carries `.status_code` so framework integrations can map
+the field directly instead of hard-coding.
 
 | Category | HTTP status | Notes |
 | --- | --- | --- |
 | `NullRunDecision` — budget exhausted (`BUDGET_HARD_BLOCKED`) | `429` (or backend `402`) | Honour `.retry_after` from the `RateLimitError` if set; budget-exhausted `NullRunBudgetError` exposes the same field via `.details.retry_after` |
 | `NullRunDecision` — tool blocked (`TOOL_BLOCKED`) | `403` | User did nothing wrong, but the action is forbidden |
 | `NullRunDecision` — workflow paused | `503` | Set `Retry-After` from `.resume_after` |
-| `NullRunDecision` — consume overbudget (`CONSUME_OVERBUDGET`) | `422` | Subclass `NullRunConsumeOverbudgetError`; actual cost > reservation + ε |
-| `NullRunDecision` — chain error (`CHAIN_ORG_MISMATCH` / `CHAIN_MAX_DURATION_EXCEEDED`) | `409` / `402` | Subclass `NullRunChainError`; chain_id mismatch / expired |
-| `NullRunDecision` — workflow inactive (`WORKFLOW_INACTIVE`) | `403` | Subclass `NullRunWorkflowInactiveError`; workflow paused or killed in cross-org scenario |
-| `NullRunInfrastructureError` — rate-limit Redis (`RATE_LIMIT_REDIS_UNAVAILABLE`) | `503` | `NullRunRateLimitRedisError`. **Fail-CLOSED** — do not retry blindly |
-| `NullRunInfrastructureError` — protocol too old (`PROTOCOL_TOO_OLD`) | `400` | `NullRunProtocolError`. Carries `.min_required_version`; SDK must be upgraded past the protocol's minimum supported version |
-| `NullRunInfrastructureError` (any other subclass) | `503` | The failure is on our side, not the user's |
+| `NullRunInfrastructureError` — rate-limit Redis (`RATE_LIMIT_REDIS_UNAVAILABLE`) | `503` | `NullRunRateLimitRedisError`. Fails closed — do not retry blindly |
 | `WorkflowKilledInterrupt` | `503` | Special ASGI middleware required — see [Use with FastAPI](../how-to/fastapi.md) |
+
+Other decision categories (`CONSUME_OVERBUDGET` → 422,
+`CHAIN_ORG_MISMATCH` / `CHAIN_MAX_DURATION_EXCEEDED` → 409 / 402,
+`WORKFLOW_INACTIVE` → 403, `PROTOCOL_TOO_OLD` → 400, generic
+`NullRunInfrastructureError` → 503) follow the same pattern: read
+`exc.status_code` from the wire and map it directly.
 
 Every `NullRunDecision` subclass carries `.status_code` (the wire
 HTTP status the backend returned). The FastAPI integration maps
@@ -215,8 +193,7 @@ for a one-line setup.
 
 When the gateway is unreachable, the SDK raises
 `NullRunTransportError` with `source` set to one of `NETWORK_ERROR`,
-`GATEWAY_ERROR`, `BREAKER_OPEN`, `AUTH_ERROR`. See ADR-008 for the
-full rationale.
+`GATEWAY_ERROR`, `BREAKER_OPEN`, `AUTH_ERROR`.
 
 ## See also
 

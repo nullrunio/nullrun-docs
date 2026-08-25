@@ -14,7 +14,7 @@ The catalog covers three sources that NullRun sees in production:
   postgres, sqlite, redis, puppeteer, memory, time)
 
 Names are normalised to `snake_case` — that's the convention
-LangChain's docs recommend and every provider we tested parses.
+LangChain's docs recommend.
 
 Risk rating:
 
@@ -181,10 +181,9 @@ Patterns are glob-matched against the tool name the agent requested,
 case-insensitively — `"Stripe.Charge"` will match `"stripe.*"`.
 
 For finer-grained rules (e.g. "block refunds over $500", "require
-approval for sends to non-`@internal` addresses"), use the Phase 1
-typed `BusinessImpact` predicate (`money_amount` or
-`tool_parameters`) — see
-[Human approval → typed predicates](../concepts/human-approval.md#phase-1-typed-predicates-2-2026-07-27).
+approval for sends to non-`@internal` addresses"), use the typed
+`BusinessImpact` predicate (`money_amount` or `tool_parameters`) — see
+[Human approval → typed predicates](../concepts/human-approval.md#typed-predicates).
 
 ## See also
 

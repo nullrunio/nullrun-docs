@@ -56,21 +56,19 @@ documents every field.
 | Method | Path | Called by |
 | --- | --- | --- |
 | `POST` | `/api/v1/auth/verify` | `init()` — fetches the HMAC `secret_key` for the API key |
-| `GET` | `/api/v1/capabilities` | `init()` — protocol negotiation (probes v3 contract support) |
+| `GET` | `/api/v1/capabilities` | `init()` — protocol negotiation |
 | `POST` | `/api/v1/gate` | Pre-flight + policy evaluation + budget reservation (called from `@protect` entry) |
-| `POST` | `/api/v1/track` | v3 single-event commit (`reservation_id` + `idempotency_key`) |
-| `POST` | `/api/v1/track/batch` | Legacy batched events (≤ 100 per batch); SDK 0.12.0+ falls back to this only when `NULLRUN_V3_TRACK_DISABLE=1` |
+| `POST` | `/api/v1/track` | Single-event commit (`reservation_id` + `idempotency_key`) |
+| `POST` | `/api/v1/track/batch` | Batched events (≤ 100 per batch) — opt-in fallback when single-event is disabled |
 | `GET` | `/api/v1/orgs/{org_id}/policies` | Policy fetch (called from SDK on first `@protect` and on `policy_invalidated` WS push) |
 | `GET` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Workflow lookup (called from SDK on first gate per workflow) |
 | `GET` | `/api/v1/orgs/{org_id}/status` | Control-plane poll fallback (only used when WS is down) |
-| `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat (v3 contract; replaces the legacy chunk-count v2 path) |
+| `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat |
 
-!!! info "Legacy endpoints"
-    `/api/v1/check` was removed for new SDK traffic in 0.13.1 and
-    now returns `410 Gone` with `replacement: /api/v1/gate`. New
-    integrations should target `/gate` directly. `/api/v1/execute`
-    is still registered on the gateway for legacy callers but the
-    SDK no longer emits traffic against it.
+| Method | Path | Status |
+| --- | --- | --- |
+| `POST` | `/api/v1/check` | Deprecated — returns `410 Gone` with `replacement: /api/v1/gate`. Use `/gate` for new integrations. |
+| `POST` | `/api/v1/execute` | Deprecated — registered for legacy callers; the SDK does not emit against it. |
 
 ## Auth
 
@@ -166,29 +164,24 @@ Health endpoints are registered on the gateway's top-level router
 
 The capabilities endpoint reports the wire-contract version the
 gateway supports. The SDK calls this on `init()` to negotiate
-the protocol version (v1/v2 vs. v3) and to surface a startup
-warning if the SDK is older than what the gateway requires.
+the protocol version and to surface a startup warning if the SDK
+is older than what the gateway requires.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/v1/capabilities` | Report `min_protocol_version` / `max_protocol_version`, `sdk_min_version`, `lua_script_version`, server version + build timestamp, and the `capabilities.*` feature flags (`server_minted_execution_id`, `per_execution_reservations`, `heartbeat_time_based`, `idempotency_keys`, `rate_limit_fail_scope`, etc.) |
+| `GET` | `/api/v1/capabilities` | Report `min_protocol_version` / `max_protocol_version`, `sdk_min_version`, server version + build timestamp, and the `capabilities.*` feature flags (`server_minted_execution_id`, `per_execution_reservations`, `heartbeat_time_based`, `idempotency_keys`, `rate_limit_fail_scope`, etc.) |
 
-The v3 readiness gate (`is_v3_ready()` on the SDK side) requires
-all three of `server_minted_execution_id`, `per_execution_reservations`,
-and `heartbeat_time_based` to be `true`. If the backend reports
-v3-ready but the SDK is older than `0.12.0` (the canonical
-`SDK_MIN_VERSION_FOR_V3`), `init()` emits a warning so the
-operator sees the gap before the first `/gate` call fails with
-`400 PROTOCOL_TOO_OLD`.
+When `init()` detects that the SDK is older than the gateway's
+required minimum version, it emits a warning so the operator sees
+the gap before the first `/gate` call fails with `400 PROTOCOL_TOO_OLD`.
 
 ## Heartbeat
 
 Long-running workflows post a time-based cadence heartbeat so the
 gateway can detect an orphaned workflow whose agent process has
-crashed without sending a kill / pause signal. The v3 contract
-replaces the legacy chunk-count heartbeat with a wall-clock
-interval; the recommended cadence is advertised in
-`capabilities.heartbeat_interval_seconds` (default 30s).
+crashed without sending a kill / pause signal. The recommended
+cadence is advertised in `capabilities.heartbeat_interval_seconds`
+(default 30s).
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -219,8 +212,6 @@ The examples below use the dashboard's `Authorization: Bearer <session-token>`
 header (the token comes from `POST /api/v1/auth/login`). For SDK-traffic
 endpoints substitute `X-API-Key` + HMAC headers — see the
 [Authentication](#authentication) section above.
-
-Every example assumes shell variables for the auth header and org id:
 
 ```bash title="shell"
 TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
@@ -256,7 +247,7 @@ curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../api
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "prod-bot-key-2026-07",
+    "name": "prod-bot-key",
     "scopes": ["gate", "track", "verify"]
   }'
 
@@ -273,20 +264,6 @@ The raw `key` and `secret_key` are **never returned again** —
 losing them means rotating the key. See
 [API keys → How to create a key](../concepts/api-keys.md#how-to-create-a-key).
 
-### Update a workflow's budget
-
-```bash title="shell"
-curl -X PATCH "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc..." \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{ "budget_cents": 10000 }'
-
-# → 200 { "id": "wf_abc...", "budget_cents": 10000, ... }
-```
-
-`budget_cents` is the per-period cap. Period rollover is automatic —
-see [Budgets → Set a budget](../concepts/budgets.md#how-to-set-the-budget).
-
 ### Kill / pause / resume a running workflow
 
 ```bash title="shell"
@@ -302,49 +279,6 @@ curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../pau
 curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../resume" \
   -H "Authorization: Bearer $TOKEN"
 ```
-
-### Rotate an API key's HMAC secret
-
-```bash title="shell"
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/api-keys/key_.../rotate" \
-  -H "Authorization: Bearer $TOKEN"
-
-# → 200 {
-#     "id": "key_...",
-#     "key": "nr_live_xxxxxxxxxxxx",   ← NEW raw key
-#     "secret_key": "sk_...",          ← NEW HMAC secret
-#     "key_version": 7
-#   }
-```
-
-The old key stays valid for a brief overlap window while the SDK
-picks up the new credentials via the `key_rotated` WS push. See
-[API keys → How to rotate a key](../concepts/api-keys.md#how-to-rotate-a-key)
-for the full flow.
-
-### Revoke an API key
-
-```bash title="shell"
-curl -X DELETE "https://api.nullrun.io/api/v1/orgs/$ORG_ID/api-keys/key_..." \
-  -H "Authorization: Bearer $TOKEN"
-
-# → 204 No Content
-```
-
-Immediate — no grace period. For zero-downtime rotation, use
-`rotate` instead.
-
-### List pending approvals
-
-```bash title="shell"
-curl "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals?status=pending" \
-  -H "Authorization: Bearer $TOKEN"
-
-# → 200 { "approvals": [ { "id": "...", "risk_level": "high", ... } ] }
-```
-
-Sorted by `risk_level` desc — the highest-stakes decisions surface
-first. See [Human approval → How to approve or deny](../concepts/human-approval.md#how-to-approve-or-deny).
 
 ### Single-call status (current spend / budget / time-to-exhaustion)
 
@@ -364,17 +298,6 @@ curl "https://api.nullrun.io/api/v1/orgs/$ORG_ID/status" \
 
 Useful for dashboards and alerts — one call returns everything
 you need to show "you've used X of Y".
-
-## Not in this page
-
-The following endpoint families are intentionally omitted because
-they are gateway-internal, not user-facing. They are documented in
-the gateway repo's OpenAPI spec and are not callable from the SDK
-or the public dashboard.
-
-- `/api/v1/admin/pricing` and per-model pricing backfill — operator-only
-- `/api/v1/metrics/prometheus` — gateway-internal scrape target
-- Webhook delivery, outbox processor, internal cron — gateway-internal
 
 ## See also
 
