@@ -34,8 +34,7 @@ also set.
 
 `NULLRUN_SAFETY_BYPASS_ALLOW=1` is a **shared** escape hatch — it
 opens both the geo-IP bypass and the sanctions bypass simultaneously
-because the two are two sides of the same compliance control. Splitting
-into separate flags is a documented future-work item.
+because the two are two sides of the same compliance control.
 
 ## Feature flags
 
@@ -44,9 +43,9 @@ production. Override only when you have a concrete reason.
 
 | Env var | Default | Description |
 | --- | --- | --- |
-| `NULLRUN_RESERVE_V3_ENABLED` | `1` | v3 reserve path (`reserve_v3.lua`). Set to `0` to force the legacy client-supplied execution_id path. |
-| `NULLRUN_CONSUME_V3_ENABLED` | `1` | v3 consume path (`consume_v3.lua`) — server-minted execution_id + atomic digest compare. Set to `0` only for legacy SDK compatibility. |
-| `NULLRUN_SOFT_LIMIT_ENABLED` | `1` | Soft budget mode is honored fleet-wide. Set to `0` for incident-response only — the gate logs `tracing::warn!` per downgrade. |
+| `NULLRUN_RESERVE_V3_ENABLED` | `1` | Current reserve path. Set to `0` to force the legacy client-supplied execution_id path. |
+| `NULLRUN_CONSUME_V3_ENABLED` | `1` | Current consume path — server-minted execution_id + atomic digest compare. Set to `0` only for legacy SDK compatibility. |
+| `NULLRUN_SOFT_LIMIT_ENABLED` | `1` | Soft budget mode is honored fleet-wide. Set to `0` for incident-response only — the gate logs a warning per downgrade. |
 | `NULLRUN_USE_OUTBOX_FOR_TRACK` | `1` | `/track` writes go through the Postgres outbox, then drained async. Set to `0` to disable both enqueue and drain (single flag, two legs). |
 | `NULLRUN_RATE_LIMIT_ALGORITHM` | `token_bucket` | Token bucket is the production default. Set to `fixed` for rollback to the legacy fixed-window path. |
 | `NULLRUN_USE_PLAN_FOR_COST_EVENTS` | `0` | Opt-in per-plan retention for `cost_events` instead of the cross-tenant partition-drop path. |
@@ -61,8 +60,8 @@ build a `NullRunRuntime` directly.
 The control-plane transport (WS push vs. HTTP polling fallback) is
 configured on the `NullRunRuntime` constructor, not via env var. The
 default is WS push with HTTP polling fallback when the WS connection
-drops more than `_MAX_RECONNECT_ATTEMPTS` (10) times in a row. To
-force HTTP-only from start, construct the runtime with `polling=True`.
+drops more than 10 times in a row. To force HTTP-only from start,
+construct the runtime with `polling=True`.
 
 The HMAC signature window and `NULLRUN_HMAC_REQUIRED` flag are
 **server-side** settings, not SDK env vars. The SDK signs every request

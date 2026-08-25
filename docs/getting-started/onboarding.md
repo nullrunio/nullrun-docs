@@ -1,20 +1,20 @@
-# First agent in 15 minutes
+# First agent
 
 This is the recommended path from "I have an LLM app" to "NullRun is
-gating my spend and tools". Skip the deep dives — link to them when
-you actually need them.
+gating my spend and tools". Each step links out to deeper docs only
+when you need them.
 
-## 1. Sign up and create an API key (2 min)
+## 1. Sign up and create an API key
 
 1. Go to [nullrun.io](https://nullrun.io) and sign in.
 2. Open **API keys** → **Create key**.
 3. Pick a name (e.g. `"my-first-agent"`) and the workflow you want the
-   key bound to. Each key is **workflow-scoped** since Phase 139 —
-   it represents one agent run, not one workspace.
+   key bound to. Each key is **workflow-scoped** — it represents one
+   agent run, not one workspace.
 4. Copy the key (`nr_live_…`) shown once and store it somewhere safe
    (env var, secret manager). You'll need it in step 3.
 
-## 2. Install the SDK (1 min)
+## 2. Install the SDK
 
 ```bash title="shell"
 pip install "nullrun[openai]"     # raw openai SDK + tracking
@@ -26,7 +26,7 @@ pip install "nullrun[all]"        # every vendor extra — heaviest install
 See [Install](install.md#optional-extras) for the full list of extras.
 For this walk-through `nullrun[openai]` is enough.
 
-## 3. Wire NullRun into your code (5 min)
+## 3. Wire NullRun into your code
 
 Pick the pattern that matches what you have today:
 
@@ -61,11 +61,10 @@ if __name__ == "__main__":
         shutdown()
 ```
 
-That's the whole integration. Every call inside `answer()` is now
-cost-attributed. There is no SDK call you have to remember to make
-for tracking — auto-instrumentation picks up the OpenAI HTTP call
-automatically. `@protect` is the **gate** (budget pre-flight + kill
-check + sensitive-tool decision), not the tracking mechanism.
+Every call inside `answer()` is cost-attributed. `@protect` is the
+**gate** (budget pre-flight + kill check + sensitive-tool decision),
+not the tracking mechanism — tracking is handled automatically by
+auto-instrumentation.
 
 ### B. You use a framework (LangGraph / CrewAI / OpenAI Agents / AutoGen / LlamaIndex)
 
@@ -74,7 +73,7 @@ Auto-instrumentation does the same thing — see
 [framework how-tos](../how-to/auto-instrumented-frameworks.md).
 Most of the time the only line you add is the `init()` call.
 
-## 4. Set a budget (1 min)
+## 4. Set a budget
 
 In the dashboard, open the workflow your key is bound to and set a
 `budget_cents`. A reasonable starter budget:
@@ -89,7 +88,7 @@ Periods are either calendar-month UTC (Lite) or your billing cycle
 (paid plans via Polar). See [Budgets → Period rollover](../concepts/budgets.md)
 for the detail.
 
-## 5. Run and observe (2 min)
+## 5. Run and observe
 
 ```bash title="shell"
 python my_agent.py
@@ -105,7 +104,7 @@ For real-time spend, hit
 and your plan caps in a single call (see the **Single-call status**
 example under "Common request patterns").
 
-## 6. Tighten or loosen (remaining time)
+## 6. Tighten or loosen
 
 Common next steps, in rough order of how often they're needed:
 
@@ -114,7 +113,7 @@ Common next steps, in rough order of how often they're needed:
    recommended ToolBlock starter list in the
    [Tool catalog](../reference/llm-tool-catalog.md#recommended-toolblock-starter-list).
 2. **Allow over-budget for long agents** — see
-   [Chain context → soft mode](../concepts/workflow.md#chain-context-soft-mode-budget-gate).
+   [Chain context → soft mode](../concepts/workflow.md#chain-context).
 3. **Forward every error to Sentry** — see
    [Error handling → on_error hook](../concepts/error-handling.md).
 4. **Pre-flight keys before risky calls** — see

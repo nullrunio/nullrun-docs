@@ -26,11 +26,10 @@ if __name__ == "__main__":
         shutdown()
 ```
 
-That's it — every call inside `answer()` is now cost-attributed and
-governed by your workspace policy. On any policy outcome (budget cap,
-tool block, rate limit, transport outage), `@guarded` prints the
-catalog wording on stderr and exits `1` — no `try/except NullRunError`
-needed.
+Every call inside `answer()` is cost-attributed and governed by your
+workspace policy. On any policy outcome (budget cap, tool block, rate
+limit, transport outage), `@guarded` prints the catalog wording on
+stderr and exits `1`.
 
 ## What gets tracked
 
@@ -43,9 +42,8 @@ needed.
 
 See [Troubleshooting](../troubleshooting.md) for the full table of
 expected behaviours (budget cap, loop, sensitive-tool, gateway down,
-kill/pause, etc.) and recovery steps. For the three-layer error model
-and why the boilerplate stays at zero, see
-[Concepts → Error handling](../concepts/error-handling.md).
+kill/pause, etc.) and recovery steps. For the three-layer error model,
+see [Concepts → Error handling](../concepts/error-handling.md).
 
 ## Next
 
