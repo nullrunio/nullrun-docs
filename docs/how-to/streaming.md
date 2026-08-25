@@ -54,6 +54,18 @@ For budget headroom, set `enforcement_mode = "Soft"` on the policy.
 See
 [Chain context](../concepts/workflow.md#chain-context).
 
+### Chain heartbeat
+
+The SDK keeps the chain alive with a wall-clock heartbeat every
+**30 seconds** by default (configurable per policy in `[10s, 120s]`).
+The interval is time-based, not chunk-based: a slow stream with one
+chunk per minute still gets a heartbeat; a fast stream does not spam
+them.
+
+If the chain dies (idle TTL expired, max duration exceeded, or
+`op="end"`), the SDK raises `WorkflowKilledInterrupt` at the next
+`yield` boundary.
+
 ## Kill signal mid-stream
 
 An operator hit on **Kill** raises `WorkflowKilledInterrupt` at the
