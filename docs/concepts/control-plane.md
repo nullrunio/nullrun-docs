@@ -38,10 +38,10 @@ authenticated with the same API key the SDK uses for `/gate` and
 
 The SDK keeps the connection alive with background heartbeats. If
 the WebSocket disconnects (network blip, firewall, gateway restart),
-the SDK falls back to polling `GET /workflows/{id}` once per second
-until the WebSocket comes back. From the agent's perspective, the
-control plane still applies — kill/pause still arrive on the next
-gate or yield boundary.
+the SDK falls back to polling `GET /api/v1/status/:workflow_id` once
+per second until the WebSocket comes back. From the agent's
+perspective, the control plane still applies — kill/pause still
+arrive on the next gate or yield boundary.
 
 In environments where the WebSocket is firewalled, you can force the
 SDK into polling mode by constructing the runtime directly:

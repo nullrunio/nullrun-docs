@@ -55,7 +55,7 @@ documents every field.
 
 | Method | Path | Called by |
 | --- | --- | --- |
-| `POST` | `/api/v1/auth/verify` | `init()` — fetches the HMAC `secret_key` for the API key |
+| `POST` | `/api/v1/auth/verify` | `init()` — verifies the API key and returns the full credential bundle (HMAC `secret_key`, org context, plan, `workflow_id`, `key_version`, etc.) |
 | `GET` | `/api/v1/capabilities` | `init()` — protocol negotiation |
 | `POST` | `/api/v1/gate` | Pre-flight + policy evaluation + budget reservation (called from `@protect` entry) |
 | `POST` | `/api/v1/track` | Single-event commit (`reservation_id` + `idempotency_key`) |
@@ -68,7 +68,7 @@ documents every field.
 | Method | Path | Status |
 | --- | --- | --- |
 | `POST` | `/api/v1/check` | Deprecated — returns `410 Gone` with `replacement: /api/v1/gate`. Use `/gate` for new integrations. |
-| `POST` | `/api/v1/execute` | Deprecated — registered for legacy callers; the SDK does not emit against it. |
+| `POST` | `/api/v1/execute` | Live — per-tool invocation with gate pre-flight and budget reservation (thin adapter in front of the unified gate engine). |
 
 ## Auth
 
@@ -76,8 +76,22 @@ documents every field.
 | --- | --- | --- |
 | `POST` | `/api/v1/auth/register` | Create account, returns API key + secret |
 | `POST` | `/api/v1/auth/login` | Dashboard session token |
-| `POST` | `/api/v1/auth/verify` | Verify API key + return HMAC `secret_key` |
+| `POST` | `/api/v1/auth/verify` | Verify API key + return full credential bundle |
 | `POST` | `/api/v1/auth/oauth/register` | OAuth signup (returns API key + secret) |
+
+#### `POST /api/v1/auth/verify` response fields
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `organization_id` | string (UUID) | Canonical org identifier |
+| `organization_name` | string \| null | Canonical org display name |
+| `plan` | string | Plan tier (`lite`, `pro`, …) |
+| `features` | object | Plan-feature flags resolved for this org |
+| `limits` | object | Plan-limits block (workflows, seats, …) |
+| `role` | string \| null | Member role; `null` on API-key path — SDK treats `null` as "role unknown, escalate to session auth" |
+| `workflow_id` | string \| null | Workflow this API key is bound to; `null` on unbound / legacy keys |
+| `secret_key` | string \| null | HMAC secret the SDK uses to sign requests — distinct from the API key itself |
+| `key_version` | number \| null | Current active HMAC key version; SDK compares against its cached value to detect rotation |
 
 ## Workflows
 
@@ -99,10 +113,12 @@ documents every field.
 | `GET` | `/api/v1/orgs/{org_id}/policies` | List (a single policy is not addressable by id — read it from the list response) |
 | `PATCH` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | Update |
 | `DELETE` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | Delete |
-| `POST` | `/api/v1/policies/toggle` | Toggle a policy active/inactive (dashboard PATCH 404 fix) |
+| `POST` | `/api/v1/orgs/{org_id}/policies/{policy_id}/toggle` | Toggle a policy active/inactive (dashboard PATCH 404 fix) |
 | `GET` | `/api/v1/orgs/{org_id}/policies/templates` | List policy templates |
 | `POST` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}/enable` | Enable a template |
 | `DELETE` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}` | Disable a template |
+
+The org-less variant of this endpoint (`/api/v1/policies/toggle`) was removed in favour of tenancy-scoped paths; org-mismatch is enforced by the `org_consistency` middleware.
 
 Most-restrictive-wins composition across applicable policies — see [Concepts → Policies](../concepts/policies.md).
 
@@ -185,7 +201,7 @@ cadence is advertised in `capabilities.heartbeat_interval_seconds`
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat (workflow_id + chain_id) |
+| `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat; body is `{ chain_id }` only. `workflow_id` is derived from the API key, not passed in the body. |
 
 The SDK posts heartbeats automatically inside the
 `NullRunRuntime` background thread once `init()` has run; operators
