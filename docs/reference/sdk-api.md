@@ -26,26 +26,26 @@ from nullrun import init, init_or_die, protect, workflow, span, agent, chain, tr
 | Helper | Behaviour | Use when |
 |---|---|---|
 | `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI) |
-| `init_or_die(api_key=None, api_url=None, debug=False)` | Catches the `NullRunAuthenticationError` exception, prints the catalog user-message to stderr, calls `sys.exit(1)`. Returns the runtime otherwise. | One-shot scripts, CLI tools, examples, anything where a missing key is a hard error |
+| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Catches the `NullRunAuthenticationError` exception, prints the catalog user-message to stderr, calls `sys.exit(exit_code)`. Returns the runtime otherwise. | One-shot scripts, CLI tools, examples, anything where a missing key is a hard error |
 
 `init_or_die` is `init` plus an `try/except NullRunAuthenticationError → sys.exit(1)`. The chain `@guarded` decorator does the same for callsite-level errors.
 
 || Symbol | Purpose | In `__all__` |
 |---|---|---|---|
-| `init(api_key=None, api_url=None, debug=False)` | Initialise the SDK singleton. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars or by constructing `NullRunRuntime` directly. Probes `GET /api/v1/capabilities` on first call to validate the wire protocol. | ✅ |
-| `init_or_die(api_key=None, api_url=None, debug=False)` | Like `init` but exits cleanly with code 1 if no API key is configured. See the table above. | ✅ |
+| `init(api_key=None, api_url=None, debug=False)` | Initialise the SDK singleton. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars or by constructing `NullRunRuntime` directly. Probes `GET /api/v1/capabilities` on first call to log warnings on version drift; does not fail or validate the wire. | ✅ |
+| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Like `init` but exits cleanly with `exit_code` (default 1) if no API key is configured. See the table above. | ✅ |
 | `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. Always pair with `@guarded` for the zero-boilerplate exit-on-block pattern. | ✅ |
 | `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check `runtime.execute(...)` before the body runs. Fails closed on transport error regardless of the runtime's fallback mode. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
 | `@guarded` | Decorator that wraps a function so any `NullRunError` raised inside is converted to `format_user_message(exc)` on stderr and `sys.exit(1)`. `WorkflowKilledInterrupt` (BaseException) propagates unchanged. | ✅ |
 | `with nullrun.handle(*, exit_code=1):` | Context manager form of `@guarded` — apply to a region of code rather than a single function. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
-| `chain(name=None, *, chain_op="auto")` | Context manager for soft-mode budget gate. `chain_op="start"` registers the chain; `chain_op="continue"` extends TTL; `chain_op="end"` closes it. | (lazy) |
+| `chain(chain_id: str, op: str = "start")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
 | `span(name=None)` | Context manager for nested trace spans. | (lazy) |
 | `agent(name=None)` | Context manager for agent identity. | (lazy) |
 | `set_call_context(model=None, tools=None)` | Per-call context the SDK forwards to `/gate` so the backend's budget + tool-block enforcement sees real values. | (lazy) |
 | `on_error(hook)` | Register a global error hook. Fires for every `NullRunError` subclass BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Does NOT fire for `WorkflowKilledInterrupt` (BaseException — kill is a non-recoverable signal). Returns an idempotent unregister callable. | ✅ |
-| `track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` | Manual escape hatch for non-HTTP LLM calls. Returns the backend's decision dict. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. | ✅ |
-| `track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool-call tracking. | ✅ |
+| `track_llm(input_tokens, output_tokens=0, **kwargs)` | Manual escape hatch for non-HTTP LLM calls. Returns the backend's decision dict. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. `**kwargs` are forwarded to the transport layer (e.g. `model`, `latency_ms`, `metadata`). | ✅ |
+| `track_tool(tool_name, duration_ms=None, **kwargs)` | Manual tool-call tracking. `**kwargs` are forwarded to the transport layer (e.g. `is_retry`, `metadata`). | ✅ |
 | `track_event(event_type, **kwargs)` | Catch-all for custom events. | ✅ |
 | `format_user_message(exc, locale="en")` | Render a `NullRunError` as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. | ✅ |
 | `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
@@ -120,11 +120,14 @@ that you want in the decision log alongside `track_llm` /
 See [User-facing messages → Per-deployment branding](#per-deployment-branding)
 below for `set_user_message` / `get_user_message` usage.
 
-The curated public surface in `dir(nullrun)` is the six core symbols
-above plus `on_error`, plus the structured exception names
-`NullRunError`, `NullRunAuthError`, `NullRunConfigError`,
-`NullRunBackendError`, `NullRunBudgetError`, `NullRunToolBlockedError`,
-and `WorkflowKilledInterrupt` (the kill signal). The legacy names
+The curated public surface in `dir(nullrun)` is the `__all__` list
+in `nullrun/__init__.py`: `__version__`, `init`, `protect`, `track_llm`,
+`track_tool`, `track_event`, `shutdown`, `on_error`, `status`,
+`format_user_message`, `set_user_message`, `handle`, `guarded`,
+`init_or_die`, plus the structured exception names `NullRunError`,
+`NullRunAuthError`, `NullRunConfigError`, `NullRunBackendError`,
+`NullRunBudgetError`, `NullRunToolBlockedError`, and
+`WorkflowKilledInterrupt` (the kill signal). The legacy names
 (`WorkflowPausedException`, `WorkflowKilledException`,
 `NullRunAuthenticationError`, `NullRunBlockedException`) remain
 importable via `from nullrun import X` for backward compatibility
@@ -159,7 +162,7 @@ hierarchy diagram.
 | `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
 | `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
 | `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunError`. Carries `.workflow_id`, `.reason`, `.resume_after`. |
-| `WorkflowKilledException` | Killed via control plane (parent) | `Exception` subclass. **Deprecated** — emits `DeprecationWarning` on construction. Use `WorkflowKilledInterrupt` directly. |
+| `WorkflowKilledException` | Killed via control plane (parent) | `BaseException` subclass (NOT `Exception`). **Deprecated** — emits `DeprecationWarning` on construction. Use `WorkflowKilledInterrupt` directly. |
 | `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `BaseException` (NOT `Exception`) per the kill contract — catch before `except Exception`. |
 
 Removed: `CostLimitExceeded`, `ApprovalRequired`, `BreakerTimeout`,
@@ -242,7 +245,7 @@ import nullrun
 
 # Override the default message for budget-exceeded. Pass "" to clear.
 nullrun.set_user_message(
-    "BUDGET_HARD_BLOCKED",
+    "NR-B004",
     "You've used all your support credits. Upgrade to keep chatting.",
 )
 ```
