@@ -15,17 +15,16 @@ per-account quota checks, so blocked traffic never touches the database.
 
 ## Why this is needed
 
-GDPR Art. 3 and the CJEU Planet49 ruling (C-673/17) turn on whether
-the operator is "offering goods or services" to, or "monitoring", EU
-data subjects. A Terms-of-Service clause alone is not enough — a
-regulator will infer targeting from the fact that the API endpoint is
-reachable from EU IP space. Hard-blocking at the edge is the only
+Sanctions violations are strict-liability; see legal review for full
+rationale. A Terms-of-Service clause alone is not enough — a regulator
+will infer targeting from the fact that the API endpoint is reachable
+from a sanctioned IP space. Hard-blocking at the edge is the only
 reliable signal.
 
 The same logic applies to the other comprehensive-sanctions regimes
-(OFAC, EU, UK, UN) for the sanctioned-country blocklist. Those are
-**strict-liability**: a single accepted signup or payment from one of
-those jurisdictions is a criminal-law violation, not a civil one.
+(OFAC, EU, UK, UN) for the sanctioned-country blocklist. A single
+accepted signup or payment from one of those jurisdictions is a
+criminal-law violation, not a civil one.
 
 ## Blocklist
 
@@ -101,9 +100,8 @@ The error log line you should watch for is
 signal that the `.mmdb` file needs to be restored.
 
 A previous version silently allowed traffic when the database was
-missing, which caused a production 503-storm on 2026-06-30 until the
-operator pin mounted the database into the container so it survives
-redeploys.
+missing. The fix was to fail-CLOSED so the operator notices the
+misconfiguration rather than serving unscreened traffic.
 
 ## Operator overrides
 
@@ -112,12 +110,13 @@ redeploys.
 | Env var | Effect | When to use |
 | --- | --- | --- |
 | `NULLRUN_GEOBLOCK_DISABLED=1` | Disables the geo-block entirely. One-shot WARN is logged on first request. | Local development only. Never set in production. |
-| `NULLRUN_GEOIP_DB=/path/to/file.mmdb` | Override the path to the MaxMind database. Default: `data/GeoLite2-Country.mmdb` (relative to container CWD). | VPS / staging deployments where the operator supplies the file. |
+| `NULLRUN_GEOIP_DB=/path/to/file.mmdb` | Override the path to the MaxMind database. | Any deployment where the operator supplies the file. |
 
-The `NULLRUN_GEOBLOCK_DISABLED=1` flag is the most dangerous knob in
-the gateway — it is a **fail-OPEN** setting on a regulatory control.
-The middleware emits the WARN exactly once per process to surface the
-misconfiguration without flooding the log.
+The `NULLRUN_GEOBLOCK_DISABLED=1` flag is a **fail-OPEN** setting on a
+regulatory control. Disabling the geo-block is a fail-OPEN posture;
+production must never set this. The middleware emits the WARN exactly
+once per process to surface the misconfiguration without flooding the
+log.
 
 ## What is bypassed
 
@@ -148,48 +147,33 @@ debugging:
 | `x-nullrun-fortress-country: <ISO>` | The resolved ISO 3166-1 alpha-2 country code. Absent when the GeoIP database is unavailable. |
 
 These headers are **not** logged at INFO level (the country code is
-PII under GDPR, ironically) — they appear at WARN.
+PII under GDPR) — they appear at WARN.
 
-## Runbook — VPS deploy
+## Runbook — keeping the GeoIP database live
 
-This is the operator recipe for keeping the GeoIP database live in
-production.
+The operator is responsible for keeping the GeoIP database present
+and current. The exact commands depend on your deployment, but the
+principles are:
 
 1. **Download the database.** A free MaxMind license key is required:
-   <https://www.maxmind.com/en/geolite2/signup>.
+   <https://www.maxmind.com/en/geolite2/signup>. Download the
+   `GeoLite2-Country` archive and extract `GeoLite2-Country.mmdb`
+   to a host path that the gateway container can read.
 
-    ```bash
-    curl -L "https://download.maxmind.com/app/geoip_download?\
-edition_id=GeoLite2-Country&license_key=$MAXMIND_LICENSE_KEY&suffix=tar.gz" \
-        -o /tmp/geolite2.tar.gz
-    mkdir -p /opt/nullrun/backend/data
-    tar -xzf /tmp/geolite2.tar.gz -C /tmp/
-    mv /tmp/GeoLite2-Country_*/GeoLite2-Country.mmdb \
-        /opt/nullrun/backend/data/
-    rm -rf /tmp/GeoLite2-Country_*
-    ```
+2. **Pin the path into the container.** Set `NULLRUN_GEOIP_DB` to the
+   in-container path of the `.mmdb` file and bind-mount the host
+   directory containing it (read-only) so the path resolves to the
+   operator-supplied file. The bind-mount should survive container
+   restarts and redeploys.
 
-2. **Pin the path.** The `docker-compose.yml` already declares:
-
-    ```yaml
-    environment:
-      NULLRUN_GEOIP_DB: /tmp/geoip/GeoLite2-Country.mmdb
-    volumes:
-      - /opt/nullrun/backend/data:/tmp/geoip:ro
-    ```
-
-    The bind-mount is **read-only** and pins the path so the
-    `data/GeoLite2-Country.mmdb` lookup resolves to the
-    operator-supplied file.
-
-3. **Restart the gateway.** Until in-process hot-reload lands, a
-   fresh `docker compose up -d` is required to pick up a new `.mmdb`.
+3. **Restart the gateway to pick up a new `.mmdb`.** A fresh process
+   is required because the database is loaded once at start.
 
 4. **Verify.** From a known EU IP: `curl -i https://api.nullrun.io/healthz`
    should be 200, and `curl -i https://api.nullrun.io/api/v1/auth/register`
    should be 403 with `x-nullrun-fortress-block: sanctions` or
    `service_unavailable_in_jurisdiction` in the body.
 
-5. **Schedule weekly refresh.** A weekly cron is recommended. The
-   GeoIP allocation drift is slow (weeks), but OFAC/EU/UK SDN lists
-   move faster — see [Sanctions screening](sanctions-screening.md).
+5. **Schedule a regular refresh.** MaxMind GeoLite2 drifts slowly
+   (weeks); OFAC/EU/UK SDN lists move faster — see
+   [Sanctions screening](sanctions-screening.md).
