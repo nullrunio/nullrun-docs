@@ -46,8 +46,7 @@ team) is reachable via the dashboard, not via the SDK.
 ## Repositories
 
 - [`nullrunio/nullrun-sdk-python`](https://github.com/nullrunio/nullrun-sdk-python) —
-  Python SDK (`pip install nullrun`), active branch
-  `release/0.14.x-toolparameters`
+  Python SDK (`pip install nullrun`)
 - [`nullrunio/nullrun-examples`](https://github.com/nullrunio/nullrun-examples) —
   runnable examples
 - [`nullrunio/nullrun-docs`](https://github.com/nullrunio/nullrun-docs) —

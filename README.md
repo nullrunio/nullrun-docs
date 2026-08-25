@@ -35,7 +35,7 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 
 **Concepts**
 - [Circuit breaker](docs/concepts/circuit-breaker.md) · CLOSED / OPEN / HALF_OPEN, `PERMISSIVE`/`STRICT`/`CACHED` fallback modes
-- [Budgets](docs/concepts/budgets.md) · v3 contract: `/gate` pre-flight + server-minted `reservation_id` + `/api/v1/track` single commit
+- [Budgets](docs/concepts/budgets.md) · `/gate` pre-flight + server-minted `reservation_id` + `/api/v1/track` single commit
 - [Sensitive tools](docs/concepts/sensitive-tools.md) · fail-CLOSED, always
 - [Workflow context](docs/concepts/workflow.md) · `nullrun.workflow(...)` + `nullrun.chain(...)` + `parent_trace_id` multi-agent attachment
 - [Control plane (WebSocket)](docs/concepts/control-plane.md) · real-time kill / pause / `approval_resolved`
@@ -56,7 +56,7 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 - [Error codes](docs/reference/errors.md) · `validation_error`, `RateLimitError`, kill contract
 
 **Compliance**
-- [Overview](docs/compliance/index.md) · Fortress posture, fail-CLOSED matrix
+- [Overview](docs/compliance/index.md) · geo-block and sanctions-screening posture
 - [Geographic restrictions](docs/compliance/geo-restrictions.md) · IP-level geo-block, sanctioned + high-risk blocklists, VPS runbook
 - [Sanctions screening](docs/compliance/sanctions-screening.md) · OFAC SDN signup screening, degraded fallback
 
