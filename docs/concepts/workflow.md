@@ -79,7 +79,7 @@ A **chain** is a logical grouping across multiple `@protect` calls
 inside one user request, declared via `with chain(...)`. Chains are
 auto-registered on the first `/gate` call: the chain transitions
 from `null → ACTIVE` atomically. Chains die on the first of
-`chain_op="end"`, 5 minutes of `/gate` inactivity (idle TTL), or
+`op="end"`, 5 minutes of `/gate` inactivity (idle TTL), or
 exceeding `max_chain_duration_seconds` (default 3600). For long
 streams, send a `POST /heartbeat` every 30 seconds — see
 [Heartbeat → how-to](../how-to/streaming.md#chain-heartbeat).

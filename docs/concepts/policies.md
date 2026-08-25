@@ -60,7 +60,7 @@ gate behaves as Hard. Multiple parallel chains on the same org share
 one `overdraft_used` counter — N concurrent chains do **not**
 multiply the overdraft cap.
 
-A chain dies on the first of: `chain_op="end"`, 5 minutes of `/gate`
+A chain dies on the first of: `op="end"`, 5 minutes of `/gate`
 inactivity (idle TTL), or exceeding `max_chain_duration_seconds`.
 Chain time is read server-side, eliminating clock skew between
 backend nodes.

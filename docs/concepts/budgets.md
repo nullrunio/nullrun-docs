@@ -148,8 +148,7 @@ with `ε_cents = 1` by default. If the SDK reports a larger cost,
 `/track` returns `422 CONSUME_OVERBUDGET` (fail-CLOSED — no implicit
 re-reserve).
 
-The `/track` ingestion goes through a Postgres outbox
-(`NULLRUN_USE_OUTBOX_FOR_TRACK=1`, default ON). The Redis
+The `/track` ingestion goes through a Postgres outbox. The Redis
 authoritative counter is updated synchronously; the Postgres
 `cost_events` row is drained asynchronously. A Postgres outage
 does not block the inference — events stay in the outbox pending
