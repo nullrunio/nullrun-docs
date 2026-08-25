@@ -56,22 +56,19 @@ cap. See [Budgets → How to set the budget](../concepts/budgets.md#how-to-set-t
 
 The SDK does not project per-call cost on its own — the per-call
 cap is enforced by the workspace policy on the gateway. When the
-policy carries a per-call threshold, the v3 `/gate` call rejects
-any single call whose projected cost would exceed the cap *before*
-the model is invoked (see [Budgets → v3 wire contract](../concepts/budgets.md#v3-wire-contract)
-for the v3 reservation flow). The SDK raises
-`NullRunBlockedException` with `error_code = "BUDGET_HARD_BLOCKED"`.
+policy carries a per-call threshold, the `/gate` call rejects any
+single call whose projected cost would exceed the cap *before* the
+model is invoked. The SDK raises `NullRunBlockedException` with
+`error_code = "BUDGET_HARD_BLOCKED"`.
 
 If you need to skip the pre-flight check in test environments
 only, set `NULLRUN_SKIP_BUDGET_CHECK=1`. The SDK emits a
-`RuntimeWarning` at import so this can't slip into production —
-and `BREAKER_ENV=production` refuses-to-start the gateway with
-that flag set (no escape hatch). See
+`RuntimeWarning` at import so this can't slip into production. See
 [Configuration → Server-side fail-CLOSED guards](../getting-started/configuration.md#server-side-fail-closed-guards).
 
 ## See also
 
-- [Budgets](../concepts/budgets.md) — v3 reservation lifecycle and the
+- [Budgets](../concepts/budgets.md) — reservation lifecycle and the
   pre-flight `/gate` end-to-end
 - [Errors](../reference/errors.md)
 - [Examples → cost cap demo](https://github.com/nullrunio/nullrun-examples/blob/main/examples/cost_cap_demo.py)

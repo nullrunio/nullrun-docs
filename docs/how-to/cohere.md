@@ -29,12 +29,6 @@ shapes is missing.
 > only the non-streaming response carries it. Tracked events for
 > streamed Cohere calls will report `tokens=0`.
 
-## Test coverage
+## See also
 
-Per NullRun's testing policy (see the SDK README), Cohere patches
-have **extractor unit tests only** — no full transport-to-track
-integration test. The extractor shape is exercised by isolated
-tests, but no multi-roundtrip end-to-end test confirms the cost
-actually flows through `/api/v1/track`. This is documented per §8
-of the source-of-truth positioning — verify behaviour against your
-real workload before relying on it.
+- [Auto-instrumentation overview](auto-instrumented-frameworks.md#test-coverage-caveat)

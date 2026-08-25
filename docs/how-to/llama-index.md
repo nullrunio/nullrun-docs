@@ -19,16 +19,7 @@ resp = llm.chat([ChatMessage(role="user", content="Hello")])
 
 Patched via `nullrun.instrumentation.llama_index.patch_llama_index`,
 which monkey-patches the LLM class to wrap each `chat` / `complete`
-call so the SDK sees the raw usage. The vendor import is wrapped in
-`try/except ImportError`, so installing only this extra group does
-not crash on `init()`.
-
-## Test coverage
-
-Per NullRun's testing policy (see the SDK README), LlamaIndex
-patches have a dedicated end-to-end test
-(`tests/test_llama_index_patch.py`) covering the decorator plus
-behaviour.
+call so the SDK sees the raw usage.
 
 ## See also
 

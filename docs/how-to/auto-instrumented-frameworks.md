@@ -42,11 +42,32 @@ runnable snippet, and the exact patcher that handles it:
 | `langgraph` | `instrumentation.auto.patch_langgraph_compiled` (wraps `Pregel.invoke` / `.stream` / `.ainvoke` / `.astream`) |
 | `langchain` | `instrumentation.auto.patch_langchain_callback` (injects `NullRunCallback` into `BaseCallbackManager.__init__`) |
 | `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock) | per-vendor extractors |
-| `llama_index`, `crewai`, `autogen_agentchat` | Phase 7 patches in `instrumentation.llama_index`, `crewai`, `autogen` |
+| `llama_index`, `crewai`, `autogen_agentchat` | patches in `instrumentation.llama_index`, `crewai`, `autogen` |
 
-If a vendor is missing from the table, the SDK still runs — it
-simply has no extractor for that framework and the LLM call is
-invisible to NullRun until you wrap it in `@protect`.
+## How the httpx transport hook works
+
+The `httpx` transport hook in `nullrun.instrumentation.auto` wraps
+the response handler for any HTTP client built on `httpx` (the
+`openai` SDK and the `anthropic` SDK both use `httpx` under the
+hood). On every response, the hook:
+
+1. Reads the JSON body.
+2. Extracts token counts from the vendor's `usage` block
+   (`usage.prompt_tokens` / `usage.completion_tokens` for OpenAI,
+   `usage.input_tokens` / `usage.output_tokens` for Anthropic).
+3. Emits a `track_llm` event with the extracted tokens.
+
+The backend recomputes cost from the org's pricing policy — the
+SDK only reports token counts, never dollar amounts.
+
+## Test coverage caveat
+
+Per-vendor pages for Mistral, Gemini, Cohere, Bedrock, and LangChain
+note that the patcher has **extractor unit tests only** — no full
+transport-to-track integration test. The extractor shape is
+exercised by isolated tests, but no multi-roundtrip end-to-end test
+confirms the cost actually flows through `/api/v1/track`. Verify
+behaviour against your real workload before relying on it.
 
 ## All of the above
 
@@ -54,5 +75,4 @@ invisible to NullRun until you wrap it in `@protect`.
 pip install "nullrun[all]"
 ```
 
-Installs every vendor extra. Useful for evaluation harnesses that
-span multiple providers.
+Installs every vendor extra.

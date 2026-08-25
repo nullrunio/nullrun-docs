@@ -20,22 +20,12 @@ resp = client.messages.create(
 )
 ```
 
-Patched via the `httpx` transport hook in `nullrun.instrumentation.auto`
-— the Anthropic SDK uses `httpx` under the hood, so the SDK reads
-the response body, extracts `usage.input_tokens` /
-`usage.output_tokens`, and emits a `track_llm` event with the
-extracted tokens. Cost is recomputed on the backend from the org's
-pricing policy.
-
-## Test coverage
-
-Per NullRun's testing policy (see the SDK README), transport patches
-have dedicated end-to-end HTTP tests for **OpenAI** only. Anthropic
-patches have extractor support but no dedicated end-to-end transport
-test. Cost tracking therefore flows through the same code path as
-the OpenAI patch — same `track_llm` event shape, same aggregator,
-same `cost_events` row — but is not exercised by a per-vendor
-integration test in this repo.
+Patched via the `httpx` transport hook in
+`nullrun.instrumentation.auto` — see the
+[auto-instrumentation overview](auto-instrumented-frameworks.md#how-the-httpx-transport-hook-works)
+for how the hook reads the response body, extracts
+`usage.input_tokens` / `usage.output_tokens`, and emits a `track_llm`
+event.
 
 ## See also
 

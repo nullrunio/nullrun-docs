@@ -9,10 +9,9 @@ pip install "nullrun[fastapi]" fastapi uvicorn
 
 `nullrun.integrations.fastapi.install(app)` is a one-line setup that
 turns every NullRun exception in your agent API into a clean JSON
-response — no per-endpoint `try/except` blocks required. Your route
-handlers stay focused on the happy path; kill signals, budget
-caps, transport outages, and tool blocks all render as proper HTTP
-responses with end-user-safe text in the body.
+response. Kill signals, budget caps, transport outages, and tool
+blocks all render as proper HTTP responses with end-user-safe text
+in the body.
 
 ```python title="fastapi_app.py"
 from fastapi import FastAPI
@@ -29,20 +28,13 @@ def chat(message: str) -> dict:
     return {"reply": agent.run(message)}
 ```
 
-The integration emits canonical machine-readable error codes per
-[Reference → Errors](../reference/errors.md). The full catalog lives
-in that reference page (e.g. `BUDGET_HARD_BLOCKED`,
-`RATE_LIMIT_EXCEEDED`, `TOOL_BLOCKED`, `WORKFLOW_INACTIVE`,
-`REDIS_UNAVAILABLE`).
-
 ## What `install()` registers
 
 `install(app)` wires three handlers — two via FastAPI's exception
 handler chain, one as an ASGI middleware. The split exists because
-Starlette refuses `BaseException` subclasses in `add_exception_handler`
-(`WorkflowKilledInterrupt` is deliberately a `BaseException` so
-careless `except Exception:` handlers in agent code can't swallow
-operator kills).
+Starlette refuses `BaseException` subclasses in
+`add_exception_handler` (so careless `except Exception:` handlers in
+agent code can't swallow operator kills).
 
 | Exception | Mechanism | HTTP | Body |
 | --- | --- | --- | --- |
@@ -55,8 +47,6 @@ operator kills).
 attribute.
 
 ## HTTP status mapping
-
-The mapping from gate `error_code` to HTTP status:
 
 | `error_code` | Category | HTTP | Notes |
 | --- | --- | --- | --- |
@@ -71,23 +61,16 @@ The mapping from gate `error_code` to HTTP status:
 | `REDIS_UNAVAILABLE` | infrastructure | `503` | `retryable: true` |
 | `BUDGET_DATA_UNAVAILABLE` | infrastructure | `503` | ApproximateBudget endpoint: all sources down |
 
-`WorkflowKilledInterrupt` always maps to `503`. The base exception
-classes (`NullRunError`, infrastructure variants) carry the
-machine-readable `error_code` field — see the catalog in
-[Reference → Errors](../reference/errors.md).
+`WorkflowKilledInterrupt` always maps to `503`. See
+[Reference → Errors](../reference/errors.md) for the full catalog.
 
 ## Locale resolution
 
-By default the integration reads `Accept-Language` from the request
-and picks the matching `user_message` from the SDK catalog. Pass a
-custom resolver when the locale comes from somewhere else (session
-cookie, JWT claim, upstream header):
+By default the integration reads `Accept-Language` from the request.
+Pass a custom resolver when the locale comes from somewhere else
+(session cookie, JWT claim, upstream header):
 
-```python title="custom_locale_resolver.py"
-from fastapi import FastAPI, Request
-import nullrun
-from nullrun.integrations.fastapi import install
-
+```python
 app = FastAPI()
 
 # Locale from a session cookie, falling back to "en".
@@ -97,16 +80,9 @@ install(
 )
 ```
 
-The resolver can return any locale code; in this SDK version only
-English is shipped and any non-`"en"` value falls back to the English
-message. The parameter is reserved for future locale packs. A buggy
-resolver degrades silently to `"en"` — the user still gets a clean
-response.
+A buggy resolver degrades silently to `"en"`.
 
 ## Response body shape
-
-Every error response has the same shape so the client side can
-branch on `category` without parsing strings:
 
 ```json
 {
@@ -119,55 +95,36 @@ branch on `category` without parsing strings:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `error_code` | `string` | Stable machine-readable identifier from the catalog |
-| `user_message` | `string` | End-user-safe text. Safe to render verbatim in a UI. |
+| `error_code` | `string` | Stable machine-readable identifier |
+| `user_message` | `string` | End-user-safe text. Safe to render verbatim in a UI |
 | `category` | `"decision"` \| `"infrastructure"` \| `"killed"` | Coarse classification for client-side branching |
 | `retryable` | `bool` | Mirrors the SDK exception's `.retryable` |
 
-The `retryable` field is also surfaced to ops dashboards via the
-existing `nullrun.on_error(...)` hook — see
-[SDK API → on_error](../reference/sdk-api.md).
-
 ## Per-deployment wording overrides
 
-The default `user_message` strings come from the SDK catalog. To
-brand the wording for a single deployment (without forking the SDK),
-call `nullrun.set_user_message(...)` once at startup:
+To brand the wording for a single deployment, call
+`nullrun.set_user_message(...)` once at startup:
 
-```python title="branded_message.py"
-import nullrun
-
+```python
 nullrun.set_user_message(
     "BUDGET_HARD_BLOCKED",
     "You've used all your support credits. Upgrade to keep chatting.",
 )
 ```
 
-Overrides are per-process. See
-[Errors → Layer 3 → Branded wording](../concepts/error-handling.md#branded-wording)
-for the full override API.
-
 ## Limitations
 
-- **`install()` is one-line, but `app.add_exception_handler` is
-  last-wins.** If you already register a `NullRunError` handler on
-  the same app, `install()` overwrites it. Re-order your `install()`
-  call to last if you need custom precedence.
-- **Kill middleware is process-global state.** The locale resolver
-  is stored at module level. If you serve multiple FastAPI apps
-  from one process with different locale policies, the last
-  `install()` call wins. Per-app middleware
+- `app.add_exception_handler` is last-wins — if you already register
+  a `NullRunError` handler, `install()` overwrites it. Re-order
+  your `install()` call to last if you need custom precedence.
+- Kill middleware is process-global state. The locale resolver is
+  stored at module level; if you serve multiple FastAPI apps from
+  one process with different locale policies, the last `install()`
+  call wins. Per-app middleware
   (`app.add_middleware(NullRunMiddleware, locale_resolver=...)`) is
   the supported escape hatch.
-- **Streaming responses kill recovery is best-effort.** If a kill
-  signal fires after the response has started streaming, the
-  middleware cannot rewrite the headers — it re-raises the
-  `BaseException` and the connection drops. Use timeouts on the
-  client side to avoid hanging reads.
 
 ## See also
 
 - [Quickstart](../getting-started/quickstart.md)
-- [SDK API](../reference/sdk-api.md)
-- [Errors → Decision vs. infrastructure](../reference/errors.md)
-- [Control plane](../concepts/control-plane.md) — kill mechanism reference
+- [Errors](../reference/errors.md)

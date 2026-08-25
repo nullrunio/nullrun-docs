@@ -20,9 +20,7 @@ result = await assistant.run(task="Hello")
 
 Patched via `nullrun.instrumentation.autogen.patch_autogen`, which
 hooks the AutoGen model-client path so every agent run emits a
-`track_llm` event. The vendor imports (`autogen-agentchat`,
-`autogen-ext[openai]`) are wrapped in `try/except ImportError`, so
-installing only this extra group does not crash on `init()`.
+`track_llm` event.
 
 ## See also
 

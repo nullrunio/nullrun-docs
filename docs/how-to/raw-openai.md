@@ -19,10 +19,10 @@ resp = client.chat.completions.create(
 )
 ```
 
-Patched via the `httpx` transport hook in `nullrun.instrumentation.auto`
-— the OpenAI SDK uses `httpx` under the hood, so the SDK reads the
-response body, extracts `usage.prompt_tokens` /
-`usage.completion_tokens`, and emits a `track_llm` event.
+Patched via the `httpx` transport hook in
+`nullrun.instrumentation.auto` — see the
+[auto-instrumentation overview](auto-instrumented-frameworks.md#how-the-httpx-transport-hook-works)
+for the mechanism.
 
 > `nullrun[openai]` is for the **raw** `openai` SDK — it is **not**
 > the OpenAI Agents SDK. For agents use [`nullrun[agents]`](openai-agents.md).

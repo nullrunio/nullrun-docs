@@ -31,13 +31,6 @@ see [Protect a LangGraph agent](langgraph.md) — `Pregel.invoke` /
 `Pregel.stream` get an extra wrapper layer via
 `patch_langgraph_compiled`.
 
-## Test coverage
+## See also
 
-Per NullRun's testing policy (see the SDK README), LangChain
-callback patching exists but **has no dedicated callback-integration
-test**. The `patch_langchain_callback` hook is exercised by the
-unified-fingerprint test (`tests/test_unified_fingerprint.py`),
-which validates the fingerprint shape but not the callback's wire
-effect. This is documented per §8 of the source-of-truth
-positioning — verify behaviour against your real workload before
-relying on the callback path.
+- [Auto-instrumentation overview](auto-instrumented-frameworks.md#test-coverage-caveat)

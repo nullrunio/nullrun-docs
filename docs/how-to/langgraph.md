@@ -33,7 +33,7 @@ graph.add_edge("chat", END)
 graph.set_entry_point("chat")
 app = graph.compile()
 
-result = app.invoke([{"role": "user", "content": "Hi"}])
+result = app.invoke({"messages": [{"role": "user", "content": "Hi"}]})
 ```
 
 Every LLM call inside the graph is now cost-attributed and gated by
@@ -54,11 +54,10 @@ app = wrapper(graph.compile())
 `wrapper` wraps the compiled app's `.invoke` and `.stream` methods
 to inject a `NullRunCallback` into the LangChain `config["callbacks"]`
 list per call. The control-plane kill/pause subscription is
-**independent** — it's started automatically by `init()` via
-`NullRunRuntime._start_remote_polling()` (or
-`_start_ws_listener()`), and works for every `@protect` call in
-the process regardless of whether you used `wrapper()` or
-`patch_langgraph_compiled` (the auto-instrumentation path above).
+**independent** — it's started automatically by `init()` and works
+for every `@protect` call in the process regardless of whether you
+used `wrapper()` or `patch_langgraph_compiled` (the
+auto-instrumentation path above).
 
 ## See also
 

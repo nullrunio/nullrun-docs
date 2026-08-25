@@ -10,46 +10,14 @@ and one process per workflow key.
 For everything beyond a single one-shot script, run **one process per
 key**. This page shows the three patterns that cover real workloads.
 
-## Pattern 1 — multiple agents on one host (systemd / supervisor)
+## Pattern 1 — multiple agents on one host (one process per key)
 
 The simplest production deployment. Each workflow gets its own
-service unit, its own env var, its own log stream.
+process, its own env var, its own log stream. Common supervisors
+include systemd, Docker Compose, and Kubernetes — pick whichever
+fits the platform.
 
-```ini title="/etc/systemd/system/nullrun-prod-bot.service"
-[Service]
-Environment="NULLRUN_API_KEY=***"
-Environment="NULLRUN_API_URL=https://api.nullrun.io"
-ExecStart=/usr/bin/python /opt/nullrun/prod_bot.py
-Restart=on-failure
-User=nullrun
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```ini title="/etc/systemd/system/nullrun-staging-bot.service"
-[Service]
-Environment="NULLRUN_API_KEY=***"
-Environment="NULLRUN_API_URL=https://api.nullrun.io"
-ExecStart=/usr/bin/python /opt/nullrun/staging_bot.py
-Restart=on-failure
-User=nullrun
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash title="shell"
-sudo systemctl daemon-reload
-sudo systemctl enable --now nullrun-prod-bot nullrun-staging-bot
-```
-
-Each unit talks to the gateway with its own key, so the dashboard's
-**Workflows** view shows separate per-workflow spend, kill/pause
-works independently, and you can restart one without affecting the
-other.
-
-For Docker Compose the same shape is `environment:` per service:
+For Docker Compose, the shape is `environment:` per service:
 
 ```yaml title="docker-compose.yml"
 services:
@@ -68,15 +36,19 @@ services:
 For Kubernetes, mount the key as a `Secret` and reference it in each
 Deployment's `envFrom`.
 
+Each process talks to the gateway with its own key, so the dashboard's
+**Workflows** view shows separate per-workflow spend, kill/pause
+works independently, and you can restart one without affecting the
+other.
+
 ## Pattern 2 — fan-out inside one container (multiprocessing.Pool)
 
 When you have one entrypoint but N workflows to run, use
-`multiprocessing.Pool` so each child inherits its own SDK singleton
+`multiprocessing.Pool` so each child initializes its own SDK runtime
 and its own key:
 
 ```python title="fanout.py"
 import multiprocessing as mp
-import os
 import nullrun
 from nullrun import init_or_die, protect
 
@@ -102,15 +74,15 @@ def fan_out(jobs: list[tuple[str, str]]) -> list[str]:
         return [r.get(timeout=120) for r in async_results]
 ```
 
-The pool's `fork` start method (default on Linux) gives each child its
-own copy of the SDK state, so each `init()` runs cleanly with no
-shutdown collisions. **Do not** call `init()` once at the parent and
-share the runtime across children — that's the multi-key-in-one-process
-anti-pattern and you'll get shutdown warnings the moment the first
-child finishes.
+Each child gets its own copy of the SDK state, so each `init()` runs
+cleanly with no shutdown collisions. **Do not** call `init()` once at
+the parent and share the runtime across children — that's the
+multi-key-in-one-process anti-pattern and you'll get shutdown warnings
+the moment the first child finishes.
 
-For `spawn` (default on macOS / Windows) the rule is the same — each
-child is a fresh interpreter and runs its own `init()` independently.
+Pick the pool start method that matches your platform (see the
+`multiprocessing` docs). The rule is the same regardless: each child
+is a fresh interpreter and runs its own `init()` independently.
 
 ## Pattern 3 — one entrypoint, multiple keys, hard process boundary
 
@@ -132,9 +104,7 @@ def run_workflow(key: str, prompt: str) -> str:
         capture_output=True,
         text=True,
         timeout=120,
-    )
-    check=True,
-    timeout=120,
+        check=True,
     )
     return result.stdout
 ```

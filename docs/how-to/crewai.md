@@ -6,11 +6,8 @@ Install (CrewAI **1.15+** required):
 pip install "nullrun[crewai]"
 ```
 
-The 0.13.9 release replaced the legacy `step_callback` /
-`task_callback` kwargs-injection path (which CrewAI 1.15 removed)
-with an **event-bus bridge** that subscribes to the crewai
-`EventBus` and translates each lifecycle event into a
-`runtime.track_event` call.
+The current patch subscribes to the crewai `EventBus` and translates
+each lifecycle event into a `runtime.track_event` call.
 
 ```python title="crewai_crew.py"
 import nullrun
@@ -57,9 +54,6 @@ wrap is still installed and the patch returns `True` so callers
 that gate on `"did nullrun.init register a crewai bridge"` keep
 getting a positive answer; only the per-event span bridge is a
 no-op.
-
-The vendor import is wrapped in `try/except ImportError` so
-installing only this extra group does not crash on `init()`.
 
 ## See also
 

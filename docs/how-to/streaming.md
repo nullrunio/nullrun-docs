@@ -7,10 +7,9 @@ the final chunk (which carries the `usage` block).
 ## The pattern
 
 ```python title="streaming_agent.py"
-import time
 import nullrun
 from openai import AsyncOpenAI
-from nullrun import init_or_die, chain, protect, shutdown
+from nullrun import init_or_die, protect
 
 init_or_die()
 client = AsyncOpenAI()
@@ -18,9 +17,6 @@ client = AsyncOpenAI()
 
 @protect
 async def stream_answer(prompt: str):
-    # The @protect gate runs once at the start of the call.
-    # Cost is unknown at that point — the gate approves against
-    # the budget cap using the projected cost from policy.
     stream = await client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
@@ -30,38 +26,21 @@ async def stream_answer(prompt: str):
         yield chunk.choices[0].delta.content or ""
 ```
 
-That's the streaming path. The transport hook buffers chunks
-internally so the final `usage` block is read before the SDK emits
-`/track` — your user sees chunks in real time, but the cost is
-accurate.
+The transport hook buffers chunks internally so the final `usage`
+block is read before the SDK emits `/track` — chunks stream in real
+time, but the cost is accurate.
 
-## Long streams: keep the chain alive {#chain-heartbeat}
+## Long streams and soft mode
 
-A long stream that exceeds the chain idle TTL (300s by default) will
-be killed mid-chunk. To keep it alive, the SDK's background WS
-listener sends a heartbeat automatically **as long as the connection
-is alive and the policy allows it**. For most streams you do
-nothing.
+A long stream that exceeds the chain idle TTL (300s) will be killed
+mid-chunk. The SDK sends a wall-clock heartbeat every **30 seconds**
+per policy (configurable in `[10s, 120s]`) — not per chunk. For
+multi-minute responses, use a `chain` context to keep the gate
+alive:
 
-For very long streams (multi-minute responses with soft mode), use a
-`chain` context — the SDK extends the chain TTL while the call is
-in-flight and the gate is held open:
-
-```python title="streaming_with_chain.py"
-import nullrun
-from openai import OpenAI
-from nullrun import init_or_die, chain, protect, shutdown
-
-init_or_die()
-client = OpenAI()
-
-
+```python
 @protect
 def long_stream(prompt: str):
-    # `chain` opens a soft-mode gate and keeps it alive for the
-    # duration of the call. While inside the block, the SDK
-    # automatically extends the chain TTL as long as the WebSocket
-    # connection is up.
     with chain("my-long-stream", chain_op="start"):
         stream = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -72,88 +51,44 @@ def long_stream(prompt: str):
             yield chunk.choices[0].delta.content or ""
 ```
 
-!!! warning "Heartbeat is wall-clock based, not chunk-based"
-    The SDK sends a heartbeat every **30 seconds** (configurable per
-    policy in `[10s, 120s]`) regardless of how many chunks arrived.
-    A slow stream that produces 5 chunks in 5 minutes will look
-    "healthy" by chunk count but the chain will still die from idle
-    timeout if no heartbeat is sent. Rolling your own per-chunk
-    heartbeat is **wrong** — use the SDK's automatic cadence, or
-    call `POST /heartbeat` from a wall-clock timer.
-
-## Soft mode for streams
-
-If your stream is long enough that budget is a concern, use soft
-mode:
-
-```python title="streaming_soft_mode.py"
-import nullrun
-from openai import OpenAI
-from nullrun import init_or_die, chain, protect, shutdown
-
-init_or_die()
-client = OpenAI()
-
-
-@protect
-def stream_with_overdraft(prompt: str):
-    with chain("research-stream", chain_op="start"):
-        stream = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            stream=True,
-        )
-        for chunk in stream:
-            yield chunk.choices[0].delta.content or ""
-```
-
-The policy must have `enforcement_mode = "Soft"` for the overdraft to
-apply. Without it, the stream hard-blocks the moment projected cost
-exceeds budget. See [Chain context](../concepts/workflow.md#chain-context-soft-mode-budget-gate)
-for the full mechanics.
+For budget headroom, set `enforcement_mode = "Soft"` on the policy.
+See
+[Chain context](../concepts/workflow.md#chain-context).
 
 ## Kill signal mid-stream
 
-If an operator hits **Kill** while your stream is mid-flight, the
-SDK raises `WorkflowKilledInterrupt` at the next `yield` boundary:
+An operator hit on **Kill** raises `WorkflowKilledInterrupt` at the
+next `yield` boundary. It is a `BaseException` — catch it before any
+`except Exception` block, otherwise you'll swallow the kill.
 
-```python title="streaming_kill_safe.py"
+```python
 from nullrun.breaker.exceptions import WorkflowKilledInterrupt
 
 @protect
 async def stream_kill_safe(prompt: str):
     stream = await client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
+        model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}],
         stream=True,
     )
     try:
         async for chunk in stream:
             yield chunk.choices[0].delta.content or ""
     except WorkflowKilledInterrupt:
-        # Stream is cancelled at this yield. Clean up and re-raise
-        # so the kill contract reaches the top of your agent loop.
         await stream.close()
         raise
 ```
 
-`WorkflowKilledInterrupt` is a `BaseException` — catch it **before**
-any `except Exception` block in your code, otherwise you'll swallow
-the kill.
-
 ## Tracking without auto-instrumentation
 
 If the SDK's httpx transport hook can't see your custom streaming
-client (e.g. you're using a vendor-specific SDK that bypasses httpx),
-call `track_llm` manually after the stream ends:
+client (a vendor SDK that bypasses httpx), call `track_llm` manually
+after the stream ends. Use `stream_options={"include_usage": True}`
+so the final chunk carries the usage block; otherwise you have to
+estimate. See
+[OpenAI streaming reference](https://platform.openai.com/docs/api-reference/chat-streaming).
 
-```python title="manual_stream_track.py"
-import nullrun
-from openai import OpenAI
-from nullrun import init_or_die, protect, shutdown, track_llm
-
-init_or_die()
-client = OpenAI()
+```python
+from nullrun import init_or_die, protect, track_llm
 
 
 @protect
@@ -162,29 +97,12 @@ def custom_stream(prompt: str):
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         stream=True,
-    )
-
-    chunks = []
-    for chunk in stream:
-        text = chunk.choices[0].delta.content or ""
-        chunks.append(text)
-        yield text
-
-    # Manually report usage after the stream finishes.
-    # OpenAI's `stream_options={"include_usage": True}` puts a usage
-    # block on the final chunk; otherwise you have to estimate.
-    # See https://platform.openai.com/docs/api-reference/chat-streaming
-    stream = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        stream=True,
         stream_options={"include_usage": True},
     )
     final = None
     for chunk in stream:
-        text = chunk.choices[0].delta.content or ""
         final = chunk
-        yield text
+        yield chunk.choices[0].delta.content or ""
     if final and getattr(final, "usage", None):
         track_llm(
             input_tokens=final.usage.prompt_tokens,
@@ -193,14 +111,8 @@ def custom_stream(prompt: str):
         )
 ```
 
-Without `track_llm()` the SDK has no usage to report — the budget
-counter is never credited and the next `/gate` may reject the next
-call based on stale spend.
-
-> **Note:** the auto-instrumentation httpx hook handles usage
-> extraction for the standard `openai` SDK without any extra code.
-> The manual path above is only needed when you've replaced the
-> OpenAI client with a custom one.
+Without `track_llm()` the budget counter is never credited and the
+next `/gate` may reject the next call based on stale spend.
 
 ## Common pitfalls
 
@@ -213,7 +125,6 @@ call based on stale spend.
 
 ## See also
 
-- [Chain context → soft mode](../concepts/workflow.md#chain-context-soft-mode-budget-gate)
+- [Chain context → soft mode](../concepts/workflow.md#chain-context)
 - [Errors → kill contract](../reference/errors.md#sdk-exception-hierarchy-python)
-- [Use with FastAPI](../how-to/fastapi.md) — streaming inside ASGI
-  handlers
+- [Use with FastAPI](../how-to/fastapi.md) — streaming inside ASGI handlers

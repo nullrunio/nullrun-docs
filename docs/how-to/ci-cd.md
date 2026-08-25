@@ -47,23 +47,19 @@ jobs:
           NULLRUN_API_KEY: ${{ secrets.NULLRUN_PRE_PROD_KEY }}
           NULLRUN_API_URL: ${{ secrets.NULLRUN_PRE_PROD_URL }}
         run: |
+          set -euo pipefail
           python -m synthetic_sdk_load \
             --interval 0.05 \
             --workers 10 \
             --requests 200 \
             --model gpt-4o-mini \
             --yes
-
-      - name: Confirm at least N events succeeded
-        run: |
-          # synthetic_sdk_load exits non-zero on errors. The CI step
-          # fails automatically if the load output indicates any
-          # exception or HTTP failure.
           echo "load passed"
 ```
 
 `synthetic_sdk_load.py` exits `1` on any exception (network error,
-budget block, etc.) and `0` on a clean run. The exit code is your CI
+budget block, etc.) and `0` on a clean run. `set -euo pipefail`
+ensures the step fails fast on any error. The exit code is your CI
 gate.
 
 ## Common failure modes
@@ -122,11 +118,11 @@ jobs:
 
       - name: 3. Capabilities probe
         run: |
-          # Verify v3 contract is live before promoting to prod
+          # Verify the gateway capabilities are present before promoting to prod
           curl -fs "${NULLRUN_API_URL}/api/v1/capabilities" \
             | python -c "import json,sys; c=json.load(sys.stdin); \
-              assert c['capabilities']['server_minted_execution_id'], 'v3 not ready'; \
-              assert c['capabilities']['per_execution_reservations'], 'v3 not ready'"
+              assert c['capabilities']['server_minted_execution_id'], 'execution_id not ready'; \
+              assert c['capabilities']['per_execution_reservations'], 'reservations not ready'"
 
       - name: 4. Approval pause/resume (manual)
         # Trigger an approval-required call, click approve in the
