@@ -55,8 +55,9 @@ ToolBlock is **always Hard**: it never lets through, regardless of
 the budget's `enforcement_mode`. See
 [Reliability matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable).
 If the gate cannot evaluate the ToolBlock check (Redis or policy
-cache unavailable), it fails closed — `403 TOOL_BLOCKED`. The agent
-never runs an unverified sensitive operation.
+cache unavailable), it fails closed — `403 TOOL_BLOCKED` (SDK
+`error_code = "NR-T001"`). The agent never runs an unverified
+sensitive operation.
 
 ## A worked example
 
@@ -122,8 +123,8 @@ greyed out with an "Upgrade" link.
 
 ## How to debug a block you didn't expect
 
-If your agent reports `TOOL_BLOCKED` on a call you think should be
-allowed:
+If your agent reports `error_code = "NR-T001"` (wire `TOOL_BLOCKED`) on
+a call you think should be allowed:
 
 1. Open the workflow in the dashboard.
 2. Click **Effective policy**. The merged set shows every ToolBlock

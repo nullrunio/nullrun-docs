@@ -70,7 +70,7 @@ mode](policies.md#budgetlimit-extra-fields):
 Spending → $49.95 of $50.00
 Next @protect call:        #2.00 projected
 gate decision:             block
-SDK raises:                 NullRunBudgetError (BUDGET_HARD_BLOCKED)
+SDK raises:                 NullRunBudgetError (NR-B004, wire BUDGET_HARD_BLOCKED)
 @guarded:                   prints friendly message, sys.exit(1)
 ```
 

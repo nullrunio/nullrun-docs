@@ -7,10 +7,10 @@ when it isn't.
 
 | Situation | Default behaviour | Exception raised |
 | --- | --- | --- |
-| Workflow exceeds budget (Hard mode) | Halt at next `/gate` call | `NullRunBudgetError` (code `BUDGET_HARD_BLOCKED`) |
-| Soft mode over-budget | Allow bounded overrun if chain active, otherwise block | `NullRunBudgetError` (code `BUDGET_OVERDRAFT_EXCEEDED` / `BUDGET_SOFT_BLOCKED`) |
-| Agent calls a sensitive tool | Block the call before the function body runs (per ToolBlock policy) | `NullRunToolBlockedError` (code `TOOL_BLOCKED`) |
-| Gateway unreachable, budget gate | **Fail-CLOSED** — 402 `REDIS_UNAVAILABLE` | `NullRunBackendError` |
+| Workflow exceeds budget (Hard mode) | Halt at next `/gate` call | `NullRunBudgetError` (`error_code = "NR-B004"`, wire `BUDGET_HARD_BLOCKED`) |
+| Soft mode over-budget | Allow bounded overrun if chain active, otherwise block | `NullRunBudgetError` (`error_code = "NR-B004"`, wire `BUDGET_OVERDRAFT_EXCEEDED` or `BUDGET_SOFT_BLOCKED`) |
+| Agent calls a sensitive tool | Block the call before the function body runs (per ToolBlock policy) | `NullRunToolBlockedError` (`error_code = "NR-T001"`, wire `TOOL_BLOCKED`) |
+| Gateway unreachable, budget gate | **Fail-CLOSED** — 402 `BUDGET_REDIS_UNAVAILABLE` | `NullRunBackendError` |
 | Gateway unreachable, per-key rate limit | **Fail-OPEN** (secondary signal; budget gate is the backstop) | `NullRunBackendError` (warn-logged) |
 | Gateway unreachable, aggregate rate limit | **Fail-CLOSED** — 503 `RATE_LIMIT_REDIS_UNAVAILABLE` | `NullRunRateLimitRedisError` |
 | Workflow killed via dashboard | Raise at next `/gate` call (or at WS push receipt) | `WorkflowKilledInterrupt` (`BaseException`) |
@@ -44,8 +44,9 @@ The most common causes, in order of frequency:
    merged Effective Policy on the workflow's detail page to see
    which patterns are in scope.
 3. **Workflow inactive** — the workflow was soft-deleted, paused,
-   or killed. The gate returns 403 `WORKFLOW_INACTIVE`. Restore the
-   workflow from the dashboard or create a new one.
+   or killed. The gate returns 403 `WORKFLOW_INACTIVE` (SDK surfaces as
+   `error_code = "NR-W004"`). Restore the workflow from the dashboard
+   or create a new one.
 4. **Consume over-budget on `/track`** — actual cost exceeded the
    reservation + ε. The gate returns 422 `CONSUME_OVERBUDGET` and
    refuses to commit. Report the actual cost accurately from the

@@ -43,7 +43,8 @@ inverts this:
 
 - You write a ToolBlock policy that names the tools you care about.
 - The policy is evaluated server-side on every `/gate` call.
-- The decision is returned to the SDK as `TOOL_BLOCKED` (403).
+- The decision is returned to the SDK as `TOOL_BLOCKED` (403); the SDK
+  raises `NullRunToolBlockedError` with `error_code = "NR-T001"`.
 
 The gate **does not inspect tool arguments** — it cannot distinguish
 two calls to the same tool by payload. If you want a narrower rule
@@ -56,12 +57,12 @@ NumericRange / Regex / Exists matchers. See
 ## Why ToolBlock is fail-CLOSED
 
 Per the [Reliability matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable),
-ToolBlock fails closed: `403 TOOL_BLOCKED`. Letting through a
-`stripe.charge` when the policy check failed means the agent could
-move money without anyone knowing. The blast radius is "agent
-deleted production data" or "agent leaked your data to an attacker"
-— worse than a noisy stop. ToolBlock is **always Hard**, regardless
-of the budget's `enforcement_mode`.
+ToolBlock fails closed: `403 TOOL_BLOCKED` (SDK `error_code = "NR-T001"`).
+Letting through a `stripe.charge` when the policy check failed means
+the agent could move money without anyone knowing. The blast radius
+is "agent deleted production data" or "agent leaked your data to an
+attacker" — worse than a noisy stop. ToolBlock is **always Hard**,
+regardless of the budget's `enforcement_mode`.
 
 ## What's NOT in a ToolBlock policy
 
@@ -94,8 +95,9 @@ pattern that matches fires.
 
 When a sensitive tool is blocked:
 
-- **Decision History** records the block with reason `TOOL_BLOCKED`,
-  the pattern that matched, and the workflow + api_key + tool_name.
+- **Decision History** records the block with reason `TOOL_BLOCKED`
+  (SDK `error_code = "NR-T001"`), the pattern that matched, and the
+  workflow + api_key + tool_name.
 - **`audit_events`** records the decision with hash chaining — see
   [Audit records](../concepts/error-handling.md#audit-trail).
 

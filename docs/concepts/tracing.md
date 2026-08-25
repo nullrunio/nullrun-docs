@@ -118,7 +118,7 @@ When you're building a new agent, traces tell you:
 - **Is the agent slow?** — sort by duration, see which LLM call
   takes the most time.
 - **Is the agent hitting the budget?** — look for spans with
-  `decision = block / BUDGET_HARD_BLOCKED`.
+  `decision = block / NR-B004`.
 - **Is the agent calling tools you didn't expect?** — the trace
   shows every tool call with arguments.
 

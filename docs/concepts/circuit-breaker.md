@@ -22,14 +22,12 @@ next call rejects.
 
 | Situation | What you see | Where in the dashboard |
 |---|---|---|
-| **Budget exceeded** (Hard mode) | Every call returns `block` with reason `BUDGET_HARD_BLOCKED` / `BUDGET_OVERDRAFT_EXCEEDED` | Decision History, then the spend bar hits 100% |
-| **Tool blocked** by policy | `block` with reason `TOOL_BLOCKED` | Decision History |
+| **Budget exceeded** (Hard mode) | Every call returns `block`; SDK raises `NullRunBudgetError` with `error_code = "NR-B004"` (wire: `BUDGET_HARD_BLOCKED` or `BUDGET_OVERDRAFT_EXCEEDED`) | Decision History, then the spend bar hits 100% |
+| **Tool blocked** by policy | `block`; SDK raises `NullRunToolBlockedError` with `error_code = "NR-T001"` (wire: `TOOL_BLOCKED`) | Decision History |
 | **Operator kill** | `WorkflowKilledInterrupt` raised mid-call | Workflow status flips to **Killed** |
 
 Rate limiting (429) and budget soft-mode blocks are returned by the
-same gate but with different error codes (`RATE_LIMIT_EXCEEDED`,
-`BUDGET_SOFT_BLOCKED`). See [Budgets](budgets.md#soft-mode) and
-[Policies](policies.md).
+same gate but with different codes. SDK surfaces them as `error_code = "NR-R001"` (wire `RATE_LIMIT_EXCEEDED`) and `error_code = "NR-B004"` (wire `BUDGET_SOFT_BLOCKED`). See [Budgets](budgets.md#soft-mode) and [Policies](policies.md).
 
 The first two are automatic — the gate enforces them on every call.
 The third needs you to click **Kill** in the dashboard or call
@@ -42,8 +40,8 @@ exception depends on what tripped it:
 
 | Trip cause | Exception | `BaseException`? |
 |---|---|---|
-| Budget exceeded | `NullRunBudgetError` (`BUDGET_HARD_BLOCKED`) | No |
-| Tool blocked | `NullRunBlockedException` | No |
+| Budget exceeded | `NullRunBudgetError` (`error_code = "NR-B004"`) | No |
+| Tool blocked | `NullRunBlockedException` (`error_code = "NR-T001"`) | No |
 | Operator kill | `WorkflowKilledInterrupt` | **Yes** |
 
 The kill signal is a `BaseException`, not an `Exception`, so it
@@ -64,13 +62,13 @@ set by the implementation, not by a per-deployment mode knob:
 
 | Path | Behaviour | Why |
 |---|---|---|
-| Budget reservation | **fail-CLOSED** → 402 `REDIS_UNAVAILABLE` | Money is more important than availability |
+| Budget reservation | **fail-CLOSED** → 402 `BUDGET_REDIS_UNAVAILABLE` | Money is more important than availability |
 | Aggregate rate limit | **fail-CLOSED** → 503 `RATE_LIMIT_REDIS_UNAVAILABLE` | Aggregate is the authoritative gate |
 | Per-key rate limit | **fail-OPEN** | Secondary signal; budget gate is the backstop |
 | ToolBlock check | **fail-CLOSED** → 403 `TOOL_BLOCKED` | Sensitive operations must not run when policy can't be evaluated |
 | `/track` outbox | **fail-OPEN** + async retry | The inference has already happened; blocking the response is not useful |
 
-If you're seeing a flood of `REDIS_UNAVAILABLE` or
+If you're seeing a flood of `BUDGET_REDIS_UNAVAILABLE` or
 `RATE_LIMIT_REDIS_UNAVAILABLE`, the gateway's Redis dependency is the
 likely culprit. Check `/health/ready` and the Prometheus
 `redis_up` gauge.
