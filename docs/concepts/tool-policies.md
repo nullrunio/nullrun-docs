@@ -36,9 +36,9 @@ Each entry in a ToolBlock policy is one of:
 - **Glob** — `"send_*"` blocks anything starting with `send_`.
 - **`*` alone** — blocks everything.
 
-Each entry is capped at **4096 bytes** (`MAX_POLICY_PATTERN_BYTES`).
-The cap exists because the matcher scans every pattern on every
-gate call — a 10 MB pattern would burn CPU on each call.
+Each entry is capped at **4096 bytes**. The cap exists because the
+matcher scans every pattern on every gate call — a 10 MB pattern
+would burn CPU on each call.
 
 The matcher runs case-insensitively against the canonical tool name.
 
@@ -52,11 +52,8 @@ create an **approval rule** instead (see
 on the backend (`policies` vs `approval_rules`).
 
 ToolBlock is **always Hard**: it never lets through, regardless of
-the budget's `enforcement_mode`. Per positioning §5 + §4:
-
-> ToolBlock — 403 `TOOL_BLOCKED` — ALWAYS Hard, regardless of budget
-> enforcement_mode
-
+the budget's `enforcement_mode`. See
+[Reliability matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable).
 If the gate cannot evaluate the ToolBlock check (Redis or policy
 cache unavailable), it fails closed — `403 TOOL_BLOCKED`. The agent
 never runs an unverified sensitive operation.
@@ -111,13 +108,13 @@ The dashboard rejects invalid patterns at save time:
 | Error | Cause | Fix |
 |---|---|---|
 | `400 bare_string_pattern` | `"pattern": "send_*"` instead of `"pattern": ["send_*"]` | Always use an array, even for one entry |
-| `400 pattern_too_long` | An entry longer than 4096 bytes | Split into multiple patterns |
+| `400 pattern_too_long` | An entry longer than the per-pattern byte cap | Split into multiple patterns |
 | `400 invalid_glob` | Contains control characters | Remove `\n`, `\r`, `\t` |
 
 ## Plan gating
 
-`ToolBlock` policies require `Feature::CustomPolicies`, which is on
-**Growth+** plans. Lite and Starter can have `BudgetLimit` and
+`ToolBlock` policies require the Custom Policies feature, which is
+on **Growth+** plans. Lite and Starter can have `BudgetLimit` and
 `RateLimit` policies, but not ToolBlock.
 
 On Lite / Starter, the dashboard shows ToolBlock policy creation

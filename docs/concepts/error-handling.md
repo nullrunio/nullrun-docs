@@ -42,8 +42,8 @@ Every NullRun exception carries four fields your code can branch on:
 
 Error codes are uppercase snake-case enum values per
 [Reference → Errors](../reference/errors.md). The full catalog lives
-in that reference page; the canonical set per positioning §13
-includes `BUDGET_HARD_BLOCKED`, `BUDGET_SOFT_BLOCKED`,
+in that reference page; the standard set includes
+`BUDGET_HARD_BLOCKED`, `BUDGET_SOFT_BLOCKED`,
 `BUDGET_OVERDRAFT_EXCEEDED`, `BUDGET_ANTI_DOS_RESERVED_CAP`,
 `BUDGET_PERIOD_NOT_STARTED`, `REDIS_UNAVAILABLE`,
 `CHAIN_MAX_DURATION_EXCEEDED`, `TOOL_BLOCKED`, `CHAIN_CROSS_ORG`,
@@ -204,54 +204,42 @@ The mapping from exception to HTTP status is documented in
 ## Audit trail
 
 Every gate decision — `allow`, `block`, `require_approval` — is
-written to `audit_events` with hash-chained `content_hash` +
-`previous_hash`. The chain is recompute-verifiable on demand via
-`GET /api/v1/orgs/{org_id}/audit-log/verify`.
+written to `audit_events`. The chain is recompute-verifiable on
+demand via `GET /api/v1/orgs/{org_id}/audit-log/verify`.
 
-Row-level immutability for the runtime role is enforced by a
-`BEFORE UPDATE/DELETE` trigger `reject_audit_event_mutation`, an
-`event` trigger `prevent_audit_ddl`, and `RLS FORCE` on
-`audit_events` with `REVOKE UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER`.
-This is the integrity anchor today.
+The audit log is the source of truth for "did the agent call the
+right thing?". Pair it with [Traces](tracing.md) for full context.
 
-Honest disclosure (positioning §5.2):
+### Honest disclosure
 
 - The reader trusts Postgres only — there is no external
-  attestation. An attacker with DB write access can rewrite the
-  chain because rows are mutable at the SQL level outside the
-  runtime role's triggers.
-- The `since`-cursor semantics limit the re-walked window.
+  attestation.
 - The HTTP verify response is **unsigned** (no HMAC over the
   verify result).
-- The live JSONL export is **unsigned** (the S3 path uses
-  presigned URLs but no body HMAC).
+- The live JSONL export is **unsigned**.
 
-Signed exports, signed HTTP verify responses, and externally
-anchored proofs are roadmap items.
+Signed exports and externally anchored proofs are roadmap items.
 
 ## What is NOT stored
 
 NullRun never persists:
 
 - **Prompt content** or **LLM response payloads**. The gate
-  receives only `model`, `tool`, `tools`, `estimated_tokens`,
-  optional `business_impact` typed payload, and (Разрыв 2) the
-  `tool_params` argument bag for `BusinessImpact::ToolCall` impacts.
+  receives only `model`, `tool`, `tools`, `estimated_tokens`, and
+  optional `business_impact` typed payload.
 - **Tool arguments** beyond the typed `BusinessImpact` extraction.
   Operators do not write JSONPath rules over tool payloads.
 - **MCP interaction payloads** — only the canonical tool name is
   logged.
 - **Card numbers, CVC, expiry month/year** — Polar is the
-  merchant of record. `billing_subscriptions` carries only
-  `payment_method_brand` and `payment_method_last4`.
+  merchant of record. Subscriptions carry only `payment_method_brand`
+  and `payment_method_last4`.
 - **OAuth refresh tokens** — the IdP owns session lifetime.
 
-`src/pii.rs::EmailHash` and `proxy/redaction.rs` redact at the
-log boundary and the trace-span boundary so plaintext email and
-raw prompts do not reach the structured log store. The
-`SecretScrubberLayer` + `ScrubWriter` (mounted at startup in
-`main.rs`) rewrite any uppercase `KEY=VALUE` pair on the line to
-`KEY=[REDACTED]` before bytes reach stdout.
+Email addresses and prompts are hashed or redacted at the log and
+trace-span boundary so plaintext does not reach the structured log
+store. Uppercase `KEY=VALUE` pairs are rewritten to `KEY=[REDACTED]`
+before bytes reach stdout.
 
 ## Kill signal — special case
 

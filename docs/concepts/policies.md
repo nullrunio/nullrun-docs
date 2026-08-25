@@ -33,8 +33,7 @@ page for the glob-match syntax inside `ToolBlock`.
 
 ## BudgetLimit — extra fields
 
-A `BudgetLimit` policy can carry these optional fields (Phase 1 / MVP 1.0
-audit fix, positioning §3.4.2 + §7):
+A `BudgetLimit` policy can carry these optional fields:
 
 | Field | Default | What it does |
 |---|---|---|
@@ -43,10 +42,28 @@ audit fix, positioning §3.4.2 + §7):
 | `max_overdraft_percent` | `0` | Maximum overdraft as percent of the budget. |
 | `max_chain_duration_seconds` | `3600` | Maximum duration of a chain started under this policy before the gate refuses. |
 
-The gate's `aggregate_policies()` reads these fields from every
-applicable `BudgetLimit` and uses **most-restrictive-wins**:
-`enforcement_mode` (Hard > Soft), `max_overdraft_cents` (min),
-`max_overdraft_percent` (min).
+The gate reads these fields from every applicable `BudgetLimit` and
+uses **most-restrictive-wins**: `enforcement_mode` (Hard > Soft),
+`max_overdraft_cents` (min), `max_overdraft_percent` (min).
+
+### Soft mode requirements
+
+Soft mode requires **all three**:
+
+1. The policy uses `enforcement_mode = Soft` (not Hard)
+2. An **active `chain_id`** exists (declared via `with chain(...)`)
+3. The projected cost stays within `max_overdraft_cents` and
+   `max_overdraft_percent`
+
+If any of the three is missing, soft mode is unavailable and the
+gate behaves as Hard. Multiple parallel chains on the same org share
+one `overdraft_used` counter — N concurrent chains do **not**
+multiply the overdraft cap.
+
+A chain dies on the first of: `chain_op="end"`, 5 minutes of `/gate`
+inactivity (idle TTL), or exceeding `max_chain_duration_seconds`.
+Chain time is read server-side, eliminating clock skew between
+backend nodes.
 
 ## Aggregation
 
@@ -98,16 +115,14 @@ hand-authoring JSON.
 
 ## Plan gating
 
-Some policy features are plan-restricted. Per the entitlements
-matrix in CLAUDE.md §17.7:
+Some policy features are plan-restricted:
 
 | Feature | Available on |
 |---|---|
 | `BudgetLimit` policies | All plans |
 | `RateLimit` policies | All plans |
-| `ToolBlock` policies | Growth+ (`Feature::CustomPolicies`) |
-| Approval rules (Phase 1 typed predicates) | Growth+ (`Feature::Approvals`) |
-| `audit_log` feature | Growth+ |
+| `ToolBlock` policies | Growth+ |
+| Approval rules with typed predicates | Growth+ |
 
 If you try to create a feature your plan doesn't include, the
 dashboard shows the feature greyed out with an "Upgrade" link.
@@ -116,20 +131,14 @@ dashboard shows the feature greyed out with an "Upgrade" link.
 
 Approval rules are **not** a `ToolBlock` policy with an `action =
 require_approval` field. They are a separate entity in the
-`approval_rules` table with:
-
-- `tool_patterns TEXT[]` — the glob patterns
-- `per_call_threshold_cents BIGINT NULLABLE` — Phase 0 projected-cost threshold
-- `action_predicate JSONB NULLABLE` — Phase 1 typed `BusinessImpact`
-  predicate (`{"kind":"money_amount",...}` or
-  `{"kind":"tool_parameters",...}`)
-- `priority`, `expires_in_seconds`, `action_label`
+`approval_rules` table with `tool_patterns`, a projected-cost
+threshold, a typed `BusinessImpact` predicate, and operational
+metadata.
 
 When a rule fires, the gate returns `decision = "require_approval"`
-and the SDK parks on `event.wait(timeout=...)` until the operator
-clicks Approve / Deny on the dashboard. See
-[Human approval](human-approval.md) for the full flow including the
-Разрыв 1c WebSocket push and the typed `action_digest` binding.
+and the SDK parks until the operator clicks Approve / Deny. See
+[Human approval](human-approval.md) for the full flow, the typed
+`action_digest` binding, and the WebSocket push resume path.
 
 ## How to create one
 

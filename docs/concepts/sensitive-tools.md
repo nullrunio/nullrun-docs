@@ -48,22 +48,20 @@ inverts this:
 The gate **does not inspect tool arguments** — it cannot distinguish
 two calls to the same tool by payload. If you want a narrower rule
 (e.g. "block refunds over $500"), use a typed `BusinessImpact`
-predicate (Разрыв 2 / 2026-07-27): the SDK extracts the argument bag
-and the gate evaluates a DNF of up to 5 named parameters against
-Equals / OneOf / NumericRange / Regex / Exists matchers. See
-[Human approval → typed predicates](human-approval.md#phase-1-typed-predicates-2-2026-07-27).
+predicate: the SDK extracts the argument bag and the gate evaluates
+a DNF of up to 5 named parameters against Equals / OneOf /
+NumericRange / Regex / Exists matchers. See
+[Human approval → typed predicates](human-approval.md#typed-predicates).
 
 ## Why ToolBlock is fail-CLOSED
 
-Per the [Reliability matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable):
-
-> ToolBlock check → fail-CLOSED → 403 `TOOL_BLOCKED`
-
-Letting through a `stripe.charge` when the policy check failed means
-the agent could move money without anyone knowing. The blast radius
-is "agent deleted production data" or "agent leaked your data to an
-attacker" — worse than a noisy stop. ToolBlock is **always Hard**,
-regardless of the budget's `enforcement_mode`.
+Per the [Reliability matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable),
+ToolBlock fails closed: `403 TOOL_BLOCKED`. Letting through a
+`stripe.charge` when the policy check failed means the agent could
+move money without anyone knowing. The blast radius is "agent
+deleted production data" or "agent leaked your data to an attacker"
+— worse than a noisy stop. ToolBlock is **always Hard**, regardless
+of the budget's `enforcement_mode`.
 
 ## What's NOT in a ToolBlock policy
 
@@ -88,7 +86,7 @@ applies to:
 - A specific workflow (scope to `workflow_id`)
 - A specific API key (scope to `api_key_id`)
 
-Per the [aggregate rules](../concepts/policies.md#aggregation):
+Per the [aggregation rules](../concepts/policies.md#aggregation):
 ToolBlock patterns **union** across applicable policies — every
 pattern that matches fires.
 
@@ -98,8 +96,8 @@ When a sensitive tool is blocked:
 
 - **Decision History** records the block with reason `TOOL_BLOCKED`,
   the pattern that matched, and the workflow + api_key + tool_name.
-- **`audit_events`** gets a hash-chained row (content_hash +
-  previous_hash) — see [Audit records](../concepts/error-handling.md#audit-trail).
+- **`audit_events`** records the decision with hash chaining — see
+  [Audit records](../concepts/error-handling.md#audit-trail).
 
 This gives you a complete audit trail of every blocked attempt,
 regardless of whether the block came from your policy or from the

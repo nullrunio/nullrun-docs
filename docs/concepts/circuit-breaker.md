@@ -1,15 +1,14 @@
 # Circuit breaker
 
-A **circuit breaker** is what stops your agent when something goes
-wrong. When the agent is hitting the budget cap, calling a tool your
-policies forbid, or being asked by an operator to stop — the gate
-returns `block` and the SDK raises an exception, even if the agent's
-code doesn't know to stop.
+The circuit breaker stops your agent when something goes wrong. When
+the agent is hitting the budget cap, calling a tool your policies
+forbid, or being asked by an operator to stop — the gate returns
+`block` and the SDK raises an exception, even if the agent's code
+doesn't know to stop.
 
-The "circuit breaker" framing in this docs site is a metaphor for the
-gate's enforcement model. The underlying mechanism is a single
-`/api/v1/gate` evaluation per `@protect`-wrapped call that returns
-`allow` / `block` / `require_approval`.
+The underlying mechanism is a single `/api/v1/gate` evaluation per
+`@protect`-wrapped call that returns `allow` / `block` /
+`require_approval`.
 
 In the dashboard, a tripped breaker shows up as the workflow's status
 flipping from **Active** to **Killed** or as a flood of **block**
@@ -47,10 +46,10 @@ exception depends on what tripped it:
 | Tool blocked | `NullRunBlockedException` | No |
 | Operator kill | `WorkflowKilledInterrupt` | **Yes** |
 
-The kill signal is a `BaseException`, not an `Exception`. This is
-deliberate: it propagates through `try/except Exception:` blocks so
-you can't accidentally swallow the kill. See
-[Error handling](../concepts/error-handling.md) for the full contract.
+The kill signal is a `BaseException`, not an `Exception`, so it
+propagates through `try/except Exception:` blocks. See
+[Error handling → Kill signal](../concepts/error-handling.md#kill-signal-special-case)
+for the full contract.
 
 If you use the zero-boilerplate helpers from the SDK, you don't have
 to write any of this — `@guarded` catches the standard exceptions
@@ -101,7 +100,7 @@ Open the workflow in the dashboard. Check the state:
 | Status | What happened |
 |---|---|
 | **Active** | The agent is fine — check the application logs for the actual error |
-| **Paused** | You paused it (or an operator did). Click **Resume** to restart. |
+| **Paused** | You paused it (or an operator did). Click **Resume** to restart. See [Control plane](control-plane.md). |
 | **Killed** | You killed it (or an operator did). Create a new workflow or re-activate. |
 
 If the status is Active but every call rejects, open **Decision

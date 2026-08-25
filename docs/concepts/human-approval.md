@@ -18,29 +18,28 @@ require_approval` field. They are a separate entity on the backend
 | Field | Type | Purpose |
 |---|---|---|
 | `tool_patterns` | `TEXT[]` | Glob patterns matching the tool name |
-| `per_call_threshold_cents` | `BIGINT NULLABLE` | Phase 0 projected-cost threshold |
-| `action_predicate` | `JSONB NULLABLE` | Phase 1 typed `BusinessImpact` predicate |
+| `per_call_threshold_cents` | `BIGINT NULLABLE` | Projected-cost threshold (estimated tokens × model rate) |
+| `action_predicate` | `JSONB NULLABLE` | Typed `BusinessImpact` predicate |
 | `priority`, `expires_in_seconds`, `action_label` | scalar | Operational metadata |
 
 When an SDK calls a tool that matches an approval rule, the gate
 returns `decision = "require_approval"` and parks the SDK on a
 `threading.Event` until the operator clicks Approve / Deny.
 
-## Phase 0 vs Phase 1 rules
+## Predicate kinds
 
-Two predicate kinds can fire the same approval rule:
+Two predicate fields can fire the same approval rule:
 
-- **Phase 0 (`per_call_threshold_cents`)** — projected execution
-  cost in cents, evaluated against the SDK-reported `estimated_tokens`.
-- **Phase 1 (`action_predicate`)** — a typed condition over a
-  structured `BusinessImpact` extracted from the live function
-  call.
+- **`per_call_threshold_cents`** — projected execution cost in
+  cents, evaluated against the SDK-reported `estimated_tokens`.
+- **`action_predicate`** — a typed condition over a structured
+  `BusinessImpact` extracted from the live function call.
 
 When both are set, the rule fires only when **both** pass. Either
 may be `None`, in which case it does not contribute. A rule with
 both `None` matches every call.
 
-### Phase 1 typed predicates (Разрыв 2, 2026-07-27)
+### Typed predicates
 
 Two predicate kinds are supported on `action_predicate`:
 
@@ -55,7 +54,7 @@ Two predicate kinds are supported on `action_predicate`:
    }
    ```
 
-2. **`tool_parameters`** (Разрыв 2) — DNF over up to 5 named
+2. **`tool_parameters`** — DNF over up to 5 named
    parameters with Equals / OneOf / NumericRange / Regex / Exists
    matchers.
 
@@ -71,12 +70,11 @@ Two predicate kinds are supported on `action_predicate`:
    ```
 
 The `tool_parameters` predicate rides on the SDK's
-`ToolParamsExtractor`. With the default `include_all=True` mode
-(`nullrun-sdk-python/src/nullrun/extractor.py`), every kwarg of
-`@sensitive`-decorated functions flows into the predicate bag
-(positional args are dropped; `f64` / set / custom objects are
-filtered; PII-masked sentinels like `"***"` for `password` / `token` /
-`api_key` keys are stripped before wire).
+`ToolParamsExtractor`. With the default `include_all=True` mode,
+every kwarg of `@sensitive`-decorated functions flows into the
+predicate bag (positional args are dropped; `f64` / set / custom
+objects are filtered; PII-masked sentinels like `"***"` for
+`password` / `token` / `api_key` keys are stripped before wire).
 
 ## `action_digest` — tamper-evident binding
 
@@ -89,30 +87,15 @@ on the `approvals` row.
 
 After the operator clicks Approve, the SDK's post-approval `/execute`
 re-check sends the live `business_impact` and `action_digest` back
-to the gate. The grant consume is atomic:
+to the gate. The grant consume is atomic: a single `UPDATE approvals
+SET consumed_at = NOW() WHERE id = $1 AND execution_id = $2 AND
+status = 'APPROVED' AND consumed_at IS NULL AND expires_at > NOW()
+AND ($3::text IS NULL OR action_digest = $3) RETURNING id` query
+serializes concurrent re-checks through the row lock. The
+discriminated `ActionGrantOutcome` enum surfaces `Allow` /
+`DigestMismatch` / `NotFound` / `Expired` / `ReplayRejected`.
 
-```sql
-UPDATE approvals
-SET consumed_at = NOW()
-WHERE id = $1
-  AND execution_id = $2
-  AND status = 'APPROVED'
-  AND consumed_at IS NULL
-  AND expires_at > NOW()
-  AND ($3::text IS NULL OR action_digest = $3)
-RETURNING id
-```
-
-Two concurrent re-checks with different impacts serialize through
-the row lock. The discriminated `ActionGrantOutcome` enum surfaces
-`Allow` / `DigestMismatch` / `NotFound` / `Expired` / `ReplayRejected`.
-
-Cross-repo golden hexes (must hold against either implementation):
-
-- `dfc96387ca539b7130caebe705e042f2e34e52ab44352ae5e527bcef64f0df27` for `Money`
-- `9975a8b75a436fb78b9d141b9e0c0a90838c1243d78119b304ae6ed0526966a6` for `ToolCall`
-
-## Approval resume flow (Разрыв 1c)
+## Approval resume flow
 
 The complete flow, end-to-end:
 
@@ -136,7 +119,7 @@ If the WS push is silent for `approval_timeout_seconds`, the SDK
 **fails CLOSED**: `WorkflowKilledInterrupt` is raised and the agent
 dies. A silent network must not silently approve a privileged
 action. There is no `/status` HTTP-poll fallback for approvals —
-deliberate, consistent with §34a "Hard always, no hidden autonomy".
+deliberate, the operator's word is final.
 
 ## What you see in the dashboard
 
@@ -161,8 +144,7 @@ In the **Approvals** page, click an open request. You see:
 
 1. The agent's goal (what it was trying to accomplish)
 2. The tool it wants to call (e.g. `send_email`)
-3. The typed impact summary (Phase 1) or the projected cost
-   (Phase 0)
+3. The typed impact summary or the projected cost
 4. The action digest (the SHA-256 binding)
 5. How long the approval has been pending
 

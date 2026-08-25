@@ -28,8 +28,8 @@ application's environment, and the SDK takes care of the rest.
 
 1. **Access → API keys → New API key**.
 2. Pick a workflow to bind the key to. The dropdown lists every
-   workflow in your org. (Each key is **workflow-scoped** since
-   Phase 139 — one key represents one agent run, not one workspace.)
+   workflow in your org. (Each key is **workflow-scoped** — one key
+   represents one agent run, not one workspace.)
 3. Pick the permissions the key needs. The defaults
    (`gate`, `execute`, `track`) work for most agents.
 4. Optionally set an expiration date. Keys without an expiration
@@ -187,10 +187,10 @@ and is meant for SDK tests + CI fixtures only.
 
 ### "Can I share a key between two workflows?"
 
-No. Each key is bound to exactly one workflow at creation time
-(Phase 139 invariant). If you need the same agent logic against two
-workflows (for example, A/B testing), create two keys and switch
-between them based on your A/B routing.
+No. Each key is bound to exactly one workflow at creation time.
+If you need the same agent logic against two workflows (for example,
+A/B testing), create two keys and switch between them based on your
+A/B routing.
 
 ### "What happens when my key expires?"
 

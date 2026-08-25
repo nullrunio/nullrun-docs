@@ -138,8 +138,7 @@ When you're debugging a production issue, traces answer:
 
 If `init()` was never called or the API key is missing, the SDK
 runs in error mode and no spans are recorded. Check the SDK logs for
-`NullRunAuthenticationError` (a config-family error code — not part
-of the canonical machine-readable set the gateway returns).
+`NullRunAuthenticationError`.
 
 ### "My trace is incomplete — only some spans show up"
 

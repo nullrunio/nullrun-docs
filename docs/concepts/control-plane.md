@@ -78,10 +78,10 @@ except WorkflowPausedException:
     raise
 ```
 
-In practice, if you use the zero-boilerplate `@guarded` decorator,
-you don't need to write this — `WorkflowKilledInterrupt` propagates
-through `@guarded` because `@guarded` only catches `NullRunError`
-subclasses, and the kill signal is `BaseException`.
+`WorkflowKilledInterrupt` is a `BaseException`, so `@guarded` lets
+it propagate (it only catches `NullRunError` subclasses). See
+[Error handling → Kill signal](../concepts/error-handling.md#kill-signal-special-case)
+for the full contract.
 
 For Pause, you have more flexibility. Most production agents catch
 `WorkflowPausedException`, save their state to durable storage,
@@ -91,15 +91,15 @@ supervisor process restart them when the workflow is unpaused.
 ## Approval events
 
 The same WebSocket push channel carries the second event type the SDK
-needs: **`approval_resolved`** (Разрыв 1c / 2026-07-25). When the
-gate returns `decision = require_approval` on a `/gate` call, the
-parked SDK agent's thread waits on a `threading.Event` until the
-operator clicks Approve or Deny on the dashboard. The
-`approval_resolved` WS push wakes the event; the SDK resumes the
-agent with the operator's outcome.
+needs: **`approval_resolved`**. When the gate returns
+`decision = require_approval` on a `/gate` call, the parked SDK
+agent's thread waits on a `threading.Event` until the operator
+clicks Approve or Deny on the dashboard. The `approval_resolved` WS
+push wakes the event; the SDK resumes the agent with the operator's
+outcome.
 
 The complete approval flow is documented in
-[Human approval](human-approval.md#approval-resume-flow-1c).
+[Human approval → Approval resume flow](human-approval.md#approval-resume-flow).
 The wire-level failure mode is **fail-CLOSED**: if the WS push is
 silent for `NULLRUN_APPROVAL_TIMEOUT_SECONDS` (default 300s), the
 SDK raises `WorkflowKilledInterrupt` and the agent dies — silent
@@ -139,7 +139,8 @@ in the audit log.
 
 1. **Workflows** → workflow row → **Kill**.
 2. The agent receives `WorkflowKilledInterrupt` on the next yield
-   point inside its loop.
+   point inside its loop. The signal is a `BaseException` — see
+   [Error handling](../concepts/error-handling.md#kill-signal-special-case).
 3. If the agent's loop catches `Exception` (but not `BaseException`),
    the kill propagates through. If the agent catches `BaseException`
    explicitly, make sure it re-raises `WorkflowKilledInterrupt` —

@@ -4,9 +4,6 @@ A **workflow** is one agent you run. In the dashboard it shows up
 under **Workflows** in the left sidebar. Each workflow has its own
 budget, its own list of API keys, its own decision history.
 
-If you have one production assistant and one weekend experiment,
-that's two workflows.
-
 ## What you see in the dashboard
 
 The **Workflows** page lists every workflow you've created. Each
@@ -50,27 +47,12 @@ You'll land on the new workflow's detail page. From there:
 ## How to control one
 
 Each workflow has three states that you control from the dashboard
-or via the API:
-
-| State | What it means | What your agent sees |
-|---|---|---|
-| **Active** | Calls are gated normally | `allow` / `block` as usual |
-| **Paused** | You want a temporary stop | Every call raises `WorkflowPausedException` until you unpause |
-| **Killed** | You want it stopped | Every call raises `WorkflowKilledInterrupt` — `BaseException`, your loop must catch it explicitly |
-
-Both Pause and Kill reach your running SDK over a WebSocket push.
-The agent doesn't have to wait for the next call to learn.
-
-To pause a runaway agent immediately, click the workflow's
-**Pause** button (or hit `POST /workflows/{id}/pause`). The SDK
-raises the pause exception at the next gate entry.
-
-To stop it permanently, hit **Kill**. The kill signal is a
-`BaseException`, so it propagates even if you've wrapped the agent
-in `try/except Exception`. The agent loop dies.
-
-Both actions are reversible — Pause can be unpaused, Kill is
-terminal until you restart the workflow.
+or via the API: **Active**, **Paused**, and **Killed**. Both Pause
+and Kill reach your running SDK over a WebSocket push; the agent
+doesn't have to wait for the next call to learn. See
+[Control plane](control-plane.md) for the full contract, the
+exceptions each state raises, and how the signal travels over the
+WebSocket.
 
 ## The workflow's settings
 
@@ -81,7 +63,8 @@ Five things you control per workflow:
   cap.
 - **Enforcement mode** — `Hard` (block on budget exceeded) or
   `Soft` (allow over-budget up to an overdraft cap, when there's an
-  active chain). See the [Soft mode](#chain-context-soft-mode-budget-gate) section below.
+  active chain). Full configuration in
+  [Policies → BudgetLimit extra fields](policies.md#budgetlimit-extra-fields).
 - **Human approvals** — turn on to require operator approval for
   dangerous tools (payments, deletes, external API mutations).
   Available on Growth+ plans.
@@ -90,66 +73,23 @@ Five things you control per workflow:
 - **Trace retention** — how long to keep detailed per-call traces
   (default 30 days, plan-gated up to 90).
 
-## Chain context — soft-mode budget gate
+## Chain context
 
-A workflow with `enforcement_mode = Soft` lets the agent run past
-its budget when it has an **active chain** — a logical grouping
-across multiple `@protect` calls inside one user request. The agent
-keeps running until it hits an **overdraft cap** (`max_overdraft_cents`
-or `max_overdraft_percent`, whichever is lower).
+A **chain** is a logical grouping across multiple `@protect` calls
+inside one user request, declared via `with chain(...)`. Chains are
+auto-registered on the first `/gate` call: the chain transitions
+from `null → ACTIVE` atomically. Chains die on the first of
+`chain_op="end"`, 5 minutes of `/gate` inactivity (idle TTL), or
+exceeding `max_chain_duration_seconds` (default 3600). For long
+streams, send a `POST /heartbeat` every 30 seconds — see
+[Heartbeat → how-to](../how-to/streaming.md#chain-heartbeat).
 
-Soft mode requires **all three** of:
-
-1. The policy uses `enforcement_mode = Soft` (not Hard)
-2. An **active `chain_id`** exists (declared via `with chain(...)`)
-3. The projected cost stays within `max_overdraft_cents` and
-   `max_overdraft_percent`
-
-If any of the three is missing, soft mode is unavailable and the
-gate behaves as Hard.
-
-```python
-from nullrun import chain
-
-with chain("user-123-research-task"):
-    # many @protect calls in here share one budget decision
-    research_step()
-    draft_step()
-    publish_step()
-```
-
-If a chain runs past its budget and then past the overdraft cap, the
-gate blocks the next call and the workflow returns to normal Hard
-mode for that chain.
-
-### Chain lifecycle and heartbeat
-
-The chain has three lifecycle states: REGISTERED (only on explicit
-`chain_op=start`), ACTIVE, and CLOSED. Chains are auto-registered:
-the first `/gate` call with a new `chain_id` atomically creates the
-chain (`null → ACTIVE`), without a separate REGISTERED state.
-
-`chain_op="end"` closes the chain explicitly. Otherwise the chain
-dies after 5 minutes of `/gate` inactivity (idle TTL), or when the
-configured `max_chain_duration_seconds` is exceeded (default 3600).
-
-If your agent streams long responses, send a `POST /heartbeat` call
-every 30 seconds while the stream is in progress — this is
-**time-based, not chunk-based**. The capability response advertises
-a 30-second heartbeat interval, a 5-second skew allowance, and a
-300-second idle TTL. See
-[Heartbeat → how-to](../how-to/streaming.md#chain-heartbeat) for the
-SDK snippet.
-
-Chain time is read from `redis.call('TIME')` inside the Lua scripts
-(server-side), not from the backend process clock — this eliminates
-clock skew between backend nodes.
-
-### Parallel chains
-
-Multiple parallel chains on the same org share **one** `overdraft_used`
-counter. N concurrent chains do NOT multiply the overdraft cap.
-Lua checks the aggregate per-org, not per-chain.
+Chains exist primarily to enable **soft-mode budget gating**: with
+an active chain, the gate allows the agent to run past its budget
+up to an overdraft cap (`max_overdraft_cents` or
+`max_overdraft_percent`, whichever is lower). Full soft-mode
+contract in
+[Policies → BudgetLimit extra fields](policies.md#budgetlimit-extra-fields).
 
 ## How the workflow ends
 
