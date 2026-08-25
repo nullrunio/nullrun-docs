@@ -26,9 +26,8 @@ async def stream_answer(prompt: str):
         yield chunk.choices[0].delta.content or ""
 ```
 
-The transport hook buffers chunks internally so the final `usage`
-block is read before the SDK emits `/track` — chunks stream in real
-time, but the cost is accurate.
+The transport hook reads the final `usage` block before emitting
+`/track`, while forwarding chunks to your caller in real time.
 
 ## Long streams and soft mode
 
@@ -41,7 +40,7 @@ alive:
 ```python
 @protect
 def long_stream(prompt: str):
-    with chain("my-long-stream", chain_op="start"):
+    with chain("my-long-stream", op="start"):
         stream = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],

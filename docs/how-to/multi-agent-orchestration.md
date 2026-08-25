@@ -5,8 +5,9 @@ CrewAI crew, an OpenAI Agents `Runner` with handoffs, or a custom
 orchestrator — NullRun tracks each sub-agent independently under the
 same workflow.
 
-The rule is: **one workflow = one budget pool, but the orchestration
-tree is visible in the decision log and cost breakdown.**
+The rule is: **each `with workflow(...)` block creates its own
+budget pool. Nesting does NOT inherit budget — the inner block has
+its own pool.**
 
 ## LangGraph supervisor → sub-agents
 
@@ -55,15 +56,21 @@ with workflow("research-supervisor"):
     app.invoke({"topic": "LLM cost trends"})
 ```
 
-`@protect` on each sub-agent ensures the gate runs before the LLM
-call. The `with workflow("research-supervisor")` block scopes every
-call to one workflow_id so the budget cap is enforced once across the
-whole tree — the supervisor cannot accidentally blow past the cap by
-fanning out.
+Each `research_node` / `writer_node` is `@protect`-wrapped, so the
+gate runs per node invocation, not per `app.invoke()` call.
 
-For per-sub-agent cost attribution, use distinct `workflow_id`s —
-but then you have multiple budget pools and the supervisor must
-explicitly enforce the cap:
+`@protect` on each sub-agent ensures the gate runs before the LLM
+call. The `with workflow("research-supervisor")` block scopes
+budget attribution to the `research-supervisor` workflow — every
+LLM call inside counts against that workflow's budget.
+
+Nesting `with workflow("research-subagent")` inside does **not**
+inherit the outer workflow's budget: each `workflow()` block creates
+its own `workflow_id` with its own budget pool. To share a budget
+across the whole orchestration tree, use ONE `workflow()` block
+around the orchestrator (the pattern above). To give each sub-agent
+an independent budget, use distinct workflow names — but they
+become separate budget pools:
 
 ```python title="separate_workflows.py"
 with workflow("research-supervisor"):
@@ -73,9 +80,9 @@ with workflow("research-supervisor"):
         writer_node(state)    # counts against writer-subagent's budget
 ```
 
-This is the **opposite** pattern — useful when sub-agents have
-independent budget allocations (e.g. one sub-agent handles paid API
-calls, another is read-only), but you lose the "one cap protects
+This is the **independent-pools** pattern — useful when sub-agents
+have distinct budget allocations (e.g. one sub-agent handles paid
+API calls, another is read-only), but you lose the "one cap protects
 everything" guarantee.
 
 Full LangGraph, CrewAI, and OpenAI Agents orchestration examples live
@@ -95,7 +102,7 @@ for the wire-level details.
 
 | Pitfall | Symptom | Fix |
 |---|---|---|
-| Missing `with workflow(...)` around the orchestrator | Each sub-agent gets its own ad-hoc workflow_id, budget cap not enforced across the tree | Wrap the whole tree in one workflow block |
+| Missing `with workflow(...)` around the orchestrator | Each sub-agent gets its own ad-hoc workflow_id, no shared budget pool across the tree | Wrap the whole tree in one workflow block |
 | Each sub-agent has its own key | Sub-agents share nothing — kill signal only reaches the one bound to the killed workflow | Use one key for the orchestrator and let sub-agents inherit |
 | Catching `Exception` instead of `BaseException` around the orchestration loop | Kill signal swallowed, agents keep running | Catch `WorkflowKilledInterrupt` explicitly first |
 
