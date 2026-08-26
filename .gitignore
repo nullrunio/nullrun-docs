@@ -1,3 +1,4 @@
+# nullrun-docs: MkDocs + GitHub Actions
 __pycache__/
 *.pyc
 .venv/
