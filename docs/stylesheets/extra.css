@@ -1258,65 +1258,19 @@
   color: var(--md-default-fg-color--light);
   transition: background 120ms ease, color 120ms ease;
 }
+/* Material's JS adds/removes the [hidden] attribute on the inactive
+   label. Our `display: inline-flex` above overrides the browser
+   default of `display: none` for [hidden], so re-apply it explicitly. */
+.nr-footer__palette-btn[hidden] { display: none; }
 .nr-footer__palette-btn svg { width: 0.85rem; height: 0.85rem; fill: currentColor; }
 .nr-footer__palette-btn:hover {
   background: var(--md-default-bg-color--light);
   color: var(--md-default-fg-color);
 }
 
-/* Prev / next pager under the footer.
-   Arrow icon + 2-line text inline; cards ~52px tall instead of 81px. */
-.nr-footer__pager {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
-  margin-top: 1.5rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--md-default-fg-color--lightest);
-}
-.nr-footer__pager-link {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  padding: 0.55rem 0.85rem;
-  min-height: 2.75rem;
-  border-radius: var(--md-border-radius);
-  border: 1px solid var(--md-default-fg-color--lightest);
-  text-decoration: none;
-  color: var(--md-default-fg-color);
-  transition: border-color 120ms ease, background 120ms ease;
-}
-.nr-footer__pager-link:hover {
-  border-color: var(--md-default-fg-color);
-  background: var(--md-default-bg-color--light);
-}
-.nr-footer__pager-link--next { flex-direction: row-reverse; }
-.nr-footer__pager-text {
-  display: flex;
-  flex-direction: column;
-  gap: 0.05rem;
-  min-width: 0;
-}
-.nr-footer__pager-link--next .nr-footer__pager-text { text-align: right; align-items: flex-end; }
-.nr-footer__pager-link--prev .nr-footer__pager-text { text-align: left; align-items: flex-start; }
-.nr-footer__pager-direction {
-  font-size: 0.6rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--md-default-fg-color--light);
-}
-.nr-footer__pager-title { font-size: 0.78rem; font-weight: 600; line-height: 1.25; }
-.nr-footer__pager-arrow {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  flex-shrink: 0;
-  color: var(--md-default-fg-color--light);
-}
-.nr-footer__pager-arrow svg { width: 1rem; height: 1rem; fill: currentColor; }
-.nr-footer__pager-link:hover .nr-footer__pager-arrow { color: var(--md-default-fg-color); }
+/* Prev / next pager — REMOVED. navigation.footer dropped from mkdocs.yml
+   features and the pager block was removed from footer.html. No CSS
+   rules needed for non-existent markup. */
 
 /* Responsive: footer collapses on narrow viewports. */
 @media (max-width: 60em) {
@@ -1325,7 +1279,6 @@
     gap: 1.25rem;
   }
   .nr-footer__palette { align-items: flex-start; }
-  .nr-footer__pager { grid-template-columns: 1fr; }
 }
 
 /* Drop Material's default footer chrome � our override replaces it. */

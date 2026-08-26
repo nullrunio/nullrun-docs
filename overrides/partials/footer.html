@@ -92,39 +92,10 @@
 
     </div>
 
-    {# ── Prev / next (from navigation.footer feature) ──────────────── #}
-    {% if page and (page.next_page or page.previous_page) %}
-    <nav class="nr-footer__pager md-grid" aria-label="Pager">
-      {% if page.previous_page %}
-      <a class="nr-footer__pager-link nr-footer__pager-link--prev"
-         href="{{ page.previous_page.url | url }}">
-        <span class="nr-footer__pager-arrow" aria-hidden="true">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-            <path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.5 12l7.58-7.58L13.5 5.84 8 11h12Z"/>
-          </svg>
-        </span>
-        <span class="nr-footer__pager-text">
-          <span class="nr-footer__pager-direction">Previous</span>
-          <span class="nr-footer__pager-title">{{ page.previous_page.title }}</span>
-        </span>
-      </a>
-      {% endif %}
-      {% if page.next_page %}
-      <a class="nr-footer__pager-link nr-footer__pager-link--next"
-         href="{{ page.next_page.url | url }}">
-        <span class="nr-footer__pager-arrow" aria-hidden="true">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-            <path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.5 12l-7.58-7.58L10.5 5.84 16 11H4Z"/>
-          </svg>
-        </span>
-        <span class="nr-footer__pager-text">
-          <span class="nr-footer__pager-direction">Next</span>
-          <span class="nr-footer__pager-title">{{ page.next_page.title }}</span>
-        </span>
-      </a>
-      {% endif %}
-    </nav>
-    {% endif %}
+    {# ── Prev / next removed — Material's `navigation.footer` was dropped
+       from mkdocs.yml features and the pager block is intentionally absent.
+       Users navigate via the left sidebar; the inline pager added visual
+       weight below the footer that didn't pull its weight. ──────────────── #}
 
   </div>
 </footer>
