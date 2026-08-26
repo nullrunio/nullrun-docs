@@ -1,3 +1,8 @@
+---
+title: Workflows
+maturity: stable
+---
+
 # Workflows
 
 A **workflow** is one agent you run. In the dashboard it shows up

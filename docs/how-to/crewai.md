@@ -57,5 +57,5 @@ no-op.
 
 ## See also
 
-- [Auto-instrumentation overview](auto-instrumented-frameworks.md)
+- [LLM frameworks](llm-frameworks.md)
 - [Quickstart](../getting-started/quickstart.md)

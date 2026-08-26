@@ -1,3 +1,8 @@
+---
+title: Human approval
+maturity: beta
+---
+
 # Human approval
 
 Some operations need a human to click **Approve** before they run.

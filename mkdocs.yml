@@ -68,6 +68,7 @@ nav:
   - Home: index.md
   - Getting started:
       - First agent in 15 minutes: getting-started/onboarding.md
+      - 5-minute tour: getting-started/tour.md
       - Installation: getting-started/install.md
       - Quickstart: getting-started/quickstart.md
       - Configuration: getting-started/configuration.md
@@ -86,19 +87,9 @@ nav:
   - How-to:
       - Protect a LangGraph agent: how-to/langgraph.md
       - Use with OpenAI Agents: how-to/openai-agents.md
+      - Use CrewAI: how-to/crewai.md
       - Use with FastAPI: how-to/fastapi.md
-      - LLM frameworks:
-          - Auto-instrumentation overview: how-to/auto-instrumented-frameworks.md
-          - Anthropic: how-to/anthropic.md
-          - Mistral: how-to/mistral.md
-          - Gemini (Google GenAI): how-to/gemini.md
-          - Cohere: how-to/cohere.md
-          - AWS Bedrock: how-to/bedrock.md
-          - LangChain: how-to/langchain.md
-          - LlamaIndex: how-to/llama-index.md
-          - CrewAI: how-to/crewai.md
-          - AutoGen: how-to/autogen.md
-          - Raw openai SDK: how-to/raw-openai.md
+      - LLM frameworks: how-to/llm-frameworks.md
       - Set a hard cost cap: how-to/cost-cap.md
       - Run multiple agents: how-to/multi-agent.md
       - Multi-agent orchestration: how-to/multi-agent-orchestration.md

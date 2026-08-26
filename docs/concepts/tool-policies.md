@@ -1,3 +1,8 @@
+---
+title: Tool policies
+maturity: stable
+---
+
 # Tool policies
 
 A `ToolBlock` policy decides which tools the agent is allowed to call

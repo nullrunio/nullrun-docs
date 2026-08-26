@@ -1,3 +1,8 @@
+---
+title: Tracing
+maturity: stable
+---
+
 # Tracing
 
 A **trace** is everything that happened during one run of your agent.

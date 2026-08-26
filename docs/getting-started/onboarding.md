@@ -70,7 +70,7 @@ auto-instrumentation.
 
 Auto-instrumentation does the same thing — see
 [Use with LangGraph](../how-to/langgraph.md) or any of the other
-[framework how-tos](../how-to/auto-instrumented-frameworks.md).
+[framework how-tos](../how-to/llm-frameworks.md).
 Most of the time the only line you add is the `init()` call.
 
 ## 4. Set a budget

@@ -1,3 +1,8 @@
+---
+title: Control plane (real-time control)
+maturity: stable
+---
+
 # Control plane (real-time control)
 
 The **control plane** is the live channel between the dashboard and

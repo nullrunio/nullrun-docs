@@ -1,0 +1,73 @@
+# NullRun Docs
+
+> Runtime decision layer for tool-using AI agents. The SDK gates every
+> tool/model call through `/api/v1/gate` before execution. The gate
+> returns `allow`, `block`, or `require_approval`; the SDK or calling
+> application must honor that decision.
+
+NullRun is **managed runtime**, not a self-hosted deployment. The
+gateway and dashboard live in a private repo (access on request
+through `support@nullrun.io`). The Python SDK is the only runtime
+SDK — TypeScript / JavaScript / Go have no equivalent.
+
+## Getting started
+
+- [Install](https://docs.nullrun.io/getting-started/install/): `pip install nullrun`, API key, auto-instrumentation
+- [Quickstart](https://docs.nullrun.io/getting-started/quickstart/): `@protect` in 30 lines
+- [5-minute tour](https://docs.nullrun.io/getting-started/tour/): guided walkthrough through the dashboard + SDK
+- [Configuration](https://docs.nullrun.io/getting-started/configuration/): env vars, transport options, fail-CLOSED guards
+- [Onboarding](https://docs.nullrun.io/getting-started/onboarding/): first agent in 15 minutes
+
+## Concepts
+
+- [Circuit breaker](https://docs.nullrun.io/concepts/circuit-breaker/): trip / recover / kill signal
+- [Budgets](https://docs.nullrun.io/concepts/budgets/): hard/soft mode, period rollover, reservation invariant
+- [Sensitive tools](https://docs.nullrun.io/concepts/sensitive-tools/): fail-CLOSED, no opt-out
+- [Workflow context](https://docs.nullrun.io/concepts/workflow/): `nullrun.workflow(...)`, `chain(...)`, parent_trace_id
+- [Tracing](https://docs.nullrun.io/concepts/tracing/): spans, parent_trace_id, dashboard waterfall
+- [Control plane (WebSocket)](https://docs.nullrun.io/concepts/control-plane/): kill / pause / approval_resolved
+- [API keys](https://docs.nullrun.io/concepts/api-keys/): scopes, rotation, revocation
+- [Policies](https://docs.nullrun.io/concepts/policies/): BudgetLimit / RateLimit / ToolBlock aggregation
+- [Tool policies](https://docs.nullrun.io/concepts/tool-policies/): glob match, 4 KB cap, union across scopes
+- [Human approval](https://docs.nullrun.io/concepts/human-approval/): BusinessImpact predicates + action_digest
+- [Error handling](https://docs.nullrun.io/concepts/error-handling/): exception hierarchy, kill signal, multi-layer fail-CLOSED
+
+## How-to
+
+- [Protect a LangGraph agent](https://docs.nullrun.io/how-to/langgraph/): auto-instrumentation + manual wrapper
+- [Use with OpenAI Agents](https://docs.nullrun.io/how-to/openai-agents/): `nullrun[agents]` extra
+- [Use with FastAPI](https://docs.nullrun.io/how-to/fastapi/): request-scoped `workflow()`, error mapping
+- [LLM frameworks](https://docs.nullrun.io/how-to/llm-frameworks/): coverage matrix for OpenAI, Anthropic, Mistral, Gemini, Cohere, Bedrock, LangChain, LlamaIndex, CrewAI, AutoGen, raw openai SDK
+- [Set a hard cost cap](https://docs.nullrun.io/how-to/cost-cap/): per-workflow budget, alert thresholds
+- [Run multiple agents](https://docs.nullrun.io/how-to/multi-agent/): shared workflow, parent_trace_id propagation
+- [Multi-agent orchestration](https://docs.nullrun.io/how-to/multi-agent-orchestration/): sub-agents, kill propagation
+- [Stream responses](https://docs.nullrun.io/how-to/streaming/): `@protect`-decorated stream iterator
+- [Manual cost / event tracking](https://docs.nullrun.io/how-to/custom-tracking/): `track_llm`, `track_tool`, `track_event`
+- [CI / CD integration](https://docs.nullrun.io/how-to/ci-cd/): fail-CLOSED in CI, smoke-test scripts
+
+## Reference
+
+- [SDK API](https://docs.nullrun.io/reference/sdk-api/): `init`, `@protect`, `@sensitive`, `workflow`, `chain`, exceptions, manual tracking
+- [HTTP API](https://docs.nullrun.io/reference/http-api/): `/api/v1/gate`, `/api/v1/track`, `/api/v1/capabilities`, `/api/v1/heartbeat`, control-plane WebSocket
+- [Error codes](https://docs.nullrun.io/reference/errors/): `NR-B004`, `NR-T001`, `NR-R001`, full hierarchy + decision vs infrastructure
+- [LLM tool catalog](https://docs.nullrun.io/reference/llm-tool-catalog/): per-model pricing + capability flags
+
+## Compliance
+
+- [Compliance overview](https://docs.nullrun.io/compliance/): geo-block and sanctions-screening posture
+- [Geographic restrictions](https://docs.nullrun.io/compliance/geo-restrictions/): IP-level blocklists, sanctioned jurisdictions
+- [Sanctions screening](https://docs.nullrun.io/compliance/sanctions-screening/): OFAC SDN signup screening, degraded fallback
+
+## Troubleshooting
+
+- [Troubleshooting](https://docs.nullrun.io/troubleshooting/): common "why is my agent blocked?" questions
+
+## Plain-text sources
+
+Every page on this site is also available as raw Markdown via the
+GitHub repository — replace `https://docs.nullrun.io/path/` with
+`https://raw.githubusercontent.com/nullrunio/nullrun-docs/main/docs/path.md`.
+
+A concatenated `llms-full.txt` (every page, in nav order) lives at
+`https://docs.nullrun.io/llms-full.txt` for agents that prefer a
+single-fetch corpus.

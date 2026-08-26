@@ -1,3 +1,8 @@
+---
+title: Circuit breaker
+maturity: stable
+---
+
 # Circuit breaker
 
 The circuit breaker stops your agent when something goes wrong. When

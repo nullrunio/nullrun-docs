@@ -78,7 +78,7 @@ Two usual suspects:
 `@protect` fires on the functions it's wrapped around. Plain
 LLM calls (no `@protect`, no auto-instrumented framework) are
 **invisible** to NullRun. If you use a framework that the SDK
-auto-instruments (see [How-to → Auto-instrumented frameworks](how-to/auto-instrumented-frameworks.md)),
+auto-instruments (see [How-to → LLM frameworks](how-to/llm-frameworks.md)),
 you do not need `@protect` to get cost tracking.
 
 ## Health endpoints

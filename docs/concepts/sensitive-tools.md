@@ -1,3 +1,8 @@
+---
+title: Sensitive tools
+maturity: stable
+---
+
 # Sensitive tools
 
 A **sensitive tool** is one that should never run without a human

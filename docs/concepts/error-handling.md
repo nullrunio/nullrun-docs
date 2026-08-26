@@ -1,3 +1,8 @@
+---
+title: Error handling
+maturity: stable
+---
+
 # Error handling
 
 Errors in NullRun come in three layers, designed for three audiences:

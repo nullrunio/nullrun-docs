@@ -1,3 +1,8 @@
+---
+title: Policies
+maturity: stable
+---
+
 # Policies
 
 A **policy** is a rule attached to your organization or a single

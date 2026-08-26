@@ -1,3 +1,8 @@
+---
+title: Budgets
+maturity: stable
+---
+
 # Budgets
 
 A **budget** is the most important number on the dashboard. It's the
