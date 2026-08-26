@@ -1188,52 +1188,52 @@
 }
 
 /* Column 1 � brand */
-.nr-footer__brand { display: flex; flex-direction: column; gap: 0.6rem; }
+.nr-footer__brand { display: flex; flex-direction: column; gap: 0.45rem; }
 .nr-footer__logo {
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.5rem;
   text-decoration: none;
   color: var(--md-default-fg-color);
   font-weight: 600;
-  font-size: 0.95rem;
+  font-size: 0.8rem;
 }
-.nr-footer__logo img { height: 1.4rem; width: auto; }
+.nr-footer__logo img { height: 1.1rem; width: auto; }
 .nr-footer__copy {
   margin: 0;
-  font-size: 0.78rem;
+  font-size: 0.68rem;
   color: var(--md-default-fg-color--light);
-  line-height: 1.45;
+  line-height: 1.4;
 }
 
 /* Column 2 � repo + nullrun.io links */
 .nr-footer__links {
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
-  padding-top: 0.15rem;
+  gap: 0.4rem;
+  padding-top: 0.1rem;
 }
 .nr-footer__link {
   display: inline-flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.5rem;
   text-decoration: none;
   color: var(--md-default-fg-color);
-  font-size: 0.85rem;
+  font-size: 0.72rem;
   font-weight: 500;
 }
 .nr-footer__link:hover { color: var(--md-accent-fg-color); text-decoration: underline; }
-.nr-footer__link svg { width: 1.05rem; height: 1.05rem; fill: currentColor; flex-shrink: 0; }
+.nr-footer__link svg { width: 0.85rem; height: 0.85rem; fill: currentColor; flex-shrink: 0; }
 
 /* Column 3 � palette toggle */
 .nr-footer__palette {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.55rem;
+  gap: 0.4rem;
 }
 .nr-footer__palette-label {
-  font-size: 0.7rem;
+  font-size: 0.6rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--md-default-fg-color--light);
@@ -1241,8 +1241,8 @@
 .nr-footer__palette-form {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.3rem;
+  gap: 0.25rem;
+  padding: 0.25rem;
   border-radius: 999px;
   border: 1px solid var(--md-default-fg-color--lightest);
   background: var(--md-default-bg-color);
@@ -1251,33 +1251,35 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.85rem;
-  height: 1.85rem;
+  width: 1.5rem;
+  height: 1.5rem;
   border-radius: 999px;
   cursor: pointer;
   color: var(--md-default-fg-color--light);
   transition: background 120ms ease, color 120ms ease;
 }
-.nr-footer__palette-btn svg { width: 1.05rem; height: 1.05rem; fill: currentColor; }
+.nr-footer__palette-btn svg { width: 0.85rem; height: 0.85rem; fill: currentColor; }
 .nr-footer__palette-btn:hover {
   background: var(--md-default-bg-color--light);
   color: var(--md-default-fg-color);
 }
 
-/* Prev / next pager under the footer */
+/* Prev / next pager under the footer.
+   Arrow icon + 2-line text inline; cards ~52px tall instead of 81px. */
 .nr-footer__pager {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-  margin-top: 2rem;
-  padding-top: 1.5rem;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
   border-top: 1px solid var(--md-default-fg-color--lightest);
 }
 .nr-footer__pager-link {
   display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  padding: 0.85rem 1.1rem;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.85rem;
+  min-height: 2.75rem;
   border-radius: var(--md-border-radius);
   border: 1px solid var(--md-default-fg-color--lightest);
   text-decoration: none;
@@ -1288,24 +1290,42 @@
   border-color: var(--md-default-fg-color);
   background: var(--md-default-bg-color--light);
 }
-.nr-footer__pager-link--next { text-align: right; align-items: flex-end; }
+.nr-footer__pager-link--next { flex-direction: row-reverse; }
+.nr-footer__pager-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+}
+.nr-footer__pager-link--next .nr-footer__pager-text { text-align: right; align-items: flex-end; }
+.nr-footer__pager-link--prev .nr-footer__pager-text { text-align: left; align-items: flex-start; }
 .nr-footer__pager-direction {
-  font-size: 0.7rem;
+  font-size: 0.6rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--md-default-fg-color--light);
 }
-.nr-footer__pager-title { font-size: 0.92rem; font-weight: 600; }
+.nr-footer__pager-title { font-size: 0.78rem; font-weight: 600; line-height: 1.25; }
+.nr-footer__pager-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex-shrink: 0;
+  color: var(--md-default-fg-color--light);
+}
+.nr-footer__pager-arrow svg { width: 1rem; height: 1rem; fill: currentColor; }
+.nr-footer__pager-link:hover .nr-footer__pager-arrow { color: var(--md-default-fg-color); }
 
 /* Responsive: footer collapses on narrow viewports. */
 @media (max-width: 60em) {
   .nr-footer__inner {
     grid-template-columns: 1fr;
-    gap: 1.75rem;
+    gap: 1.25rem;
   }
   .nr-footer__palette { align-items: flex-start; }
   .nr-footer__pager { grid-template-columns: 1fr; }
-  .nr-footer__pager-link--next { text-align: left; align-items: flex-start; }
 }
 
 /* Drop Material's default footer chrome � our override replaces it. */
