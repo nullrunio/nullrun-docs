@@ -95,5 +95,5 @@ def call_custom_llm(prompt):
 ## See also
 
 - [SDK API → track_llm / track_tool / track_event](../reference/sdk-api.md#track_llm-manual-usage)
-- [Use with Bedrock](../how-to/bedrock.md) — non-httpx vendor that
-  uses manual tracking
+- [LLM frameworks](../how-to/llm-frameworks.md) — non-httpx vendors
+  (Bedrock, Cohere) that use manual tracking

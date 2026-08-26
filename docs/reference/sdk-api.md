@@ -197,7 +197,7 @@ except WorkflowPausedException:
 
 The full annotated tutorial (handler ordering rationale, observability
 hooks, exception hierarchy walkthrough) lives in
-[Use with FastAPI → error mapping](../how-to/fastapi.md#error-mapping).
+[Use with FastAPI → HTTP status mapping](../how-to/fastapi.md#http-status-mapping).
 For global observability (Sentry, OpenTelemetry, structured logs),
 register a hook with `nullrun.on_error(...)` instead of wrapping every
 call site. The hook fires for every `NullRunError` subclass BEFORE the

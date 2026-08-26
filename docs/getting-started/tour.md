@@ -162,7 +162,7 @@ the progress bar sits at ~8%.
 | Wire up multiple agents | [How-to → Run multiple agents](../how-to/multi-agent.md) |
 | Add an approval flow for sensitive tools | [Concepts → Human approval](../concepts/human-approval.md) |
 | Stream responses | [How-to → Stream responses](../how-to/streaming.md) |
-| Deploy to production behind your gateway | [Configuration → Production checklist](configuration.md#production-checklist) |
+| Deploy to production behind your gateway | [Configuration → Server-side env vars](configuration.md#server-side-env-vars) |
 
 !!! tip "Where to send feedback"
     Email `support@nullrun.io` with the dashboard's

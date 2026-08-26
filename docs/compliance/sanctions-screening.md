@@ -192,7 +192,7 @@ default and force the production posture), unset
 deployment configuration.
 
 A regular cadence for the OFAC SDN refresh is recommended — see
-[Geographic restrictions → Runbook](geo-restrictions.md#runbook--keeping-the-geoip-database-live)
+[Geographic restrictions → Runbook](geo-restrictions.md#runbook-keeping-the-geoip-database-live)
 for the parallel principles on keeping the GeoIP database live;
 the OFAC SDN CSV is downloaded from
 `https://www.treasury.gov/ofac/downloads/sdn.csv`.
