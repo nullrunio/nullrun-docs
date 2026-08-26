@@ -158,4 +158,100 @@
   <meta property="og:image:alt" content="NullRun — runtime decision layer for tool-using AI agents">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image:alt" content="NullRun — runtime decision layer for tool-using AI agents">
+
+  {# ── OG / SEO core ───────────────────────────────────────────────
+     Per-page values (description, type) come from Material's front-
+     matter. We add the SITE-WIDE constants here so every page is
+     marked with the same canonical brand identity, which matters
+     for both Google rich-results and LLM grounding. #}
+  <meta property="og:site_name" content="NullRun Docs">
+  <meta property="og:locale" content="en_US">
+  <meta name="theme-color" content="#FBFAF4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E0E0C" media="(prefers-color-scheme: dark)">
+  <link rel="canonical" href="{{ page.canonical_url }}">
+
+  {# ── LLM-discovery hints ─────────────────────────────────────────
+     Two routes into the docs corpus for agents / crawlers:
+       1. /llms.txt           — concise index (per-page descriptions)
+       2. /llms-full.txt      — full concatenated markdown
+     Spec: https://llmstxt.org — explicitly tell well-known agents
+     (Cursor, Claude Desktop, Devin, etc.) that these files exist.
+     Note: no "alternate" rel for /llms.txt — that's only for true
+     alternates (translations, AMP). #}
+  <link rel="alternate" type="text/plain" href="{{ 'llms.txt' | url }}" title="LLM index (llms.txt)">
+  <link rel="alternate" type="text/plain" href="{{ 'llms-full.txt' | url }}" title="LLM corpus (llms-full.txt)">
+
+  {# ── JSON-LD structured data ──────────────────────────────────────
+     Three graphs injected per-page:
+       1. WebSite + Organization — global brand identity. Emitted on
+          every page so Google can recognise the publisher. The
+          `potentialAction` enables a Sitelinks Search Box.
+       2. SoftwareApplication — only on the docs root / index.md
+          (home.html). Pins NullRun SDK as an installable package.
+       3. TechArticle — emitted on every non-home docs page. Carries
+          `articleSection` (the section name from nav) and `keywords`
+          for vertical search and LLM snippet grounding.
+     Single-quoted JSON inside Jinja2 (not double) so the curly
+     braces inside the schema don't collide with template syntax.
+     The whole block is rendered server-side by MkDocs, so there's
+     no client-side JS overhead. #}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "{{ config.site_url }}#website",
+        "url": "{{ config.site_url }}",
+        "name": "NullRun Docs",
+        "description": "Runtime decision layer for tool-using AI agents — documentation for the Python SDK, gate, and policies.",
+        "inLanguage": "en-US",
+        "publisher": {"@id": "{{ config.site_url }}#organization"},
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": "{{ config.site_url }}search/?q={search_term_string}",
+          "query-input": "required name=search_term_string"
+        }
+      },
+      {
+        "@type": "Organization",
+        "@id": "{{ config.site_url }}#organization",
+        "name": "NullRun",
+        "url": "https://nullrun.io",
+        "logo": "{{ config.site_url }}assets/images/logo.svg",
+        "sameAs": [
+          "{{ config.repo_url }}"
+        ]
+      }
+      {%- if page and page.meta and page.meta.description and not page.is_homepage %},
+      {
+        "@type": "TechArticle",
+        "@id": "{{ page.canonical_url }}#article",
+        "headline": "{{ page.title | e }}",
+        "description": "{{ page.meta.description | e }}",
+        "url": "{{ page.canonical_url }}",
+        "inLanguage": "en-US",
+        "publisher": {"@id": "{{ config.site_url }}#organization"},
+        "isPartOf": {"@id": "{{ config.site_url }}#website"},
+        "datePublished": "{{ page.meta.created | default('') }}",
+        "dateModified": "{{ build_date_utc.isoformat() }}"
+      }
+      {%- endif %}
+      {%- if page and page.is_homepage %},
+      {
+        "@type": "SoftwareApplication",
+        "@id": "{{ config.site_url }}#sdk",
+        "name": "NullRun Python SDK",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Linux, macOS, Windows",
+        "description": "Python SDK that gates every tool and model call through NullRun before execution. pip install nullrun.",
+        "url": "https://nullrun.io",
+        "downloadUrl": "https://pypi.org/project/nullrun/",
+        "softwareVersion": "{{ config.extra.released_version | default('latest') }}",
+        "publisher": {"@id": "{{ config.site_url }}#organization"}
+      }
+      {%- endif %}
+    ]
+  }
+  </script>
 {% endblock %}

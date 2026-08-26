@@ -1,0 +1,28 @@
+# NullRun Docs — robots.txt
+# ────────────────────────────────────────────────────────────────────────────
+# Two audiences care about this file:
+#
+#   1. Search engines (Google, Bing, DuckDuckGo, …). They obey
+#      Allow / Disallow and follow Sitemap pointers.
+#
+#   2. LLM crawlers and discovery tools (GPTBot, ClaudeBot, Common Crawl,
+#      PerplexityBot, etc.). They also read /llms.txt — see below.
+#
+# Everything public is crawlable. There are no gated sections on docs,
+# so we don't need Disallow rules — keep the policy as broad Allow so
+# search engines don't accidentally sandbox the docs.
+#
+# The Sitemap line MUST be an absolute URL — robots.txt parsers reject
+# relative paths. site_url is configured in mkdocs.yml.
+# ────────────────────────────────────────────────────────────────────────────
+
+User-agent: *
+Allow: /
+Disallow: /404.html
+
+# Explicit pointer to the LLM discovery files. Some agents (e.g. Cursor,
+# Devin, Claude Desktop with web fetch) look for /llms.txt on every host
+# they crawl; surfacing it here removes a round-trip.
+# Spec: https://llmstxt.org
+
+Sitemap: https://docs.nullrun.io/sitemap.xml

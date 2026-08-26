@@ -1,8 +1,6 @@
----
 title: 5-minute tour
 maturity: stable
----
-
+description: Five-minute walkthrough of the NullRun dashboard, policies, and SDK — enough to evaluate the platform end-to-end.
 # 5-minute tour
 
 This is the shortest path from "I have never used NullRun" to

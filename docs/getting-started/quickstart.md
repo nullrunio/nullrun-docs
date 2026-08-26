@@ -1,3 +1,8 @@
+---
+title: Quickstart
+description: Decorate your first tool with @protect and ship it through the NullRun gate in under thirty lines of code.
+---
+
 # Quickstart
 
 Wrap any function with **`@nullrun.protect`** to track its cost, tools, and

@@ -62,6 +62,20 @@ SDK — TypeScript / JavaScript / Go have no equivalent.
 
 - [Troubleshooting](https://docs.nullrun.io/troubleshooting/): common "why is my agent blocked?" questions
 
+## Optional
+
+- [Compliance index](https://docs.nullrun.io/compliance/): geo-block and sanctions-screening posture
+- [Examples repository](https://github.com/nullrunio/nullrun-examples): runnable code (LangGraph, CrewAI, FastAPI)
+- [Python SDK on PyPI](https://pypi.org/project/nullrun/): `pip install nullrun`
+
+## Links
+
+- Repository: https://github.com/nullrunio/nullrun-docs
+- Issues: https://github.com/nullrunio/nullrun-docs/issues
+- App: https://nullrun.io
+- Support: support@nullrun.io
+- Spec: https://llmstxt.org
+
 ## Plain-text sources
 
 Every page on this site is also available as raw Markdown via the

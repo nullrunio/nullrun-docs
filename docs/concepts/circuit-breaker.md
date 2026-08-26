@@ -1,8 +1,6 @@
----
 title: Circuit breaker
 maturity: stable
----
-
+description: How NullRun's circuit breaker trips on a budget overrun, recovers after a cooldown, and propagates a kill signal across in-flight calls.
 # Circuit breaker
 
 The circuit breaker stops your agent when something goes wrong. When

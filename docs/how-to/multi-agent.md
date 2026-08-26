@@ -1,3 +1,8 @@
+---
+title: Multi Agent
+description: Run multiple agents in one workflow, propagate parent_trace_id, and aggregate cost across the team.
+---
+
 # Run multiple agents (multi-key / multi-process)
 
 NullRun's `init()` is intended to be called **once per process**.

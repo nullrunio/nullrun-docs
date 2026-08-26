@@ -1,8 +1,6 @@
----
 title: Tool policies
 maturity: stable
----
-
+description: Glob patterns for tool names with a 4 KB cap per pattern, union semantics across applicable scopes, and validation traps to avoid.
 # Tool policies
 
 A `ToolBlock` policy decides which tools the agent is allowed to call

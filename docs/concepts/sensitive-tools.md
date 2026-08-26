@@ -1,8 +1,6 @@
----
 title: Sensitive tools
 maturity: stable
----
-
+description: Mark a tool @sensitive to make it fail-CLOSED on transport errors, with no opt-out — the safest class for irreversible actions.
 # Sensitive tools
 
 A **sensitive tool** is one that should never run without a human

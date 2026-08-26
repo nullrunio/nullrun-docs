@@ -1,8 +1,6 @@
----
 title: Policies
 maturity: stable
----
-
+description: How BudgetLimit, RateLimit, ToolBlock, and LoopDetection policies are aggregated — most-restrictive-wins semantics across scopes.
 # Policies
 
 A **policy** is a rule attached to your organization or a single

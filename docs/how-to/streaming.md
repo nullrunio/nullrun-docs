@@ -1,3 +1,8 @@
+---
+title: Streaming
+description: Use @protect on a stream iterator so the gate's Cancel decision can stop a live response the moment an overrun is detected.
+---
+
 # Stream LLM responses
 
 The SDK tracks streaming responses correctly — every chunk is

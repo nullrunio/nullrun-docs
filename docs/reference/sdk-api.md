@@ -1,8 +1,6 @@
----
 title: SDK API
 maturity: stable
----
-
+description: Reference for every NullRun SDK symbol: init, @protect, @sensitive, workflow, chain, exceptions, manual tracking, and transport hooks.
 # SDK API
 
 The Python SDK lives in

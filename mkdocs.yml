@@ -48,8 +48,12 @@ theme:
     # sidebar (`navigation.sections`), not as header tabs. The 3-column
     # layout is sidebar (left, static) + content (center) + on-this-page
     # TOC (right). Search + brand live in the slim header.
+    #
+    # navigation.expand removed: sections now default to COLLAPSED
+    # so the sidebar reads as a clean accordion. Each section has a
+    # chevron caret on the right; click the title (or caret) to open.
+    # Hierarchy restored via extra.css section/subsection rules.
     - navigation.sections
-    - navigation.expand
     - navigation.top
     - navigation.indexes
     - search.suggest
@@ -175,6 +179,13 @@ plugins:
 # (so mkdocs copies them verbatim into `site/`) without triggering the
 # "exists in docs but not in nav" warning under --strict. They are
 # agent-discovery artefacts, not nav pages.
+#
+# Note on /.well-known/llms.txt: the llmstxt.org spec specifies the
+# discovery file at the SITE ROOT (`/llms.txt`), not at the
+# `.well-known/` URI. MkDocs 1.6 has no built-in mechanism to copy
+# dotfile directories into the build, and adding a plugin just for
+# one alias file is overkill. The canonical /llms.txt is the spec-
+# compliant location; /llms-full.txt is the full corpus.
 validation:
   nav:
     omitted_files: ignore

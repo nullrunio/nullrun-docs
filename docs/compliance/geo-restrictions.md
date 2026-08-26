@@ -1,8 +1,6 @@
----
 title: Geographic restrictions
 maturity: stable
----
-
+description: IP-level blocklists for sanctioned jurisdictions, with the runtime status codes a client sees when a request is geo-blocked.
 # Geographic restrictions
 
 NullRun's edge gateway classifies every inbound request by source

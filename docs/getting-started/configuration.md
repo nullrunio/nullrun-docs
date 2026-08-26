@@ -1,3 +1,8 @@
+---
+title: Configuration
+description: Every NullRun SDK environment variable, transport option, and fail-CLOSED guard documented with safe defaults.
+---
+
 # Configuration
 
 NullRun reads configuration from environment variables. `nullrun.init()`

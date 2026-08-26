@@ -1,8 +1,6 @@
----
 title: LLM frameworks
 maturity: stable
----
-
+description: Coverage matrix for OpenAI, Anthropic, Mistral, Gemini, Cohere, Bedrock, LangChain, LlamaIndex, CrewAI, AutoGen, and the raw openai SDK.
 # LLM frameworks
 
 `nullrun.init()` patches the underlying HTTP transport (`httpx`) and

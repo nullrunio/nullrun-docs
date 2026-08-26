@@ -1,3 +1,8 @@
+---
+title: Custom Tracking
+description: Manually report cost and events with track_llm, track_tool, and track_event when auto-instrumentation doesn't fit your runtime.
+---
+
 # Manual cost / event tracking
 
 Most of the time auto-instrumentation handles cost tracking — the

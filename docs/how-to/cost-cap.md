@@ -1,3 +1,8 @@
+---
+title: Cost Cap
+description: Set a per-workflow hard cost cap with alert thresholds, and use Soft mode with an active chain to allow a controlled overdraft.
+---
+
 # Set a hard cost cap
 
 A cost cap is the simplest way to make sure an agent can't blow past

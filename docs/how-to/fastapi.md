@@ -1,3 +1,8 @@
+---
+title: Fastapi
+description: Bind a FastAPI request to a NullRun workflow, propagate trace context, and map gate errors to the right HTTP status code.
+---
+
 # Use with FastAPI
 
 Install with the FastAPI extra (pulls in `fastapi`, `starlette`, and

@@ -1,8 +1,6 @@
----
 title: API keys
 maturity: stable
----
-
+description: Scopes, two-phase rotation, revocation, and the binding between an API key, its workflow, and its policy cache.
 # API keys
 
 An **API key** is how your code authenticates with the NullRun

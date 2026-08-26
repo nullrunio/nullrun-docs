@@ -1,8 +1,6 @@
----
 title: Tracing
 maturity: stable
----
-
+description: OpenTelemetry-style spans for every gate decision, with parent_trace_id propagation so the dashboard renders a true waterfall.
 # Tracing
 
 A **trace** is everything that happened during one run of your agent.

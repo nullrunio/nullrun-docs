@@ -1,3 +1,8 @@
+---
+title: Ci Cd
+description: Fail-CLOSED gate integration in CI, with smoke-test scripts that verify the gate is reachable before a deploy.
+---
+
 # CI / CD integration
 
 Wire NullRun into your build pipeline so policy mistakes are caught

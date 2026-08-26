@@ -1,3 +1,8 @@
+---
+title: Llm Tool Catalog
+description: Per-model input and output pricing for every LLM NullRun understands, with capability flags for streaming, tools, and structured output.
+---
+
 # Tool catalog
 
 A reference list of the tool names LLM agents commonly expose, tagged

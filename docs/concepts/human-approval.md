@@ -1,8 +1,6 @@
----
 title: Human approval
 maturity: beta
----
-
+description: Bind approvals to a typed BusinessImpact predicate and a SHA-256 action_digest so the grant refuses if the action payload drifts.
 # Human approval
 
 Some operations need a human to click **Approve** before they run.

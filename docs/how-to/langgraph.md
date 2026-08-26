@@ -1,3 +1,8 @@
+---
+title: Langgraph
+description: Auto-instrument a LangGraph agent with @protect, or wrap nodes manually when you need fine-grained control over the gate decision.
+---
+
 # Protect a LangGraph agent
 
 Install with the LangGraph extra:

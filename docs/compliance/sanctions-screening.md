@@ -1,8 +1,6 @@
----
 title: Sanctions screening
 maturity: stable
----
-
+description: OFAC SDN screening on signup, the degraded-fallback semantics when the screening service is unavailable, and the audit trail.
 # Sanctions screening
 
 The geo-block stops ingress from sanctioned countries at the edge.

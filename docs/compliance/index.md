@@ -1,3 +1,8 @@
+---
+title: Index
+description: NullRun's compliance posture: geo-block at the network edge, sanctions screening at signup, and what to expect when rules degrade.
+---
+
 # Compliance
 
 NullRun enforces geo and sanctions restrictions at the edge gateway. Two

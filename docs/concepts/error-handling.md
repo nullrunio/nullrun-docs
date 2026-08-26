@@ -1,8 +1,6 @@
----
 title: Error handling
 maturity: stable
----
-
+description: The full NullRun exception hierarchy, kill-signal semantics, and the multi-layer fail-CLOSED contract that protects production traffic.
 # Error handling
 
 Errors in NullRun come in three layers, designed for three audiences:

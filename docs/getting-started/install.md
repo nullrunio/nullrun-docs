@@ -1,3 +1,8 @@
+---
+title: Install
+description: Install the NullRun Python SDK with pip, create an API key in the dashboard, and verify the gate is reachable from your environment.
+---
+
 # Install
 
 ## Python SDK

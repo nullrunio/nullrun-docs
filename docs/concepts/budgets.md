@@ -1,8 +1,6 @@
----
 title: Budgets
 maturity: stable
----
-
+description: Hard and soft budget enforcement, billing-period rollover, and the reserve / consume invariant that protects against implicit re-reservation.
 # Budgets
 
 A **budget** is the most important number on the dashboard. It's the

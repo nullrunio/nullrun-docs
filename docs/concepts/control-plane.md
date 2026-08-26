@@ -1,8 +1,6 @@
----
 title: Control plane (real-time control)
 maturity: stable
----
-
+description: Real-time WebSocket channel for kill, pause, and approval_resolved — the operator's runtime control surface for live agents.
 # Control plane (real-time control)
 
 The **control plane** is the live channel between the dashboard and

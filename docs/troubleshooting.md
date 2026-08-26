@@ -1,3 +1,8 @@
+---
+title: Troubleshooting
+description: Common NullRun questions answered: why is my agent blocked, how to debug a gate decision, what to do when a budget doesn't reset.
+---
+
 # Troubleshooting
 
 What to expect when NullRun is doing its job — and how to recover

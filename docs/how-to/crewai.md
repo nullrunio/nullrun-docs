@@ -1,3 +1,8 @@
+---
+title: Crewai
+description: Wrap CrewAI tools and tasks with @protect so the NullRun gate evaluates every crew action before it executes.
+---
+
 # CrewAI
 
 Install (CrewAI **1.15+** required):

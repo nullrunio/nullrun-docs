@@ -1,8 +1,6 @@
----
 title: Workflows
 maturity: stable
----
-
+description: Group agent calls into a named workflow, propagate parent_trace_id, and bind cost to a logical unit instead of a single session.
 # Workflows
 
 A **workflow** is one agent you run. In the dashboard it shows up

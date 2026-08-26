@@ -1,3 +1,8 @@
+---
+title: Index
+description: Runtime decision layer for tool-using AI agents. Gates every tool and model call through allow/block/require_approval before execution.
+---
+
 # NullRun
 
 NullRun is a runtime decision layer for tool-using AI agents. Before an

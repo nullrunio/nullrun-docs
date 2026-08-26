@@ -1,3 +1,8 @@
+---
+title: Openai Agents
+description: Install the nullrun[agents] extra and gate every tool call from an OpenAI Agents SDK workflow.
+---
+
 # Use with OpenAI Agents
 
 Install:

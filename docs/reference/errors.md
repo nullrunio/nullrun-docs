@@ -1,3 +1,8 @@
+---
+title: Errors
+description: Full NullRun error-code reference: NR-B004 budget blocks, NR-T001 transport errors, NR-R001 refusals, and decision vs infrastructure classes.
+---
+
 # Error codes
 
 The canonical `ApiErrorCode` enum is the source of truth for every
