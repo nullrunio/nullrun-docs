@@ -167,3 +167,11 @@ plugins:
   # API reference indexing or cross-repo search, swap in mkdocs-material[full]
   # and add `plugins: [search, gen-files]` here.
   - search
+
+# Allow `docs/llms.txt` and `docs/llms-full.txt` to live in `docs/`
+# (so mkdocs copies them verbatim into `site/`) without triggering the
+# "exists in docs but not in nav" warning under --strict. They are
+# agent-discovery artefacts, not nav pages.
+validation:
+  nav:
+    omitted_files: ignore

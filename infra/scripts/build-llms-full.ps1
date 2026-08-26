@@ -12,7 +12,7 @@
 $ErrorActionPreference = 'Stop'
 
 $docsRoot = Join-Path (Resolve-Path "$PSScriptRoot/../..") 'docs'
-$outPath  = Join-Path (Resolve-Path "$PSScriptRoot/../..") 'llms-full.txt'
+$outPath  = Join-Path $docsRoot 'llms-full.txt'
 
 # Mirror mkdocs.yml nav: Home, Getting started, Concepts, How-to,
 # Reference, Compliance, Troubleshooting. When you add / move / rename
