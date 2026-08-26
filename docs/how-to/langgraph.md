@@ -6,11 +6,10 @@ Install with the LangGraph extra:
 pip install "nullrun[langgraph]" langgraph langchain-openai
 ```
 
-`nullrun.init()` auto-instruments LangGraph — it attaches
-`NullRunCallback` to any compiled graph once `init()` runs. **No
-manual callback wiring needed** (the old
-`from nullrun.instrumentation.langgraph import NullRunCallback`
-import still works but is discouraged).
+`nullrun.init()` auto-instruments LangGraph — it attaches the
+NullRun callback to any compiled graph once `init()` runs. **No
+manual callback wiring needed** (the legacy direct-import path still
+works but is discouraged).
 
 ```python title="langgraph_agent.py"
 from langchain_openai import ChatOpenAI
@@ -46,18 +45,17 @@ If you need to attach the callback manually — e.g. inside a library
 that re-compiles graphs after `init()` ran — the canonical wrapper is:
 
 ```python title="langgraph_manual_wrapper.py"
-from nullrun.toolbox.langgraph import wrapper
+from nullrun.integrations.langgraph import wrapper
 
 app = wrapper(graph.compile())
 ```
 
 `wrapper` wraps the compiled app's `.invoke` and `.stream` methods
-to inject a `NullRunCallback` into the LangChain `config["callbacks"]`
+to inject the NullRun callback into the LangChain `config["callbacks"]`
 list per call. The control-plane kill/pause subscription is
 **independent** — it's started automatically by `init()` and works
 for every `@protect` call in the process regardless of whether you
-used `wrapper()` or `patch_langgraph_compiled` (the
-auto-instrumentation path above).
+used `wrapper()` or relied on the auto-instrumentation path above.
 
 ## See also
 

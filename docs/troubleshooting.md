@@ -7,27 +7,24 @@ when it isn't.
 
 | Situation | Default behaviour | Exception raised |
 | --- | --- | --- |
-| Workflow exceeds budget (Hard mode) | Halt at next `/gate` call | `NullRunBudgetError` (`error_code = "NR-B004"`, wire `BUDGET_HARD_BLOCKED`) |
-| Soft mode over-budget | Allow bounded overrun if chain active, otherwise block | `NullRunBudgetError` (`error_code = "NR-B004"`, wire `BUDGET_OVERDRAFT_EXCEEDED` or `BUDGET_SOFT_BLOCKED`) |
-| Agent calls a sensitive tool | Block the call before the function body runs (per ToolBlock policy) | `NullRunToolBlockedError` (`error_code = "NR-T001"`, wire `TOOL_BLOCKED`) |
-| Gateway unreachable, budget gate | **Fail-CLOSED** — 402 `BUDGET_REDIS_UNAVAILABLE` | `NullRunBackendError` |
+| Workflow exceeds budget (Hard mode) | Halt at next `/gate` call | `NullRunBudgetError` (`error_code = "NR-B004"`) |
+| Soft mode over-budget | Allow bounded overrun if chain active, otherwise block | `NullRunBudgetError` (`error_code = "NR-B004"`) |
+| Agent calls a sensitive tool | Block the call before the function body runs (per ToolBlock policy) | `NullRunToolBlockedError` (`error_code = "NR-T001"`) |
+| Gateway unreachable, budget gate | **Fail-CLOSED** — 402 | `NullRunBackendError` |
 | Gateway unreachable, per-key rate limit | **Fail-OPEN** (secondary signal; budget gate is the backstop) | `NullRunBackendError` (warn-logged) |
-| Gateway unreachable, aggregate rate limit | **Fail-CLOSED** — 503 `RATE_LIMIT_REDIS_UNAVAILABLE` | `NullRunRateLimitRedisError` |
+| Gateway unreachable, aggregate rate limit | **Fail-CLOSED** — 503 | `NullRunRateLimitRedisError` |
 | Workflow killed via dashboard | Raise at next `/gate` call (or at WS push receipt) | `WorkflowKilledInterrupt` (`BaseException`) |
 | Workflow paused via dashboard | Raise at next `/gate` call | `WorkflowPausedException` |
 | Missing `api_key` on `init()` | Raise at first SDK call | `NullRunAuthenticationError` |
 | HMAC signature missing / stale | Reject the request (401) | `NullRunAuthenticationError` |
 | Plan monthly / per-dimension cap reached | Reject the request (422 `plan_limit_exceeded`; `details.resource` names the dimension) | `NullRunBlockedException` (HTTP 422 via `exc.status_code`) |
-| Consume over-budget on commit | Reject the `/track` commit (422 `CONSUME_OVERBUDGET`; actual cost > reserved + ε) | `NullRunConsumeOverbudgetError` |
+| Consume over-budget on commit | Reject the `/track` commit (422; actual cost > reserved + ε) | `NullRunConsumeOverbudgetError` |
 | Per-minute rate cap reached | Reject the request (429 with `Retry-After`) | `RateLimitError` |
-| Chain expired (`max_chain_duration_seconds` exceeded) | 402 `CHAIN_MAX_DURATION_EXCEEDED` | `NullRunChainError` |
-| Protocol version too old | 400 `PROTOCOL_TOO_OLD` | `NullRunProtocolError` |
+| Chain expired (`max_chain_duration_seconds` exceeded) | 402 | `NullRunChainError` |
+| Protocol version too old | 400 | `NullRunProtocolError` |
 
-> Fail-closed vs fail-open defaults are documented in
-> [Concepts → Circuit breaker → When the gateway is unreachable](concepts/circuit-breaker.md#when-the-gateway-is-unreachable).
-> Anything in the SDK that touches a billing or quota gate fails
-> closed on transport error; secondary signals (per-key rate limit,
-> outbox events) fail open.
+> Critical paths refuse to run when the gateway is unreachable;
+> secondary signals may let calls through.
 
 ## Common runtime questions
 
@@ -65,8 +62,8 @@ Two usual suspects:
 ### "Why is the SDK raising `NullRunAuthenticationError`?"
 
 - `NULLRUN_API_KEY` is unset or the key was revoked.
-- `NULLRUN_SECRET_KEY` is unset and `NULLRUN_HMAC_REQUIRED=true`
-  (the production default). Set both, or relax the policy.
+- `NULLRUN_SECRET_KEY` is unset. Set both `NULLRUN_API_KEY` and
+  `NULLRUN_SECRET_KEY`.
 - The host clock skew between your SDK process and the gateway is
   too large for the HMAC signature window. Sync the host clock.
 - The protocol header `X-NULLRUN-PROTOCOL` is missing or below the
@@ -87,7 +84,7 @@ you do not need `@protect` to get cost tracking.
 | --- | --- |
 | `GET /health/live` | Process liveness (always 200 if the binary is running) |
 | `GET /health/ready` | Dependency readiness (DB + Redis; 503 if down) |
-| `GET /api/v1/capabilities` | Gateway contract — server-minted execution_id, per-execution reservations, protocol version, decision_log, idempotency_keys, outbox_async_drain |
+| `GET /api/v1/capabilities` | Gateway protocol version + feature flags |
 
 ## See also
 

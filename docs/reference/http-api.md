@@ -118,8 +118,6 @@ documents every field.
 | `POST` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}/enable` | Enable a template |
 | `DELETE` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}` | Disable a template |
 
-The org-less variant of this endpoint (`/api/v1/policies/toggle`) was removed in favour of tenancy-scoped paths; org-mismatch is enforced by the `org_consistency` middleware.
-
 Most-restrictive-wins composition across applicable policies — see [Concepts → Policies](../concepts/policies.md).
 
 ## Executions, audit, observability
@@ -185,7 +183,7 @@ is older than what the gateway requires.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/v1/capabilities` | Report `min_protocol_version` / `max_protocol_version`, `sdk_min_version`, server version + build timestamp, and the `capabilities.*` feature flags (`server_minted_execution_id`, `per_execution_reservations`, `heartbeat_time_based`, `idempotency_keys`, `rate_limit_fail_scope`, etc.) |
+| `GET` | `/api/v1/capabilities` | Report `min_protocol_version` / `max_protocol_version`, `sdk_min_version`, server version + build timestamp, and the `capabilities.*` feature flags |
 
 When `init()` detects that the SDK is older than the gateway's
 required minimum version, it emits a warning so the operator sees

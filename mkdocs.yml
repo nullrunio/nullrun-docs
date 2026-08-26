@@ -44,7 +44,10 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-    - navigation.tabs
+    # navigation.tabs removed: top-level sections render in the left
+    # sidebar (`navigation.sections`), not as header tabs. The 3-column
+    # layout is sidebar (left, static) + content (center) + on-this-page
+    # TOC (right). Search + brand live in the slim header.
     - navigation.sections
     - navigation.expand
     - navigation.top
@@ -57,6 +60,9 @@ theme:
     - toc.follow
     # Tier 2 banner — set via `extra.announcement` block below.
     - announce.dismiss
+    # Footer prev/next page navigation — rendered inside our custom
+    # footer partial alongside the theme toggle + repo / nullrun.io links.
+    - navigation.footer
   # Open Graph / Twitter card preview when a doc URL is pasted into
   # Slack / Twitter / Discord. `image` is the global fallback; per-page
   # overrides via `image:` front-matter on any Markdown file.

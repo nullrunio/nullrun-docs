@@ -17,15 +17,18 @@ the approval times out.
 ## Approval rules — separate from ToolBlock
 
 Approval rules are **not** `ToolBlock` policies with an `action =
-require_approval` field. They are a separate entity on the backend
-(`approval_rules` table) with these fields:
+require_approval` field. They are a separate concept with these
+fields:
 
-| Field | Type | Purpose |
-|---|---|---|
-| `tool_patterns` | `TEXT[]` | Glob patterns matching the tool name |
-| `per_call_threshold_cents` | `BIGINT NULLABLE` | Projected-cost threshold (estimated tokens × model rate) |
-| `action_predicate` | `JSONB NULLABLE` | Typed `BusinessImpact` predicate |
-| `priority`, `expires_in_seconds`, `action_label` | scalar | Operational metadata |
+| Field | Purpose |
+|---|---|
+| `name` | Display name for the rule |
+| `tool_patterns` | Glob patterns matching the tool name |
+| `per_call_threshold_cents` | Projected-cost threshold (estimated tokens × model rate) |
+| `action_predicate` | Typed `BusinessImpact` predicate |
+| `priority` | Ordering for tied rules |
+| `expires_in_seconds` | How long the operator has to decide |
+| `action_label` | Display label shown in the dashboard |
 
 When an SDK calls a tool that matches an approval rule, the gate
 returns `decision = "require_approval"` and parks the SDK on a
@@ -88,17 +91,13 @@ it computes a SHA-256 digest of the canonical-JSON
 `{"kind":"money_amount", direction, operator, threshold_minor,
 currency, extractor_id, extractor_version}` (Money variant) or the
 `ToolCallParams` envelope (ToolCall variant). The digest is stored
-on the `approvals` row.
+on the approval row.
 
 After the operator clicks Approve, the SDK's post-approval `/execute`
 re-check sends the live `business_impact` and `action_digest` back
-to the gate. The grant consume is atomic: a single `UPDATE approvals
-SET consumed_at = NOW() WHERE id = $1 AND execution_id = $2 AND
-status = 'APPROVED' AND consumed_at IS NULL AND expires_at > NOW()
-AND ($3::text IS NULL OR action_digest = $3) RETURNING id` query
-serializes concurrent re-checks through the row lock. The
-discriminated `ActionGrantOutcome` enum surfaces `Allow` /
-`DigestMismatch` / `NotFound` / `Expired` / `ReplayRejected`.
+to the gate. The grant consume is atomic — concurrent re-checks are
+serialized, and the gate surfaces `Allow` / `DigestMismatch` /
+`NotFound` / `Expired` / `ReplayRejected` outcomes.
 
 ## Approval resume flow
 
@@ -173,7 +172,7 @@ The agent can retry or give up.
 When an approval is created, the gateway notifies every active
 channel configured on your org:
 
-- **Email** — via the Brevo SMTP sub-processor.
+- **Email** — sent via our SMTP provider.
 - **Slack** — uses your org's installed Slack OAuth.
 - **Webhook** — generic HTTPS POST with HMAC-SHA256 signature
   (`X-NullRun-Signature`, 5-minute clock-skew tolerance, 10-minute
@@ -233,10 +232,10 @@ filter by:
 - Outcome (approved / denied / expired)
 
 The audit log is the source of truth for "who approved this?" —
-both for compliance and for incident review. The `approvals.action_digest`
-column is the immutable anchor that proves the operator approved
-the exact payload the SDK sent on `/gate` (not "any refund" —
-the exact amount and arguments).
+both for compliance and for incident review. The action digest is the
+immutable anchor that proves the operator approved the exact payload
+the SDK sent on `/gate` (not "any refund" — the exact amount and
+arguments).
 
 ## See also
 

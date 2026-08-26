@@ -27,12 +27,12 @@ next call rejects.
 
 | Situation | What you see | Where in the dashboard |
 |---|---|---|
-| **Budget exceeded** (Hard mode) | Every call returns `block`; SDK raises `NullRunBudgetError` with `error_code = "NR-B004"` (wire: `BUDGET_HARD_BLOCKED` or `BUDGET_OVERDRAFT_EXCEEDED`) | Decision History, then the spend bar hits 100% |
-| **Tool blocked** by policy | `block`; SDK raises `NullRunToolBlockedError` with `error_code = "NR-T001"` (wire: `TOOL_BLOCKED`) | Decision History |
+| **Budget exceeded** (Hard mode) | Every call returns `block`; SDK raises `NullRunBudgetError` with `error_code = "NR-B004"` | Decision History, then the spend bar hits 100% |
+| **Tool blocked** by policy | `block`; SDK raises `NullRunToolBlockedError` with `error_code = "NR-T001"` | Decision History |
 | **Operator kill** | `WorkflowKilledInterrupt` raised mid-call | Workflow status flips to **Killed** |
 
 Rate limiting (429) and budget soft-mode blocks are returned by the
-same gate but with different codes. SDK surfaces them as `error_code = "NR-R001"` (wire `RATE_LIMIT_EXCEEDED`) and `error_code = "NR-B004"` (wire `BUDGET_SOFT_BLOCKED`). See [Budgets](budgets.md#soft-mode) and [Policies](policies.md).
+same gate but with different codes. SDK surfaces them as `error_code = "NR-R001"` and `error_code = "NR-B004"`. See [Budgets](budgets.md#soft-mode) and [Policies](policies.md).
 
 The first two are automatic — the gate enforces them on every call.
 The third needs you to click **Kill** in the dashboard or call
@@ -62,21 +62,13 @@ propagates.
 ## When the gateway is unreachable
 
 Sometimes the gateway itself is down — DNS, network, an outage.
-Each enforcement path has its own fail-CLOSED / fail-OPEN behaviour,
-set by the implementation, not by a per-deployment mode knob:
+The mental model: critical paths (budget reservation, ToolBlock,
+aggregate rate limit) refuse to run when the gateway can't be reached;
+secondary signals (per-key rate limit) may let calls through. When the
+gateway rejects because of an infrastructure failure, you'll see a
+clear HTTP error from the SDK.
 
-| Path | Behaviour | Why |
-|---|---|---|
-| Budget reservation | **fail-CLOSED** → 402 `BUDGET_REDIS_UNAVAILABLE` | Money is more important than availability |
-| Aggregate rate limit | **fail-CLOSED** → 503 `RATE_LIMIT_REDIS_UNAVAILABLE` | Aggregate is the authoritative gate |
-| Per-key rate limit | **fail-OPEN** | Secondary signal; budget gate is the backstop |
-| ToolBlock check | **fail-CLOSED** → 403 `TOOL_BLOCKED` | Sensitive operations must not run when policy can't be evaluated |
-| `/track` outbox | **fail-OPEN** + async retry | The inference has already happened; blocking the response is not useful |
-
-If you're seeing a flood of `BUDGET_REDIS_UNAVAILABLE` or
-`RATE_LIMIT_REDIS_UNAVAILABLE`, the gateway's Redis dependency is the
-likely culprit. Check `/health/ready` and the Prometheus
-`redis_up` gauge.
+If you're seeing persistent infrastructure failures, contact support.
 
 ## When the breaker recovers
 
@@ -120,9 +112,7 @@ counter. Raise the cap or wait for the next reset.
 
 Use a **separate workflow** with its own (low or zero) budget. Don't
 disable the gate — bypassing it is a dev/test opt-out that the SDK
-flags with a `RuntimeWarning`, and `NULLRUN_SKIP_BUDGET_CHECK=1` is
-refuse-to-start in production (see [Configuration →
-Server-side fail-CLOSED guards](../getting-started/configuration.md#server-side-fail-closed-guards)).
+flags with a `RuntimeWarning`.
 
 ## See also
 

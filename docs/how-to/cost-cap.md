@@ -62,10 +62,8 @@ single call whose projected cost would exceed the cap *before* the
 model is invoked. The SDK raises `NullRunBlockedException` with
 `error_code = "NR-B004"` (wire `BUDGET_HARD_BLOCKED`).
 
-If you need to skip the pre-flight check in test environments
-only, set `NULLRUN_SKIP_BUDGET_CHECK=1`. The SDK emits a
-`RuntimeWarning` at import so this can't slip into production. See
-[Configuration → Server-side fail-CLOSED guards](../getting-started/configuration.md#server-side-fail-closed-guards).
+If you need to skip pre-flight in tests, use a workflow with a low
+budget instead.
 
 ## See also
 

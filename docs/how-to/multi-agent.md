@@ -15,28 +15,8 @@ key**. This page shows the three patterns that cover real workloads.
 The simplest production deployment. Each workflow gets its own
 process, its own env var, its own log stream. Common supervisors
 include systemd, Docker Compose, and Kubernetes — pick whichever
-fits the platform.
-
-For Docker Compose, the shape is `environment:` per service:
-
-```yaml title="docker-compose.yml"
-services:
-  prod-bot:
-    image: yourorg/agent:latest
-    environment:
-      NULLRUN_API_KEY: ***
-      NULLRUN_API_URL: https://api.nullrun.io
-  staging-bot:
-    image: yourorg/agent:latest
-    environment:
-      NULLRUN_API_KEY: ***
-      NULLRUN_API_URL: https://api.nullrun.io
-```
-
-For Kubernetes, mount the key as a `Secret` and reference it in each
-Deployment's `envFrom`.
-
-Each process talks to the gateway with its own key, so the dashboard's
+fits the platform. The rule is the same regardless of supervisor:
+each process gets its own `NULLRUN_API_KEY` so the dashboard's
 **Workflows** view shows separate per-workflow spend, kill/pause
 works independently, and you can restart one without affecting the
 other.

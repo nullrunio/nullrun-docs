@@ -54,10 +54,9 @@ Installs every vendor extra. The `[all]` meta-extra lives at
 
 ## How the httpx transport hook works
 
-The `httpx` transport hook in `nullrun.instrumentation.auto` wraps
-the response handler for any HTTP client built on `httpx` (the
-`openai` SDK and the `anthropic` SDK both use `httpx` under the
-hood). On every response, the hook:
+The httpx transport hook wraps the response handler for any HTTP
+client built on `httpx` (the `openai` SDK and the `anthropic` SDK
+both use `httpx` under the hood). On every response, the hook:
 
 1. Reads the JSON body.
 2. Extracts token counts from the vendor's `usage` block
@@ -70,17 +69,12 @@ SDK only reports token counts, never dollar amounts.
 
 ## Detection logic
 
-On `init()`, the SDK walks `sys.modules` looking for known packages:
-
-| Detected in `sys.modules` | Patcher activated |
-| --- | --- |
-| `openai` ≥ 1.0 | `instrumentation.auto` via the httpx transport hook |
-| `openai-agents` | `instrumentation.auto.patch_openai_agents` |
-| `anthropic` | `instrumentation.auto` via the httpx transport hook |
-| `langgraph` | `instrumentation.auto.patch_langgraph_compiled` (wraps `Pregel.invoke` / `.stream` / `.ainvoke` / `.astream`) |
-| `langchain` | `instrumentation.auto.patch_langchain_callback` (injects `NullRunCallback` into `BaseCallbackManager.__init__`) |
-| `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock) | per-vendor extractors |
-| `llama_index`, `crewai`, `autogen_agentchat` | patches in `instrumentation.llama_index`, `crewai`, `autogen` |
+If your framework is installed, the SDK patches it automatically on
+`init()`. The detection logic walks `sys.modules` looking for known
+packages — `openai`, `openai-agents`, `anthropic`, `langgraph`,
+`langchain`, `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock),
+`llama_index`, `crewai`, `autogen_agentchat` — and applies the
+appropriate patch.
 
 Order matters: if your code imports `openai` before `init()`,
 the hook is in place before the first request. If you import

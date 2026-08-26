@@ -75,7 +75,7 @@ mode](policies.md#budgetlimit-extra-fields):
 Spending → $49.95 of $50.00
 Next @protect call:        #2.00 projected
 gate decision:             block
-SDK raises:                 NullRunBudgetError (NR-B004, wire BUDGET_HARD_BLOCKED)
+SDK raises:                 NullRunBudgetError (NR-B004)
 @guarded:                   prints friendly message, sys.exit(1)
 ```
 
@@ -138,27 +138,10 @@ exactly $50.00, no rounding errors.
 
 ## Reservation and consumption
 
-The budget interaction splits into two phases:
-
-1. **`/api/v1/gate` reservation** — before execution. The gate
-   computes the projected cost from `estimated_tokens`, atomically
-   reserves it in Redis (TTL 300s), and returns `allow` / `block` /
-   `require_approval`.
-2. **`/api/v1/track` consumption** — after the LLM returns. The
-   SDK reports the actual cost. The reservation is consumed and the
-   period counter is incremented.
-
-The two phases share an **invariant**: `actual_cost ≤ reserved + ε_cents`
-with `ε_cents = 1` by default. If the SDK reports a larger cost,
-`/track` returns `422 CONSUME_OVERBUDGET` (fail-CLOSED — no implicit
-re-reserve).
-
-The `/track` ingestion goes through a Postgres outbox. The Redis
-authoritative counter is updated synchronously; the Postgres
-`cost_events` row is drained asynchronously. A Postgres outage
-does not block the inference — events stay in the outbox pending
-and drain when Postgres recovers (retry × 5, exponential backoff to
-16s, then `dead_letter` with 30-day retention).
+The gate reserves your projected cost before the model runs and
+reconciles the actual cost after. If the LLM call returns a cost
+that meaningfully exceeds the reservation, the `/track` commit
+rejects with `CONSUME_OVERBUDGET` — no implicit re-reserve, ever.
 
 ## See also
 

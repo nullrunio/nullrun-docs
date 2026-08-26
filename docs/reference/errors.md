@@ -47,22 +47,19 @@ four structured fields: `error_code` (machine-readable, e.g.
 (bool), `docs_url`.
 
 ```
-BreakerError                          (Exception)
-├── NullRunError                      (structured base — every field above)
-│   ├── NullRunDecision               (marker — expected policy outcomes)
-│   │   ├── NullRunBlockedException   (policy / budget / loop / sensitive block)
-│   │   │   ├── NullRunBudgetError    (budget exhausted — NR-B004)
-│   │   │   └── NullRunToolBlockedError (tool in block list — NR-T001)
-│   │   └── WorkflowPausedException   (paused via control plane)
-│   ├── NullRunInfrastructureError    (marker — system failures)
-│   │   ├── NullRunConfigError        (misconfiguration, e.g. missing api_key)
-│   │   ├── NullRunAuthenticationError (401 / 403)
-│   │   │   └── NullRunAuthError      (401 specifically)
-│   │   └── NullRunTransportError     (transport failures)
-│   │       ├── NullRunBackendError   (5xx — retryable, BUDGET_REDIS_UNAVAILABLE)
-│   │       └── RateLimitError        (429 — carries .retry_after, .upgrade_url)
-└── BreakerTransportError
-    └── InsecureTransportError        (HTTP used where HTTPS required)
+NullRunError                          (Exception)
+├── NullRunDecision                   (marker — expected policy outcomes)
+│   ├── NullRunBlockedException       (policy / budget / loop / sensitive block)
+│   │   ├── NullRunBudgetError        (budget exhausted — NR-B004)
+│   │   └── NullRunToolBlockedError   (tool in block list — NR-T001)
+│   └── WorkflowPausedException       (paused via control plane)
+└── NullRunInfrastructureError        (marker — system failures)
+    ├── NullRunConfigError            (misconfiguration, e.g. missing api_key)
+    ├── NullRunAuthenticationError   (401 / 403)
+    │   └── NullRunAuthError          (401 specifically)
+    └── NullRunTransportError         (transport failures)
+        ├── NullRunBackendError       (5xx — retryable)
+        └── RateLimitError            (429 — carries .retry_after, .upgrade_url)
 
 BaseException
 └── WorkflowKilledException           (parent)
@@ -83,9 +80,6 @@ below for the recommended handling pattern.
 tool-scoped), and `.details` (free-form). There is **no** `.message`
 attribute — use `str(exc)`.
 
-Removed: `CostLimitExceeded`, `ApprovalRequired`, `BreakerTimeout`,
-`LoopDetectedException`, `RetryStormException`,
-`RateLimitExceededException` (no remaining callers).
 
 `WorkflowKilledInterrupt` does not subclass `Exception` — catch it
 explicitly and before any `except Exception`.
@@ -158,7 +152,7 @@ the field directly instead of hard-coding.
 | `NullRunDecision` — budget exhausted (`NR-B004`) | `402` | Honour `.retry_after` from the `RateLimitError` if set; budget-exhausted `NullRunBudgetError` exposes the same field via `.details.retry_after` |
 | `NullRunDecision` — tool blocked (`NR-T001`) | `403` | User did nothing wrong, but the action is forbidden |
 | `NullRunDecision` — workflow paused | `503` | Set `Retry-After` from `.resume_after` |
-| `NullRunInfrastructureError` — rate-limit Redis (`NR-R002`) | `503` | `NullRunRateLimitRedisError`. Fails closed — do not retry blindly |
+| `NullRunInfrastructureError` — rate-limit Redis (`NR-R002`) | `503` | `NullRunRateLimitRedisError` — the rate limiter is degraded |
 | `WorkflowKilledInterrupt` | `503` | Special ASGI middleware required — see [Use with FastAPI](../how-to/fastapi.md) |
 
 Other decision categories (`CONSUME_OVERBUDGET` → 422,
@@ -193,7 +187,7 @@ for a one-line setup.
 
 When the gateway is unreachable, the SDK raises
 `NullRunTransportError` with `source` set to one of `NETWORK_ERROR`,
-`GATEWAY_ERROR`, `BREAKER_OPEN`, `AUTH_ERROR`.
+`GATEWAY_ERROR`, `AUTH_ERROR`.
 
 ## See also
 

@@ -105,10 +105,9 @@ outcome.
 
 The complete approval flow is documented in
 [Human approval → Approval resume flow](human-approval.md#approval-resume-flow).
-The wire-level failure mode is **fail-CLOSED**: if the WS push is
-silent for `NULLRUN_APPROVAL_TIMEOUT_SECONDS` (default 300s), the
-SDK raises `WorkflowKilledInterrupt` and the agent dies — silent
-networks must not silently approve a privileged action.
+If the approval timeout expires, the SDK raises
+`WorkflowKilledInterrupt`. There is no silent approval — operators
+must decide explicitly.
 
 ## What if the SDK is disconnected?
 

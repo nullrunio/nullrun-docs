@@ -1141,3 +1141,172 @@
 .md-sidebar--secondary .md-nav__link {
   font-size: 0.7rem;
 }
+/* ============================================================================
+   Tier 4 — 3-column layout (2026-08-26)
+   ----------------------------------------------------------------------------
+   navigation.tabs removed from features so top-level sections render only
+   in the left sidebar. This block:
+     1. Hides the now-orphaned header palette toggle + header social
+        icons (they live in the footer instead via overrides/partials/footer.html).
+     2. Locks the left sidebar as `position: sticky` so it never scrolls
+        out of view (Material does this by default above 1220px; we
+        reinforce it for narrower viewports too).
+     3. Paints the custom 3-column footer (brand + repo/site + palette).
+   ============================================================================ */
+
+/* (1) Header — palette + social icons moved to footer. */
+.md-header form[data-md-component="palette"] { display: none; }
+.md-header__option.md-header__option--social,
+.md-header__option--social { display: none; }
+
+/* (2) Left sidebar — static, doesn't scroll out of view. */
+.md-sidebar--primary {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100vh;
+  overflow-y: auto;
+}
+
+/* (3) Custom 3-column footer. */
+.nr-footer {
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-default-bg-color--light);
+  padding-block: 2.5rem;
+}
+
+.nr-footer__inner {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr auto;
+  gap: 2rem 3rem;
+  align-items: start;
+}
+
+[data-md-color-scheme="slate"] .nr-footer {
+  background: var(--md-default-bg-color);
+}
+
+/* Column 1 — brand */
+.nr-footer__brand { display: flex; flex-direction: column; gap: 0.6rem; }
+.nr-footer__logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  text-decoration: none;
+  color: var(--md-default-fg-color);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.nr-footer__logo img { height: 1.4rem; width: auto; }
+.nr-footer__copy {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--md-default-fg-color--light);
+  line-height: 1.45;
+}
+
+/* Column 2 — repo + nullrun.io links */
+.nr-footer__links {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding-top: 0.15rem;
+}
+.nr-footer__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-decoration: none;
+  color: var(--md-default-fg-color);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.nr-footer__link:hover { color: var(--md-accent-fg-color); text-decoration: underline; }
+.nr-footer__link svg { width: 1.05rem; height: 1.05rem; fill: currentColor; flex-shrink: 0; }
+
+/* Column 3 — palette toggle */
+.nr-footer__palette {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.55rem;
+}
+.nr-footer__palette-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--md-default-fg-color--light);
+}
+.nr-footer__palette-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem;
+  border-radius: 999px;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-default-bg-color);
+}
+.nr-footer__palette-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--md-default-fg-color--light);
+  transition: background 120ms ease, color 120ms ease;
+}
+.nr-footer__palette-btn svg { width: 1.05rem; height: 1.05rem; fill: currentColor; }
+.nr-footer__palette-btn:hover {
+  background: var(--md-default-bg-color--light);
+  color: var(--md-default-fg-color);
+}
+
+/* Prev / next pager under the footer */
+.nr-footer__pager {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+}
+.nr-footer__pager-link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.85rem 1.1rem;
+  border-radius: var(--md-border-radius);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  text-decoration: none;
+  color: var(--md-default-fg-color);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.nr-footer__pager-link:hover {
+  border-color: var(--md-default-fg-color);
+  background: var(--md-default-bg-color--light);
+}
+.nr-footer__pager-link--next { text-align: right; align-items: flex-end; }
+.nr-footer__pager-direction {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--md-default-fg-color--light);
+}
+.nr-footer__pager-title { font-size: 0.92rem; font-weight: 600; }
+
+/* Responsive: footer collapses on narrow viewports. */
+@media (max-width: 60em) {
+  .nr-footer__inner {
+    grid-template-columns: 1fr;
+    gap: 1.75rem;
+  }
+  .nr-footer__palette { align-items: flex-start; }
+  .nr-footer__pager { grid-template-columns: 1fr; }
+  .nr-footer__pager-link--next { text-align: left; align-items: flex-start; }
+}
+
+/* Drop Material's default footer chrome — our override replaces it. */
+.md-footer-meta { background: transparent; border: 0; padding: 0; }
+.md-footer-meta__inner { padding: 0; margin: 0; max-width: none; }

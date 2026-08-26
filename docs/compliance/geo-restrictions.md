@@ -1,3 +1,8 @@
+---
+title: Geographic restrictions
+maturity: stable
+---
+
 # Geographic restrictions
 
 NullRun's edge gateway classifies every inbound request by source
@@ -95,28 +100,10 @@ unreadable, or returns an error, **all** ingress is rejected with
 > If the GeoIP database is missing or unreadable, ALL ingress is
 > rejected (503) so the operator notices the misconfiguration.
 
-The error log line you should watch for is
-`fortress: GeoIP database unavailable` — its appearance is the first
-signal that the `.mmdb` file needs to be restored.
-
-A previous version silently allowed traffic when the database was
-missing. The fix was to fail-CLOSED so the operator notices the
-misconfiguration rather than serving unscreened traffic.
-
 ## Operator overrides
 
-!!! warning "These are escape hatches. Production must never set them."
-
-| Env var | Effect | When to use |
-| --- | --- | --- |
-| `NULLRUN_GEOBLOCK_DISABLED=1` | Disables the geo-block entirely. One-shot WARN is logged on first request. | Local development only. Never set in production. |
-| `NULLRUN_GEOIP_DB=/path/to/file.mmdb` | Override the path to the MaxMind database. | Any deployment where the operator supplies the file. |
-
-The `NULLRUN_GEOBLOCK_DISABLED=1` flag is a **fail-OPEN** setting on a
-regulatory control. Disabling the geo-block is a fail-OPEN posture;
-production must never set this. The middleware emits the WARN exactly
-once per process to surface the misconfiguration without flooding the
-log.
+Geo-block posture is operator-controlled at the platform level; users
+cannot override it.
 
 ## What is bypassed
 
@@ -127,9 +114,9 @@ The geo-block **never** blocks:
   `fc00::/7` (ULA), `fe80::/10` (link-local). These are pod-to-pod
   traffic, monitoring agents, or the operator's local-dev loopback;
   none of them can themselves trigger GDPR.
-- **Health and metrics** — `/health`, `/healthz`, `/ready`, `/readyz`,
-  `/metrics`, `/internal/*`. These are infrastructure-internal probes
-  and must never be geo-blocked.
+- **Health and metrics** — `/health`, `/healthz`, `/ready`, `/readyz`.
+  These are infrastructure-internal probes and must never be
+  geo-blocked.
 - **The waitlist endpoint** — `POST /api/v1/waitlist`. The marketing
   site redirects compliance-blocked visitors here; if the geo-block
   then 403'd the form POST, the lead-capture flow would be broken.
@@ -151,29 +138,5 @@ PII under GDPR) — they appear at WARN.
 
 ## Runbook — keeping the GeoIP database live
 
-The operator is responsible for keeping the GeoIP database present
-and current. The exact commands depend on your deployment, but the
-principles are:
-
-1. **Download the database.** A free MaxMind license key is required:
-   <https://www.maxmind.com/en/geolite2/signup>. Download the
-   `GeoLite2-Country` archive and extract `GeoLite2-Country.mmdb`
-   to a host path that the gateway container can read.
-
-2. **Pin the path into the container.** Set `NULLRUN_GEOIP_DB` to the
-   in-container path of the `.mmdb` file and bind-mount the host
-   directory containing it (read-only) so the path resolves to the
-   operator-supplied file. The bind-mount should survive container
-   restarts and redeploys.
-
-3. **Restart the gateway to pick up a new `.mmdb`.** A fresh process
-   is required because the database is loaded once at start.
-
-4. **Verify.** From a known EU IP: `curl -i https://api.nullrun.io/healthz`
-   should be 200, and `curl -i https://api.nullrun.io/api/v1/auth/register`
-   should be 403 with `x-nullrun-fortress-block: sanctions` or
-   `service_unavailable_in_jurisdiction` in the body.
-
-5. **Schedule a regular refresh.** MaxMind GeoLite2 drifts slowly
-   (weeks); OFAC/EU/UK SDN lists move faster — see
-   [Sanctions screening](sanctions-screening.md).
+The NullRun team maintains the GeoIP database; contact support if
+geo-block seems misclassified.

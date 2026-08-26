@@ -74,10 +74,8 @@ The `api_key` is the public value the SDK sends on every request.
 The `hmac_secret` is used for HMAC-SHA256 request signing — the
 gateway verifies every request came from a holder of the secret.
 
-In production deployments, the gateway refuses to start if
-`NULLRUN_HMAC_REQUIRED != true` (see
-[Configuration → Server-side fail-CLOSED guards](../getting-started/configuration.md#server-side-fail-closed-guards)).
-Without HMAC, every SDK request returns 401.
+In production deployments, HMAC is required. Without it, every SDK
+request returns 401.
 
 You can pass the API key directly to `init()`:
 
@@ -118,24 +116,8 @@ just `track`. A read-only CI checker needs just `verify`.
 
 ## How to rotate a key
 
-Rotating means replacing the secret on an existing key without
-changing the public key value. Useful when the secret leaks but the
-key itself is still safe.
-
-The current rotation path is a two-phase drain:
-
-1. Insert the new key with `status = 'active'`.
-2. Update the old key to `status = 'rotating'` (NOT `revoked` directly).
-3. The in-process `auth_cache` (300s TTL) is invalidated
-   synchronously on both the rotate and the revoke paths.
-4. Background drain (max 60s) waits for in-flight `/check` and
-   `/track` calls against the old key to finish.
-5. After drain (or timeout): old key → `status = 'revoked'`.
-
-The SDK receives a `key_rotated` event on the WebSocket control
-plane and re-fetches its credentials. The `/track` invocation that
-would otherwise produce a double-billing stays bound to the old key
-id, so the budget counter is not corrupted.
+Rotating creates a new key and invalidates the old one. In-flight
+calls finish normally.
 
 ## How to revoke a key
 
@@ -146,13 +128,9 @@ Revoking means deleting the key. Useful when:
 - The workflow is being deleted
 
 Use `POST /api/v1/orgs/{org_id}/api-keys/{key_id}/rotate` first to
-generate a replacement, then `DELETE` the old one. Direct revoke
-without rotation loses the budget attribution of any in-flight
-reservations (per the audit anchor model).
+generate a replacement, then `DELETE` the old one.
 
-The key stops working immediately — no grace period. Both the
-in-process `auth_cache` and the cross-pod `policy_cache` are
-invalidated.
+The key stops working immediately — no grace period.
 
 ## Listing and searching
 
@@ -185,10 +163,7 @@ One per workflow, minimum. For production:
   containers, give each its own key. Makes it easy to rotate one
   without restarting the others.
 
-Do NOT use bypass-flag keys in production. `NULLRUN_SKIP_BUDGET_CHECK=1`
-is refuse-to-start in production (see
-[Configuration → Server-side fail-CLOSED guards](../getting-started/configuration.md#server-side-fail-closed-guards))
-and is meant for SDK tests + CI fixtures only.
+Do not disable the gate in production — you'll lose enforcement.
 
 ### "Can I share a key between two workflows?"
 

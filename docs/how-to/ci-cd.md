@@ -91,9 +91,9 @@ gate.
 - **Real LLM cost** — synthetic tokens are random, not actual spend.
   Run `synthetic_sdk_load.py` for policy shape; use a real staging
   workflow with a small `budget_cents` for cost projections.
-- **Per-model pricing drift** — the gateway has a `model_pricing`
-  table; verify your models are priced correctly by checking the
-  dashboard **Cost** tab after one real call.
+- **Per-model pricing drift** — verify your models are priced
+  correctly by checking the dashboard **Cost** tab after one real
+  call.
 - **WS push timing** — synthetic load doesn't exercise kill/pause
   paths. Trigger them manually via the dashboard during the
   smoke-test pass.
@@ -121,8 +121,7 @@ jobs:
           # Verify the gateway capabilities are present before promoting to prod
           curl -fs "${NULLRUN_API_URL}/api/v1/capabilities" \
             | python -c "import json,sys; c=json.load(sys.stdin); \
-              assert c['capabilities']['server_minted_execution_id'], 'execution_id not ready'; \
-              assert c['capabilities']['per_execution_reservations'], 'reservations not ready'"
+              assert c['capabilities_ok'], 'gateway capabilities not ready'"
 
       - name: 4. Approval pause/resume (manual)
         # Trigger an approval-required call, click approve in the

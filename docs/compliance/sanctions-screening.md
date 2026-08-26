@@ -1,3 +1,8 @@
+---
+title: Sanctions screening
+maturity: stable
+---
+
 # Sanctions screening
 
 The geo-block stops ingress from sanctioned countries at the edge.
@@ -7,11 +12,8 @@ travels, uses a VPN, or signs up through a non-sanctioned-country
 proxy. It runs on both the standard signup form and the OAuth
 registration flow.
 
-The screening table is loaded at process start from
-`backend/data/sanctions/sdn.csv` (downloaded by the operator from
-OFAC's Sanctions List Service). On file or parse failure the screening
-falls back to a hand-curated subset of obvious state actors and emits
-an ERROR log so the operator notices the misconfiguration.
+The screening runs against the OFAC SDN list (with EU / UK / UN
+list support).
 
 ## Why both layers
 
@@ -33,17 +35,11 @@ The full list of sanctioned jurisdictions is in
 
 ## List source
 
-The screening table is loaded from
-[`Office of Foreign Assets Control`](https://ofac.treasury.gov/sanctions-list-service).
-The expected CSV format is the OFAC SDN format:
+The screening matches against the OFAC SDN list. Source:
+<https://ofac.treasury.gov/sanctions-list-service>
 
-```
-35096,"PUTIN, Vladimir Vladimirovich","individual","RUSSIA-EO14024","President of the Russian Federation",-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,"DOB 07 Oct 1952; POB Leningrad, Russia; nationality Russia; citizen Russia; Gender Male; Secondary sanctions risk: See Section 11 of Executive Order 14024.; President of the Russian Federation."
-```
-
-The EU consolidated list and the UK HMT consolidated list share the
-same column layout and can be appended as additional CSVs (one per
-jurisdiction).
+The EU consolidated list and the UK HMT consolidated list are also
+supported.
 
 !!! tip "Refresh cadence"
     OFAC SDN: refresh **daily**. MaxMind GeoLite2: weekly. EU / UK
@@ -80,54 +76,6 @@ On a `Match` the response body is a generic 403 — the matched display
 name is **not** echoed to the client to avoid confirming the
 screening target.
 
-## Operator override — disabled by default
-
-```bash
-NULLRUN_SANCTIONS_SCREENING_DISABLED=1
-```
-
-Setting this env var makes the screening a no-op that always returns
-`Clean`. The recommended posture for the **pre-revenue / pre-customer**
-stage of the service, where the false-positive rate of token-based
-name matching (`Vladimir Petrov` rejected because the surname token
-matches an SDN) outweighs the residual sanctions risk.
-
-!!! info "Why pre-revenue default is disabled"
-    A small pre-revenue SaaS has no customers to lose, and the IP-level
-    geo-block already excludes sanctioned countries from network
-    ingress. A sanctioned individual would need to physically travel
-    to a non-sanctioned country to even reach the signup form, or use
-    a VPN — and the geo-block already rejects the VPN exit IPs that
-    exit in sanctioned countries. Name-based screening is
-    high-leverage for a bank or a payment processor; for a pre-revenue
-    SaaS the false-positive triage cost is not yet worth the maintenance
-    burden (weekly SDN list updates, false-positive triage).
-
-**Re-enable** the screening by removing (or setting to `0`) the env
-var as soon as the service has a meaningful customer base or accepts
-payments in volume. The IP-level geo-block stays on in either posture
-— see [Geographic restrictions](geo-restrictions.md).
-
-For the full list of operator-override env vars, see
-[Geographic restrictions → Operator overrides](geo-restrictions.md#operator-overrides).
-
-## Fail-CLOSED vs degraded fallback
-
-The two layers fail differently, on purpose. The full table lives in
-[Geographic restrictions → Fail-CLOSED posture](geo-restrictions.md#fail-closed-posture);
-short version:
-
-| Layer | Failure mode | Posture |
-| --- | --- | --- |
-| Geo-block (IP) | `.mmdb` missing | **fail-CLOSED** (503). The edge must never silently let traffic through. |
-| Sanctions screening (name) | `.csv` missing | **degraded fallback**. Screening runs against a hand-curated subset; an ERROR log + a `degraded` flag surface the gap. |
-
-Operators are expected to monitor the
-`fortress: hard-blocking SANCTIONED-jurisdiction request` log line
-and the `sanctions: Sanctions table loaded from …` log line at
-process start; absence of the latter is the signal that the CSV
-never loaded.
-
 ## Known limitations
 
 - **Cyrillic / Latin homoglyphs are NOT collapsed.** A Cyrillic `а`
@@ -140,59 +88,3 @@ never loaded.
   but the resulting tokens (e.g. `gmail`, `mail`) are common enough
   that matching them would produce false positives. The name tokens
   are the primary signal; the email is a secondary, weaker signal.
-- **The screening table is loaded once per process.** Restart the
-  gateway after each CSV update. A daily process restart paired with
-  a daily OFAC CSV refresh is the recommended cadence.
-
-## Self-check
-
-If you are an operator and want to confirm the screening is wired up:
-
-1. Drop the real `sdn.csv` into `data/sanctions/`.
-2. Restart the gateway.
-3. Attempt a signup with a name that appears in the OFAC SDN list
-   (e.g. a test handle such as `test_sdn_person@example.com`).
-   The request should return 403.
-4. Confirm the `sanctions: Sanctions table loaded from …` log line
-   appears at process start, with a non-degraded token count.
-
-### Is the screening currently degraded?
-
-The pre-revenue default is `NULLRUN_SANCTIONS_SCREENING_DISABLED=1`
-(see [Operator override](#operator-override-disabled-by-default)
-above). When the CSV is missing or fails to parse, the screening
-falls back to a hand-curated subset and the log line
-`sanctions: Sanctions table loaded from … (degraded=true)`
-appears at process start — the `degraded=true` tag is the signal
-that screening is in fallback mode.
-
-Quick triage when you suspect degraded screening in production:
-
-```bash
-docker logs <gateway-container-name> --since 1h | \
-  grep -E "sanctions: Sanctions table loaded|sanctions: screening skipped" | tail -5
-```
-
-!!! note
-    `<gateway-container-name>` is the name of your gateway container in
-    your deployment (for example, the breaker-core service in the
-    reference docker-compose). The container name depends on your
-    deployment.
-
-If you see `degraded=true` and the message says the CSV is missing,
-the table file is absent on the running container — restore
-`backend/data/sanctions/sdn.csv` to a host path that the container
-can read (bind-mount or rebuild) and restart the gateway process.
-The geo-block remains fail-CLOSED throughout, so the IP defence is
-intact even when name-based screening is degraded.
-
-To re-enable screening explicitly (override the pre-revenue
-default and force the production posture), unset
-`NULLRUN_SANCTIONS_SCREENING_DISABLED` (or set it to `0`) in your
-deployment configuration.
-
-A regular cadence for the OFAC SDN refresh is recommended — see
-[Geographic restrictions → Runbook](geo-restrictions.md#runbook-keeping-the-geoip-database-live)
-for the parallel principles on keeping the GeoIP database live;
-the OFAC SDN CSV is downloaded from
-`https://www.treasury.gov/ofac/downloads/sdn.csv`.

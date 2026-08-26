@@ -47,22 +47,16 @@ Every NullRun exception carries four fields your code can branch on:
 
 The full catalog lives in that reference page; the standard set is:
 
-- `NR-B004` — workflow budget exhausted (wire: `BUDGET_HARD_BLOCKED`,
-  `BUDGET_SOFT_BLOCKED`, `BUDGET_OVERDRAFT_EXCEEDED`,
-  `BUDGET_ANTI_DOS_RESERVED_CAP`, `BUDGET_PERIOD_NOT_STARTED`,
-  `BUDGET_DATA_UNAVAILABLE`)
-- `NR-B002` — gateway 5xx (wire: `BUDGET_REDIS_UNAVAILABLE`)
-- `NR-R001` — per-workflow rate limit (wire: `RATE_LIMIT_EXCEEDED`)
-- `NR-R002` — rate-limit Redis unavailable (wire: `RATE_LIMIT_REDIS_UNAVAILABLE`)
-- `NR-T001` — tool block list hit (wire: `TOOL_BLOCKED`)
-- `NR-CH001` — chain context invalid (wire: `CHAIN_ORG_MISMATCH`,
-  `CHAIN_CROSS_ORG`, `CHAIN_MAX_DURATION_EXCEEDED`)
-- `NR-W004` — workflow soft-deleted or killed (wire: `WORKFLOW_INACTIVE`)
-- `NR-A003` — API key rejected (wire: `API_KEY_REVOKED`)
-- `NR-P001` — wire-protocol version mismatch (wire: `PROTOCOL_TOO_OLD`,
-  `PROTOCOL_TOO_NEW`)
-- `NR-O001` — actual cost > reservation + ε (wire: `CONSUME_OVERBUDGET`,
-  HTTP 422)
+- `NR-B004` — workflow budget exhausted
+- `NR-B002` — gateway 5xx
+- `NR-R001` — per-workflow rate limit
+- `NR-R002` — rate-limit Redis unavailable
+- `NR-T001` — tool block list hit
+- `NR-CH001` — chain context invalid
+- `NR-W004` — workflow soft-deleted or killed
+- `NR-A003` — API key rejected
+- `NR-P001` — wire-protocol version mismatch
+- `NR-O001` — actual cost > reservation + ε (HTTP 422)
 
 The wire code is still available via the response body or `.status_code`
 when you need it for metrics / dashboards.
@@ -218,22 +212,10 @@ The mapping from exception to HTTP status is documented in
 
 ## Audit trail
 
-Every gate decision — `allow`, `block`, `require_approval` — is
-written to `audit_events`. The chain is recompute-verifiable on
-demand via `GET /api/v1/orgs/{org_id}/audit-log/verify`.
-
-The audit log is the source of truth for "did the agent call the
-right thing?". Pair it with [Traces](tracing.md) for full context.
-
-### Honest disclosure
-
-- The reader trusts Postgres only — there is no external
-  attestation.
-- The HTTP verify response is **unsigned** (no HMAC over the
-  verify result).
-- The live JSONL export is **unsigned**.
-
-Signed exports and externally anchored proofs are roadmap items.
+Every decision is recorded in the audit log; you can fetch the full
+log via the API. The audit log is the source of truth for "did the
+agent call the right thing?". Pair it with [Traces](tracing.md) for
+full context.
 
 ## What is NOT stored
 

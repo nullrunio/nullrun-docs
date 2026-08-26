@@ -59,14 +59,12 @@ a DNF of up to 5 named parameters against Equals / OneOf /
 NumericRange / Regex / Exists matchers. See
 [Human approval → typed predicates](human-approval.md#typed-predicates).
 
-## Why ToolBlock is fail-CLOSED
+## Why ToolBlock is enforced at the gate
 
-Per the [Reliability matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable),
-ToolBlock fails closed: `403 TOOL_BLOCKED` (SDK `error_code = "NR-T001"`).
-Letting through a `stripe.charge` when the policy check failed means
-the agent could move money without anyone knowing. The blast radius
-is "agent deleted production data" or "agent leaked your data to an
-attacker" — worse than a noisy stop. ToolBlock is **always Hard**,
+ToolBlock is enforced at the gate: sensitive operations never run
+when the policy engine is unreachable. If the gate returns
+`403 TOOL_BLOCKED` (SDK `error_code = "NR-T001"`), the SDK raises
+before your function body executes. ToolBlock is **always Hard**,
 regardless of the budget's `enforcement_mode`.
 
 ## What's NOT in a ToolBlock policy
@@ -103,7 +101,7 @@ When a sensitive tool is blocked:
 - **Decision History** records the block with reason `TOOL_BLOCKED`
   (SDK `error_code = "NR-T001"`), the pattern that matched, and the
   workflow + api_key + tool_name.
-- **`audit_events`** records the decision with hash chaining — see
+- The **audit log** records the decision with hash chaining — see
   [Audit records](../concepts/error-handling.md#audit-trail).
 
 This gives you a complete audit trail of every blocked attempt,
