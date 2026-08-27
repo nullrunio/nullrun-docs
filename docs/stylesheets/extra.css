@@ -7,15 +7,22 @@
    Layout
    ------
      ┌──────────┬──────────────────────────────────┐
-     │          │  menu-bar (50px)                 │
-     │ sidebar  ├──────────────────────────────────┤
-     │  (fixed  │                                  │
-     │  300px)  │  content (max 750px, centered)   │
+     │          │                                  │
+     │ sidebar  │  menu-bar (50px, offset right)   │
+     │  (fixed  ├──────────────────────────────────┤
+     │  340px,  │                                  │
+     │  full    │  content (max 750px, centered)   │
+     │  height) │                                  │
      │          │                                  │
      │  numbered│                                  │
      │  chapters│                                  │
-     │          │  prev/next pager footer          │
+     │          │                                  │
      └──────────┴──────────────────────────────────┘
+
+   The sidebar occupies the full left edge (top: 0 → bottom: 0).
+   The menu-bar lives in the right column, NOT spanning the full
+   page width — its left edge starts at 340px. The footer is
+   removed entirely (no prev/next pager, no Material chrome).
 
    Palette
    -------
@@ -164,28 +171,53 @@ body.nr-theme-navy {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   LAYOUT — 3-column (sidebar + content + scroll-offset)
+   LAYOUT — 3-column (sidebar full-height + content + menu-bar offset)
    ──────────────────────────────────────────────────────────────────────────── */
 .md-grid {
-  max-width: 1200px;
+  max-width: 1400px;
 }
-.md-main {
+/* Content area starts at 340px (sidebar width). The footer is
+   removed in the partial override, so .md-footer isn't offset
+   here — but kept as a safety net in case Material's base.html
+   ever wraps the empty partial in a <footer> element. */
+.md-main,
+.md-footer {
   margin-left: 340px;
 }
+/* Hide the footer entirely — the override partial renders empty,
+   but Material's base.html may still emit a <footer class="md-footer">
+   wrapper around it. Belt-and-braces. */
+.md-footer { display: none; }
+/* On narrow viewports the 340px sidebar leaves almost no room for
+   content — collapse the sidebar off-screen by default and let the
+   menu-bar hamburger (body.nr-sidebar-hidden) toggle it back.
+   Menu-bar inner drops its offset too so the icon strip spans the
+   full viewport width. */
 @media (max-width: 76em) {
-  .md-main { margin-left: 0; }
+  .md-sidebar--primary { transform: translateX(-100%); }
+  .md-main,
+  .md-footer { margin-left: 0; }
+  .nr-menubar__inner { margin-left: 0; }
+  body.nr-sidebar-hidden .md-sidebar--primary { transform: translateX(0); }
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   MENU-BAR (header) — Helix-style 50px icon-only strip
+   MENU-BAR (header) — Helix-style 50px icon-only strip, OFFSET RIGHT
    ──────────────────────────────────────────────────────────────────────────── */
+/* .md-header sits at the top of the page but its background is
+   transparent — the sidebar (z-index 4) shows through above the
+   sticky header (z-index 5) where the menu-bar's offset would
+   otherwise paint a full-width white strip. The visible chrome
+   (background + bottom border) lives on .nr-menubar__inner, which
+   starts at 340px from the left edge (i.e. immediately right of
+   the sidebar). */
 .md-header {
   position: sticky;
   top: 0;
   height: 50px;
   min-height: 50px;
-  background-color: var(--md-default-bg-color);
-  border-bottom: 1px solid var(--nr-sidebar-spacer);
+  background-color: transparent;
+  border-bottom: none;
   box-shadow: none;
   color: var(--nr-icons);
 }
@@ -198,12 +230,19 @@ body.nr-theme-navy {
   z-index: 5;
 }
 .nr-menubar__inner {
+  /* Offset right by the sidebar width so the icon strip does NOT
+     span the full page width. Background + bottom-border painted
+     here, not on .md-header, so the strip doesn't visually cover
+     the sidebar. */
+  margin-left: 340px;
   display: flex;
   align-items: center;
   height: 50px;
   max-width: none;
   padding: 0 12px;
   gap: 6px;
+  background-color: var(--md-default-bg-color);
+  border-bottom: 1px solid var(--nr-sidebar-spacer);
 }
 
 /* Left / right button clusters */
@@ -217,20 +256,10 @@ body.nr-theme-navy {
 .nr-menubar__left-buttons { margin-right: 4px; }
 .nr-menubar__right-buttons { margin-left: auto; }
 
-/* Title in centre */
-.nr-menubar__title {
-  flex: 1 1 auto;
-  font-size: 1.05rem;
-  font-weight: 600;
-  text-align: center;
-  margin: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--md-default-fg-color);
-  line-height: 50px;
-  padding: 0 16px;
-}
+/* Title — intentionally hidden. The <h1> is preserved (empty
+   content) for layout / a11y landmark stability, but takes no
+   visible space. */
+.nr-menubar__title { display: none; }
 
 /* Icon-only button — Helix style: square, transparent, hover-glow */
 .nr-icon-button {
@@ -299,39 +328,68 @@ body.nr-theme-navy {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   SIDEBAR — fixed left, numbered chapters
+   SIDEBAR — fixed left, full height, numbered chapters
    ──────────────────────────────────────────────────────────────────────────── */
+/* Always visible at every viewport — overrides Material's mobile
+   hide (which sets `left: -12.1rem` at <1220px and relies on the
+   drawer-checkbox toggle to bring it back). Helix's mdBook sidebar
+   is visible by default and only hides via the menu-bar toggle.
+
+   The sidebar spans the FULL height of the viewport (top: 0 →
+   bottom: 0). It is wider than the menu-bar above it, so the
+   sidebar's top edge is the visible boundary between sidebar
+   content and the menu-bar strip — no offset needed. */
 .md-sidebar--primary {
   position: fixed;
   top: 0;
   bottom: 0;
-  left: 0;
+  left: 0 !important;
   width: 340px;
+  height: 100%;
+  display: block;
   background-color: var(--nr-sidebar-bg);
   color: var(--nr-sidebar-fg);
   font-size: 0.875em;
   border-right: 1px solid var(--nr-sidebar-spacer);
-  overflow-y: auto;
+  /* No overflow here — scrollwrap handles scrolling. */
   z-index: 4;
+}
+/* Scrollwrap fills the fixed sidebar AND scrolls. Material's default
+   chain is: scrollwrap gets `overflow-y: auto` only after JS hovers
+   the sidebar (the snap-scroll mechanic). We want always-on scroll,
+   so we set `overflow-y: auto` here with the higher-specificity
+   descendant selector to override Material's `overflow: hidden`
+   shorthand that wins via source order otherwise. */
+.md-sidebar--primary .md-sidebar__scrollwrap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  width: auto;
+  height: auto;
 }
 .md-sidebar--primary .md-sidebar__inner {
   padding: 16px 0;
 }
 
-@media (max-width: 76em) {
-  .md-sidebar--primary {
-    transform: translateX(-100%);
-    transition: transform 200ms ease;
-  }
-  body[data-md-toggle="drawer"]:checked ~ .md-sidebar--primary,
-  .md-toggle--drawer:checked ~ .md-sidebar--primary {
-    transform: translateX(0);
-  }
-}
-
 /* Hide the right-side TOC for narrower viewports — Helix only uses
    the left sidebar. */
 .md-sidebar--secondary { display: none; }
+
+/* Suppress Material's sticky-active-link behaviour for section
+   headers. With `navigation.expand` enabled, all sections are
+   expanded by default, so the active section header is already
+   visible at its natural position in the list. Material's sticky
+   `position: top: 0` would create a phantom duplicate that pins to
+   the top of the sidebar when scrolled. */
+.md-nav--primary > .md-nav__list > .md-nav__item--active > .md-nav__link {
+  position: static;
+  box-shadow: none;
+  background: transparent;
+}
 
 /* Hide sidebar when user toggled it off (via extra.js sidebar-hide). */
 body.nr-sidebar-hidden .md-sidebar--primary {
@@ -422,16 +480,113 @@ body.nr-sidebar-hidden .md-main {
   margin-top: 0;
 }
 
+/* Material's `nav-item.html` renders TWO siblings for the active
+   page: a `<label class="md-nav__link" for="__toc">` (TOC toggle,
+   normally hidden) and an `<a class="md-nav__link">` (the actual
+   link). The general `display: flex` rule above for non-section
+   nav__links has higher specificity than Material's `display: none`
+   on the `[for=__toc]` selector, which makes the TOC toggle label
+   visible and duplicates the active page row in the sidebar.
+   Re-hide both with the matching specificity. */
+.md-nav--primary .md-nav__item:not(.md-nav__item--section) .md-nav__link[for="__toc"],
+.md-nav--primary .md-nav__item:not(.md-nav__item--section) .md-nav__link[for="__toc"] ~ .md-nav {
+  display: none;
+}
+
 /* Hide "Table of contents" label above the sidebar — Helix has none. */
 .md-sidebar--primary .md-sidebar__title { display: none; }
+
+/* ── Sidebar header — logo + "NULLRUN Docs" ──────────────────────
+   Material renders a `<label class="md-nav__title" for="__drawer">`
+   at the top of the primary sidebar with the site logo + name.
+   Its stock styles make it look like a button (background, shadow,
+   border-radius) which doesn't fit a flat sidebar. We strip the
+   button styling and lay it out as a centered header row: logo +
+   "NULLRUN Docs" text in the middle, with a thin divider under it.
+
+   The block is `position: sticky; top: 0` so it stays visible while
+   the chapter list scrolls beneath it. Its background uses
+   `--nr-sidebar-bg` (theme-aware: light/dark/navy all define this
+   variable) so the header never reads transparent against the
+   scrolling list — regardless of theme.
+
+   Size is LOCKED: explicit height (52px = 12px padding × 2 + 28px
+   logo), `min-height` / `max-height` clamped to the same value,
+   `flex-shrink: 0` so the flex container can't compress it, and
+   `transition: none` so nothing animates as Material toggles
+   state classes on scroll. The block is pixel-invariant under
+   scroll, hover, focus, theme change, and Material's data-md-
+   state toggling. */
+.md-sidebar--primary .md-nav__title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 100%;
+  height: 52px;
+  min-height: 52px;
+  max-height: 52px;
+  padding: 12px;
+  margin: 0;
+  background-color: var(--nr-sidebar-bg);
+  box-shadow: none;
+  border: none;
+  border-bottom: 1px solid var(--nr-sidebar-spacer);
+  border-radius: 0;
+  cursor: default;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--md-default-fg-color);
+  text-decoration: none;
+  text-transform: uppercase;
+  transition: none;
+  /* Stick to the top of the scrollwrap so the header stays put
+     while the user scrolls the chapter list. The sidebar itself
+     is `position: fixed` with its own scroll context, so this
+     sticky works against the scrollwrap — not the viewport. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.md-sidebar--primary .md-nav__title[for="__drawer"]:hover,
+.md-sidebar--primary .md-nav__title[for="__drawer"]:focus,
+.md-sidebar--primary .md-nav__title[for="__drawer"]:active {
+  background-color: var(--nr-sidebar-bg);
+  color: var(--md-default-fg-color);
+  height: 52px;
+  min-height: 52px;
+  max-height: 52px;
+}
+.md-sidebar--primary .md-nav__title .md-logo {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.md-sidebar--primary .md-nav__title .md-logo img {
+  width: 28px;
+  height: 28px;
+  display: block;
+}
+.md-sidebar--primary .md-nav__title .md-logo + :not(img),
+.md-sidebar--primary .md-nav__title {
+  /* Site name sits to the right of the logo. */
+  text-transform: uppercase;
+}
 
 /* ────────────────────────────────────────────────────────────────────────────
    CONTENT — centred, max-width, sans body
    ──────────────────────────────────────────────────────────────────────────── */
 .md-content {
-  max-width: 750px;
+  max-width: 900px;
   margin: 0 auto;
-  padding: 24px 16px 48px;
+  padding: 24px 24px 48px;
 }
 .md-content__inner {
   margin: 0;
@@ -525,72 +680,39 @@ body.nr-sidebar-hidden .md-main {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   FOOTER — Helix-style prev/next pager only
-   ──────────────────────────────────────────────────────────────────────────── */
-.nr-footer {
-  background: var(--md-default-bg-color);
-  border-top: 1px solid var(--nr-sidebar-spacer);
-  padding: 0;
-  margin: 32px 0 0;
-}
-.nr-footer__pager {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0;
-  max-width: 750px;
-  margin: 0 auto;
-}
-.nr-footer__pager-link {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  text-decoration: none;
-  color: var(--nr-sidebar-fg);
-  font-size: 0.9rem;
-  border-radius: 4px;
-  transition: background-color 120ms ease;
-}
-.nr-footer__pager-link:hover {
-  background: var(--nr-sidebar-spacer);
-  color: var(--md-default-fg-color);
-}
-.nr-footer__pager-link--prev {
-  justify-content: flex-start;
-  text-align: left;
-}
-.nr-footer__pager-link--next {
-  justify-content: flex-end;
-  text-align: right;
-}
-.nr-footer__pager-link svg {
-  width: 16px;
-  height: 16px;
-  fill: currentColor;
-  flex: 0 0 auto;
-}
-.nr-footer__pager-meta {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.25;
-}
-.nr-footer__pager-label {
-  font-size: 0.75em;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--nr-sidebar-non-existant);
-}
-.nr-footer__pager-title {
-  font-size: 0.95em;
-  color: var(--md-default-fg-color);
-  font-weight: 500;
-}
-.nr-footer__pager-spacer { display: block; }
-
-/* Drop Material's default footer chrome */
+   FOOTER — removed entirely
+   ────────────────────────────────────────────────────────────────────────────
+   The footer (and its prev/next pager) was removed. Helix's mdBook
+   theme has no footer; navigation happens entirely through the left
+   sidebar. The footer partial override renders empty, and we also
+   hide any `<footer class="md-footer">` wrapper that Material's
+   base.html might still emit, plus drop Material's default footer
+   chrome (`.md-footer-meta`) for the same reason.
+   .md-footer { display: none; } is declared in the LAYOUT block
+   above. */
 .md-footer-meta,
-.md-footer-meta__inner { background: transparent; padding: 0; margin: 0; max-width: none; border: none; }
+.md-footer-meta__inner { display: none; }
+
+/* ────────────────────────────────────────────────────────────────────────────
+   BACK-TO-TOP BUTTON (Material `navigation.top`)
+   ────────────────────────────────────────────────────────────────────────────
+   Material renders a floating "Back to top" button fixed to the
+   viewport: `margin-left: 50%; transform: translate(-50%)` centers
+   it on the viewport's horizontal axis. Our layout puts a 340px
+   sidebar on the left edge, so the stock center (50% of viewport)
+   lands the button behind the sidebar / menu-bar instead of over
+   the content. Offset `margin-left` by +170px (half the sidebar
+   width) so it centers on the content area (right of sidebar).
+   Below the sidebar-collapse breakpoint (≤76em) the sidebar is
+   off-screen, so the button centers on the viewport as before. */
+.md-top {
+  margin-left: calc(50% + 170px);
+}
+@media (max-width: 76em) {
+  .md-top {
+    margin-left: 50%;
+  }
+}
 
 /* ────────────────────────────────────────────────────────────────────────────
    BANNER (announcement) — slim top-of-page strip

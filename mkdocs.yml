@@ -52,16 +52,36 @@ theme:
     # the left sidebar are numbered (1. / 2. / 2.1. …) and act as the
     # primary navigation; the right-side TOC appears only on long pages.
     #
-    # navigation.expand removed: sections default to COLLAPSED, the
-    # active section auto-expands so the user always sees context.
-    # Hierarchy is restored via extra.css section/subsection rules.
+    # navigation.expand enabled: sections default to EXPANDED so the
+    # full chapter tree is visible in the left sidebar at all times
+    # (mirrors mdBook Helix). Sections can still be collapsed by
+    # clicking the chevron — Material's toggle behaviour is preserved.
     #
-    # navigation.footer enabled so the Helix-style prev/next pager in
-    # overrides/partials/footer.html populates from the nav order.
+    # navigation.tracking enabled: Material's bundle intercepts clicks
+    # on internal links, fetches the next page in the background,
+    # swaps the content + sidebar + footer in place, and pushes the
+    # URL via history.pushState. The browser doesn't actually reload
+    # anything — no flash of unstyled content, no header/menu-bar
+    # re-paint, no scroll-position reset until the swap completes.
+    # Sidebar links feel like SPA navigation.
+    #
+    # navigation.instant: scroll position resets to top immediately
+    # when the new page swaps in (otherwise the user stays at the
+    # old scroll position which is disorienting on a long page).
+    #
+    # navigation.instant.progress: show a thin progress strip under
+    # the menu-bar while the next page is loading.
+    #
+    # navigation.footer removed — the footer is gone (override partial
+    # renders empty), so prev/next pager isn't used. Navigation
+    # between chapters happens through the left sidebar only.
+    - navigation.expand
     - navigation.sections
+    - navigation.tracking
+    - navigation.instant
+    - navigation.instant.progress
     - navigation.top
     - navigation.indexes
-    - navigation.footer
     - search.suggest
     - search.highlight
     - content.code.copy

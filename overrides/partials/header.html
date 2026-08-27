@@ -28,11 +28,16 @@
     {# ── Left buttons: sidebar toggle, theme picker, search ──────── #}
     <div class="nr-menubar__left-buttons">
 
-      <label class="nr-icon-button" for="__drawer" title="Toggle table of contents" aria-label="Toggle table of contents">
+      {# Note: NOT bound to Material's `__drawer` checkbox — that would
+         trigger Material's overlay backdrop + JS-side state, which
+         conflicts with our always-visible sidebar. We toggle the
+         sidebar via a plain JS hook on this button (extra.js binds
+         the click to `nr-sidebar-hidden` body class). #}
+      <button class="nr-icon-button nr-sidebar-toggle" type="button" title="Toggle table of contents" aria-label="Toggle table of contents" aria-controls="nr-sidebar">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2Z"/>
         </svg>
-      </label>
+      </button>
 
       {# ── Theme picker — popup list like Helix ──────────────────────
          Three themes (Auto / Light / Dark) exposed via radios +
@@ -64,18 +69,12 @@
 
     </div>
 
-    {# ── Page title centred ────────────────────────────────────────── #}
-    <h1 class="nr-menubar__title">
-      {% if page %}
-        {% if page.meta and page.meta.title %}
-          {{ page.meta.title }}
-        {% else %}
-          {{ page.title | default(config.site_name) }}
-        {% endif %}
-      {% else %}
-        {{ config.site_name }}
-      {% endif %}
-    </h1>
+    {# ── Page title — intentionally empty. The menu-bar is just an
+       icon strip; the section name lives in the left sidebar. The
+       <h1> is preserved (hidden via CSS) so the layout doesn't
+       collapse, and so screen readers / page-title still get a
+       consistent landmark. #}
+    <h1 class="nr-menubar__title" aria-hidden="true"></h1>
 
     {# ── Right buttons: print, github ───────────────────────────────── #}
     <div class="nr-menubar__right-buttons">

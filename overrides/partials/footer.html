@@ -1,51 +1,13 @@
 {#-
-  Override of Material's footer.html — Helix-style minimal pager.
+  Override of Material's footer.html — empty.
 
-  Helix's footer is just a "Next chapter" link, no copyright /
-  project links / theme toggle. We mirror that: only the prev /
-  next pager, rendered as a wide bar with the previous chapter on
-  the left and next on the right. Both pages read like Helix
-  does — small icons + chapter number + title.
-
-  Material exposes the previous/next page via `page.previous_page`
-  and `page.next_page` when `navigation.footer` is enabled in
-  features (mkdocs.yml).
+  The footer (and its prev/next pager) is intentionally removed.
+  Helix's mdBook theme has no footer; navigation between chapters
+  happens entirely through the left sidebar. Rendering nothing here
+  prevents Material's default footer chrome (copyright, social
+  links, "Made with Material for MkDocs") from appearing at the
+  bottom of every page.
 
   Template hierarchy: this file replaces Material's
   `partials/footer.html` via the `custom_dir: overrides` setting.
 -#}
-<footer class="md-footer nr-footer">
-  <div class="nr-footer__pager md-grid">
-
-    {# ── Previous chapter ─────────────────────────────────────────── #}
-    {% if page.previous_page %}
-      <a rel="prev" href="{{ page.previous_page.url | url }}" class="nr-footer__pager-link nr-footer__pager-link--prev" aria-label="Previous chapter: {{ page.previous_page.title | e }}">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
-        </svg>
-        <span class="nr-footer__pager-meta">
-          <span class="nr-footer__pager-label">Previous</span>
-          <span class="nr-footer__pager-title">{{ page.previous_page.title }}</span>
-        </span>
-      </a>
-    {% else %}
-      <span class="nr-footer__pager-spacer"></span>
-    {% endif %}
-
-    {# ── Next chapter ─────────────────────────────────────────────── #}
-    {% if page.next_page %}
-      <a rel="next" href="{{ page.next_page.url | url }}" class="nr-footer__pager-link nr-footer__pager-link--next" aria-label="Next chapter: {{ page.next_page.title | e }}">
-        <span class="nr-footer__pager-meta">
-          <span class="nr-footer__pager-label">Next</span>
-          <span class="nr-footer__pager-title">{{ page.next_page.title }}</span>
-        </span>
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
-        </svg>
-      </a>
-    {% else %}
-      <span class="nr-footer__pager-spacer"></span>
-    {% endif %}
-
-  </div>
-</footer>

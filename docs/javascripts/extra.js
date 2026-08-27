@@ -16,8 +16,9 @@
 //      `nr-collapsible` class we add in JS (Material's stock behaviour
 //      is unchanged — we just rotate the caret visually).
 //
-// Future candidates (deliberately not implemented yet):
-//   - "Copy page as Markdown" button next to the title.
+// The menu-bar title h1 is intentionally hidden — the menu-bar is just
+// an icon strip; section context lives in the left sidebar. The
+// title-sync hook from earlier revisions has been removed (dead code).
 
 const NR_THEME_KEY = "nullrun-docs-theme";
 
@@ -101,16 +102,16 @@ const NR_THEME_KEY = "nullrun-docs-theme";
 /* ── 2. Sidebar hide toggle ─────────────────────────────────────── */
 (function initSidebarHide() {
     const KEY = "nullrun-docs-sidebar";
-    const drawerToggle = document.getElementById("__drawer");
-    if (!drawerToggle) return;
+    const btn = document.querySelector(".nr-sidebar-toggle");
+    if (!btn) return;
 
     function apply(state) {
         if (state === "hidden") {
             document.body.classList.add("nr-sidebar-hidden");
-            drawerToggle.checked = false;
+            btn.setAttribute("aria-pressed", "true");
         } else {
             document.body.classList.remove("nr-sidebar-hidden");
-            drawerToggle.checked = true;
+            btn.setAttribute("aria-pressed", "false");
         }
     }
 
@@ -118,10 +119,10 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     try { saved = localStorage.getItem(KEY); } catch (e) { /* ignore */ }
     if (saved === "hidden" || saved === "visible") apply(saved);
 
-    drawerToggle.addEventListener("change", () => {
-        const state = drawerToggle.checked ? "visible" : "hidden";
-        apply(state);
-        try { localStorage.setItem(KEY, state); } catch (e) { /* ignore */ }
+    btn.addEventListener("click", () => {
+        const willHide = !document.body.classList.contains("nr-sidebar-hidden");
+        apply(willHide ? "hidden" : "visible");
+        try { localStorage.setItem(KEY, willHide ? "hidden" : "visible"); } catch (e) { /* ignore */ }
     });
 })();
 
