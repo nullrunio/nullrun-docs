@@ -170,7 +170,7 @@ body.nr-theme-navy {
   max-width: 1200px;
 }
 .md-main {
-  margin-left: 300px;
+  margin-left: 340px;
 }
 @media (max-width: 76em) {
   .md-main { margin-left: 0; }
@@ -306,7 +306,7 @@ body.nr-theme-navy {
   top: 0;
   bottom: 0;
   left: 0;
-  width: 300px;
+  width: 340px;
   background-color: var(--nr-sidebar-bg);
   color: var(--nr-sidebar-fg);
   font-size: 0.875em;

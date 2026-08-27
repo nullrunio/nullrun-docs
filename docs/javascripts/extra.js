@@ -3,23 +3,21 @@
 // Today:
 //   1. Theme picker (Helix-style popup) — overrides/partials/header.html
 //      renders a button + dropdown of {auto, light, dark, navy}. The
-//      chosen theme is written to localStorage and applied via a
-//      `data-md-color-scheme="..."` attribute on the <html> element,
-//      which Material's CSS variables already key off.
+//      chosen theme is applied by setting Material's data-md-color-*
+//      attributes on the <body> element (NOT <html> — Material reads
+//      from <body>). State is persisted to localStorage under both our
+//      key (`nullrun-docs-theme`) and Material's own (`__palette`).
 //
 //   2. Sidebar hide toggle — bound to the menu-bar hamburger. Toggles
 //      a `nr-sidebar-hidden` body class that hides `.md-sidebar--primary`.
 //      State persisted to localStorage so the choice survives reloads.
 //
-//   3. Sidebar numbered-section caret — a click on a section header
-//      toggles its inner list visibility (default Material already does
-//      this via `navigation.sections`; we re-bind so the caret on the
-//      left flips open/closed visually).
+//   3. Section numbered-title caret auto-flips on open/closed via the
+//      `nr-collapsible` class we add in JS (Material's stock behaviour
+//      is unchanged — we just rotate the caret visually).
 //
 // Future candidates (deliberately not implemented yet):
-//   - "Copy page as Markdown" button next to the title. Material
-//     already exposes `content.code.copy` for code blocks; this
-//     would extend that to whole pages.
+//   - "Copy page as Markdown" button next to the title.
 
 const NR_THEME_KEY = "nullrun-docs-theme";
 
@@ -28,27 +26,58 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     const buttons = document.querySelectorAll(".nr-theme-btn");
     if (!buttons.length) return;
 
-    function applyTheme(theme) {
-        const html = document.documentElement;
-        html.setAttribute("data-md-color-scheme", theme);
+    // Map our user-facing theme names to Material's expected values.
+    // "navy" is our custom addition; Material only knows "default" +
+    // "slate". For navy we apply slate + a body class so our CSS
+    // overrides win by specificity.
+    const themeMap = {
+        light: { scheme: "default", primary: "black",   accent: "grey", bodyClass: "" },
+        dark:  { scheme: "slate",   primary: "white",   accent: "grey", bodyClass: "" },
+        navy:  { scheme: "slate",   primary: "white",   accent: "grey", bodyClass: "nr-theme-navy" },
+    };
 
-        // Update the <select> Material already renders so its native
-        // form handlers stay in sync.
-        const nativeSelect = document.querySelector("[data-md-component=\"palette\"] select");
-        if (nativeSelect) {
-            const opt = Array.from(nativeSelect.options).find(o => o.value === theme);
-            if (opt) nativeSelect.value = theme;
+    function clearBodyClasses() {
+        document.body.classList.remove("nr-theme-navy");
+    }
+
+    function applyTheme(name) {
+        const t = themeMap[name];
+        if (!t) return;
+
+        // Material reads these from <body>, not <html>.
+        clearBodyClasses();
+        document.body.setAttribute("data-md-color-scheme", t.scheme);
+        document.body.setAttribute("data-md-color-primary", t.primary);
+        document.body.setAttribute("data-md-color-accent", t.accent);
+        if (t.bodyClass) document.body.classList.add(t.bodyClass);
+
+        // Persist to localStorage so the choice survives navigation.
+        try {
+            localStorage.setItem(NR_THEME_KEY, name);
+            // Also update Material's __palette so its runtime stays in sync.
+            const existing = localStorage.getItem("__palette");
+            let parsed = {};
+            try { parsed = existing ? JSON.parse(existing) : {}; } catch (e) { parsed = {}; }
+            if (!parsed.color) parsed.color = {};
+            parsed.color.scheme = t.scheme;
+            parsed.color.primary = t.primary;
+            parsed.color.accent = t.accent;
+            localStorage.setItem("__palette", JSON.stringify(parsed));
+        } catch (e) { /* ignore */ }
+    }
+
+    function restoreTheme() {
+        let saved = null;
+        try { saved = localStorage.getItem(NR_THEME_KEY); } catch (e) { /* ignore */ }
+        if (saved && themeMap[saved]) {
+            applyTheme(saved);
+            return saved;
         }
-
-        try { localStorage.setItem(NR_THEME_KEY, theme); } catch (e) { /* ignore */ }
+        return null;
     }
 
-    // Restore previously chosen theme on load (overrides system default).
-    let saved = null;
-    try { saved = localStorage.getItem(NR_THEME_KEY); } catch (e) { /* ignore */ }
-    if (saved && ["default", "slate", "navy"].includes(saved)) {
-        applyTheme(saved);
-    }
+    // Restore on first paint (before any flashes of unstyled content).
+    restoreTheme();
 
     buttons.forEach((btn) => {
         btn.addEventListener("click", (ev) => {
@@ -58,11 +87,13 @@ const NR_THEME_KEY = "nullrun-docs-theme";
                 // Reset to OS preference.
                 try { localStorage.removeItem(NR_THEME_KEY); } catch (e) { /* ignore */ }
                 const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-                applyTheme(systemDark ? "slate" : "default");
+                applyTheme(systemDark ? "dark" : "light");
             } else {
-                const scheme = theme === "navy" ? "slate" : theme;
-                applyTheme(scheme);
+                applyTheme(theme);
             }
+            // Close the popup after selection.
+            const popup = btn.closest(".nr-theme");
+            if (popup) popup.blur();
         });
     });
 })();
@@ -96,14 +127,11 @@ const NR_THEME_KEY = "nullrun-docs-theme";
 
 /* ── 3. Section caret toggling ─────────────────────────────────────
    Material's `navigation.sections` already wires up section collapse
-   via the chevron on the right. We just add a small visual flip on
-   the caret so the user can tell at a glance whether a section is
-   open or closed. The `[data-md-toggle]` is the canonical hook. */
+   via the chevron on the right. We add a `nr-collapsible` class so
+   the CSS knows these are accordion sections (vs. plain links). */
 (function initSectionCaret() {
-    document.querySelectorAll(".md-nav--primary .md-nav__item--section > .md-nav__link").forEach((link) => {
-        const parent = link.parentElement;
-        if (!parent) return;
-        parent.classList.add("nr-collapsible");
+    document.querySelectorAll(".md-nav--primary .md-nav__item--section").forEach((item) => {
+        item.classList.add("nr-collapsible");
     });
 })();
 
