@@ -1,1432 +1,607 @@
 /* ============================================================================
-   NullRun Docs — brand overrides
+   NullRun Docs — Helix-style overrides (2026-08-27)
    ----------------------------------------------------------------------------
-   Paints Material's component layer onto the brand's "Geometric Mono +
-   Monochrome" surface. Hex tokens mirror `frontend/app/globals.css`
-   verbatim (HSL values flattened to hex for Material's CSS-var surface)
-   so the docs and dashboard read as the same product.
+   Mirrors the visual language of https://docs.helix-editor.com/ (mdBook
+   "Helix" theme) on top of MkDocs Material.
 
-   Palette crosswalk
-   -----------------
-   light :root                  → docs [data-md-color-scheme="default"]
-     --bg-base        #F2F0E8  → --md-default-bg-color--light
-     --bg-surface     #FBFAF4  → --md-default-bg-color
-     --bg-elevated    #FFFFFF  → --md-default-bg-color--lighter
-     --bg-inset       #E8E5DA  → (hero CTA / card hover)
-     --fg-default     #1A1A18  → --md-default-fg-color
-     --fg-muted       #6B6A63  → --md-default-fg-color--light
-     --fg-subtle      #9A9890  → --md-default-fg-color--lighter
-     --fg-inverse     #FBFAF4  → --md-primary-bg-color
-     --state-allow    #3B6D11
-     --state-flag     #854F0B
-     --state-block    #A32D2D
-     --term-chrome    #0E0E0C  → --nr-filename-strip (filename header)
-                                    (the code body is now cream — Django-style
-                                    light body with dark strip above)
+   Layout
+   ------
+     ┌──────────┬──────────────────────────────────┐
+     │          │  menu-bar (50px)                 │
+     │ sidebar  ├──────────────────────────────────┤
+     │  (fixed  │                                  │
+     │  300px)  │  content (max 750px, centered)   │
+     │          │                                  │
+     │  numbered│                                  │
+     │  chapters│                                  │
+     │          │  prev/next pager footer          │
+     └──────────┴──────────────────────────────────┘
 
-   dark :root.dark              → docs [data-md-color-scheme="slate"]
-     --bg-base        #0E0E0C
-     --bg-surface     #161614
-     --bg-elevated    #1C1C1A
-     --bg-inset       #0A0A08
-     --fg-default     #EDEBE0  (note: not #FBFAF4 — slightly warmer)
-     --fg-muted       #9A9890
-     --fg-subtle      #5F5E58
-     --fg-inverse     #0E0E0C
-     --state-allow    #A8C97F
-     --state-flag     #E0A85F
-     --state-block    #E08080
-     --term-chrome    #0E0E0C  → --md-code-bg-color (still near-black in dark
-                                  for the code surface — Material's `slate`
-                                  scheme flips the page but not the code)
+   Palette
+   -------
+   Light: hsl(0, 0%, 100%) page, hsl(0, 0%, 0%) ink, sidebar #fafafa,
+          active link #1f1fff, icon #747474
+   Dark (slate): hsl(200, 7%, 8%) page, hsl(200, 7%, 8%) ink (muted),
+          sidebar #292c2f, active link #3473ad
+   Navy:  hsl(226, 23%, 11%) page, hsl(226, 23%, 16%) ink,
+          sidebar #282d3f, active link #2b79a2
+
+   Hex values flatten the HSL values from Helix's variables.css so
+   they can sit in Material's CSS-var surface without recomputation.
+
+   Font: Source Code Pro for code, system sans for body (mirrors
+   Helix's fonts.css without bundling the webfonts — system stack
+   is good enough for docs; the brand Google Sans Flex lives only
+   in the menu-bar title via extra.css @font-face in main.html).
    ============================================================================ */
 
+/* ────────────────────────────────────────────────────────────────────────────
+   COLOR TOKENS
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/* Light theme — Helix's "light" + "rust" combined. */
 :root,
 [data-md-color-scheme="default"] {
-  /* ── Surface scale ────────────────────────────────────────────────── */
-  --md-default-bg-color: #FBFAF4;          /* bg-surface (cream) */
-  --md-default-bg-color--light: #F2F0E8;   /* bg-base */
-  --md-default-bg-color--lighter: #FFFFFF; /* bg-elevated */
-  --md-default-bg-color--lightest: #FFFFFF;
+  /* Surface */
+  --md-default-bg-color: hsl(0, 0%, 100%);
+  --md-default-bg-color--light: hsl(0, 0%, 97%);
+  --md-default-bg-color--lighter: hsl(0, 0%, 100%);
+  --md-default-bg-color--lightest: hsl(0, 0%, 100%);
 
-  /* ── Foreground scale ─────────────────────────────────────────────── */
-  --md-default-fg-color: #1A1A18;          /* fg-default (ink) */
-  --md-default-fg-color--light: #6B6A63;   /* fg-muted */
-  --md-default-fg-color--lighter: #9A9890; /* fg-subtle */
-  --md-default-fg-color--lightest: #B8B6AE;
+  /* Ink */
+  --md-default-fg-color: hsl(0, 0%, 0%);
+  --md-default-fg-color--light: hsl(0, 0%, 35%);
+  --md-default-fg-color--lighter: hsl(0, 0%, 50%);
+  --md-default-fg-color--lightest: hsl(0, 0%, 70%);
 
-  /* ── Accent (links / hover) ───────────────────────────────────────── */
-  --md-accent-fg-color: #1A1A18;           /* matches fg-default */
-  --md-accent-bg-color: #E8E5DA;           /* bg-inset */
-  --md-accent-border-color: #1A1A18;
+  /* Sidebar */
+  --nr-sidebar-bg: hsl(0, 0%, 98%);
+  --nr-sidebar-fg: hsl(0, 0%, 20%);
+  --nr-sidebar-non-existant: hsl(0, 0%, 65%);
+  --nr-sidebar-active: #1f1fff;
+  --nr-sidebar-spacer: hsl(0, 0%, 94%);
 
-  /* ── Primary surface (header bar) ───────────────────────────────────
-     Light scheme: dark strip on cream page (contrast band).
-     --md-primary-fg-color = FILL of the strip; --md-primary-bg-color = TEXT. */
-  --md-primary-fg-color: #1A1A18;
-  --md-primary-fg-color--light: #3A3A36;
-  --md-primary-fg-color--dark: #0A0A08;
-  --md-primary-bg-color: #FBFAF4;          /* fg-inverse */
-  --md-primary-bg-color--light: rgba(251, 250, 244, 0.7);
-  --md-primary-bg-color--dark: rgba(251, 250, 244, 0.3);
-  --md-primary-border-color: rgba(20, 20, 18, 0.10);
+  /* Icons + accents */
+  --nr-icons: hsl(0, 0%, 45%);
+  --nr-icons-hover: hsl(0, 0%, 0%);
+  --nr-links: #20609f;
+  --nr-inline-code-color: #301900;
 
-  /* ── Code surface (Django-style: light body on the cream page) ──────
-     Body = --bg-base (cream), dark ink text. The filename strip
-     above uses --nr-term-chrome (near-black) with cream text — the
-     same dark/cream inversion Django does with its dark-green
-     strip over pale-green body. This is the maximum-contrast
-     layout for cream pages: dark strip on light body, both with
-     brand-faithful colours. */
-  --md-code-bg-color: #F2F0E8;             /* bg-base cream — Django body */
-  --md-code-fg-color: #1A1A18;             /* ink-on-cream text */
-  --md-code-border-color: rgba(20, 20, 18, 0.08);
-  --md-code-hl-color: #1A1A18;
-  --md-code-hl-color--light: rgba(20, 20, 18, 0.10);
+  /* Accent (links/hover in content) */
+  --md-accent-fg-color: #20609f;
+  --md-accent-bg-color: hsl(0, 0%, 95%);
+  --md-accent-border-color: hsl(0, 0%, 50%);
 
-  /* Syntax tokens — DEEPER variants of the brand state colours so
-     they read on cream. The previous "soft pastel" set was designed
-     for a dark body and collapsed to ~2:1 contrast on cream. The
-     dark variants (state-allow, state-flag, deeper lilac/gold) hold
-     ~5–7:1 contrast against #F2F0E8, which is the WCAG AA target
-     for code. */
-  --md-code-hl-name-color: #1A1A18;        /* ink — base identifier */
-  --md-code-hl-operator-color: #6B6A63;
-  --md-code-hl-punctuation-color: #6B6A63;
-  --md-code-hl-comment-color: #9A9890;     /* fg-subtle — quiet, italic look */
-  --md-code-hl-string-color: #3B6D11;      /* state-allow — dark green */
-  --md-code-hl-number-color: #854F0B;      /* state-flag — dark amber */
-  --md-code-hl-function-color: #5D3F8C;    /* deeper lilac */
-  --md-code-hl-keyword-color: #5D3F8C;     /* deeper lilac */
-  --md-code-hl-constant-color: #7A5C0F;    /* deeper gold */
-  --md-code-hl-special-color: #A32D2D;     /* state-block, red — rare */
-  --md-code-hl-variable-color: #6B6A63;
-  --md-code-hl-generic-color: #9A9890;
+  /* Code */
+  --md-code-bg-color: hsl(0, 0%, 96%);
+  --md-code-fg-color: hsl(0, 0%, 0%);
+  --md-code-border-color: hsl(0, 0%, 88%);
+  --md-code-hl-color: #1f1fff;
+  --md-code-hl-color--light: hsl(0, 0%, 92%);
 
-  /* ── Typography ─────────────────────────────────────────────────────
-     Google Sans Flex (OFL 1.1) replaces Inter / JetBrains Mono — same
-     family used in the dashboard. Declared in `overrides/main.html`
-     via @font-face. The "Geometric Mono" UI look is the same family
-     at a heavier weight + tracking, not a separate typeface. */
-  --md-text-font: "Google Sans Flex", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  --md-code-font: "Google Sans Flex", ui-monospace, system-ui, monospace;
-  --md-typeset-font-size: 0.78rem;          /* 15px at 20px base */
-  --md-typeset-line-height: 1.65;
-  --md-typeset-h1-font-size: 2.25rem;
-  --md-typeset-h2-font-size: 1.5rem;
-  --md-typeset-h3-font-size: 1.15rem;
+  /* Typography — Helix uses system sans + Source Code Pro for code */
+  --md-text-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --md-code-font: "Source Code Pro", Consolas, "Ubuntu Mono", Menlo, "DejaVu Sans Mono", monospace;
+  --md-typeset-font-size: 1rem;            /* Helix base: 1.6rem at default zoom = ~16px */
+  --md-typeset-line-height: 1.45;
+  --md-typeset-h1-font-size: 2.2rem;
+  --md-typeset-h2-font-size: 1.6rem;
+  --md-typeset-h3-font-size: 1.3rem;
+  --md-typeset-h4-font-size: 1.1rem;
   --md-typeset-h1-weight: 700;
   --md-typeset-h2-weight: 600;
   --md-typeset-h3-weight: 600;
+  --md-typeset-h4-weight: 600;
 
-  /* ── Radii — match --radius-sm/md/lg from frontend ───────────────── */
-  --md-border-radius: 4px;
-  --md-border-radius--sm: 2px;
-  --md-border-radius--lg: 6px;
-
-  /* ── Brand extras consumed by overrides/home.html + code chrome ───── */
-  --nr-cream:        #FBFAF4;
-  --nr-ink:          #1A1A18;
-  --nr-ink-soft:     rgba(20, 20, 18, 0.10);
-  --nr-ink-faint:    rgba(20, 20, 18, 0.06);
-  --nr-ink-ghost:    rgba(20, 20, 18, 0.04);
-  --nr-term-chrome:  #0E0E0C;
-  --nr-term-dots:    #403F3D;
-  --nr-state-allow:  #3B6D11;
-  --nr-state-flag:   #854F0B;
-  --nr-state-block:  #A32D2D;
+  /* Radii — Helix is square, no rounding. */
+  --md-border-radius: 0;
+  --md-border-radius--sm: 0;
+  --md-border-radius--lg: 0;
 }
 
+/* Dark theme — Helix's "coal" (warm grey). */
 [data-md-color-scheme="slate"] {
-  /* ── Surface (dark) ───────────────────────────────────────────────── */
-  --md-default-bg-color: #0E0E0C;          /* bg-base (ink) */
-  --md-default-bg-color--light: #161614;   /* bg-surface */
-  --md-default-bg-color--lighter: #1C1C1A; /* bg-elevated */
-  --md-default-bg-color--lightest: #262624;
+  --md-default-bg-color: hsl(200, 7%, 8%);
+  --md-default-bg-color--light: hsl(200, 7%, 11%);
+  --md-default-bg-color--lighter: hsl(200, 7%, 13%);
+  --md-default-bg-color--lightest: hsl(200, 7%, 13%);
 
-  /* ── Foreground (dark) ────────────────────────────────────────────── */
-  --md-default-fg-color: #EDEBE0;          /* fg-default (warm cream) */
-  --md-default-fg-color--light: #9A9890;   /* fg-muted */
-  --md-default-fg-color--lighter: #5F5E58; /* fg-subtle */
-  --md-default-fg-color--lightest: #403F3D;
+  --md-default-fg-color: #98a3ad;
+  --md-default-fg-color--light: hsl(200, 7%, 55%);
+  --md-default-fg-color--lighter: hsl(200, 7%, 40%);
+  --md-default-fg-color--lightest: hsl(200, 7%, 30%);
 
-  --md-accent-fg-color: #EDEBE0;
-  --md-accent-bg-color: #1C1C1A;
+  --nr-sidebar-bg: hsl(200, 7%, 11%);
+  --nr-sidebar-fg: #a1adb8;
+  --nr-sidebar-non-existant: hsl(200, 7%, 35%);
+  --nr-sidebar-active: #3473ad;
+  --nr-sidebar-spacer: hsl(200, 7%, 14%);
 
-  /* Dark: invert the header strip — cream on near-black body. */
-  --md-primary-fg-color: #EDEBE0;
-  --md-primary-fg-color--light: #D6D4CA;
-  --md-primary-fg-color--dark: #FFFFFF;
-  --md-primary-bg-color: #1A1A18;          /* fg-inverse (ink) */
-  --md-primary-bg-color--light: rgba(26, 26, 24, 0.7);
-  --md-primary-bg-color--dark: rgba(26, 26, 24, 0.3);
-  --md-primary-border-color: rgba(237, 235, 224, 0.10);
+  --nr-icons: hsl(200, 7%, 35%);
+  --nr-icons-hover: #b3c0cc;
+  --nr-links: #2b79a2;
+  --nr-inline-code-color: #c5c8c6;
 
-  /* ── Code surface stays dark in dark scheme (term-chrome) ────────── */
-  --md-code-bg-color: #0A0A08;             /* one notch darker than page */
-  --md-code-fg-color: #EDEBE0;
-  --md-code-border-color: rgba(237, 235, 224, 0.08);
-  --md-code-hl-color: #EDEBE0;
-  --md-code-hl-color--light: rgba(237, 235, 224, 0.10);
-  --md-code-hl-name-color: #EDEBE0;
-  --md-code-hl-operator-color: #B8B6AE;
-  --md-code-hl-punctuation-color: #B8B6AE;
-  --md-code-hl-comment-color: #9A9890;
-  --md-code-hl-string-color: #A8C97F;
-  --md-code-hl-number-color: #E0A85F;
-  --md-code-hl-function-color: #C5A8E8;
-  --md-code-hl-keyword-color: #D5A0E8;
-  --md-code-hl-constant-color: #F4D582;
-  --md-code-hl-special-color: #FFD580;
-  --md-code-hl-variable-color: #B8B6AE;
-  --md-code-hl-generic-color: #9A9890;
+  --md-accent-fg-color: #2b79a2;
+  --md-accent-bg-color: hsl(200, 7%, 14%);
+  --md-accent-border-color: hsl(200, 7%, 30%);
 
-  /* Brand extras (dark) */
-  --nr-cream:        #EDEBE0;
-  --nr-ink:          #EDEBE0;
-  --nr-ink-soft:     rgba(237, 235, 224, 0.10);
-  --nr-ink-faint:    rgba(237, 235, 224, 0.06);
-  --nr-ink-ghost:    rgba(237, 235, 224, 0.04);
-  --nr-term-chrome:  #0A0A08;
-  --nr-term-dots:    #403F3D;
-  --nr-state-allow:  #A8C97F;
-  --nr-state-flag:   #E0A85F;
-  --nr-state-block:  #E08080;
+  --md-code-bg-color: hsl(200, 7%, 12%);
+  --md-code-fg-color: #98a3ad;
+  --md-code-border-color: hsl(200, 7%, 18%);
+  --md-code-hl-color: #3473ad;
+  --md-code-hl-color--light: hsl(200, 7%, 18%);
 }
 
-/* ============================================================================
-   Body type
-   ============================================================================ */
-.md-typeset {
-  font-feature-settings: "ss01", "cv11", "tnum";
-  letter-spacing: -0.005em;
+/* Navy theme — Helix's "navy" variant. Activated via JS by setting
+   data-md-color-scheme="slate" + a body class. We re-bind vars here. */
+body.nr-theme-navy {
+  --md-default-bg-color: hsl(226, 23%, 11%);
+  --md-default-bg-color--light: hsl(226, 23%, 14%);
+  --md-default-bg-color--lighter: hsl(226, 23%, 16%);
+  --md-default-bg-color--lightest: hsl(226, 23%, 16%);
+
+  --md-default-fg-color: #bcbdd0;
+  --md-default-fg-color--light: hsl(226, 23%, 65%);
+  --md-default-fg-color--lighter: hsl(226, 23%, 50%);
+  --md-default-fg-color--lightest: hsl(226, 23%, 35%);
+
+  --nr-sidebar-bg: hsl(226, 23%, 14%);
+  --nr-sidebar-fg: #c8c9db;
+  --nr-sidebar-non-existant: hsl(226, 23%, 30%);
+  --nr-sidebar-active: #2b79a2;
+  --nr-sidebar-spacer: hsl(226, 23%, 16%);
+
+  --nr-icons: hsl(226, 23%, 40%);
+  --nr-icons-hover: #b7b9cc;
+  --nr-links: #2b79a2;
+  --nr-inline-code-color: #c5c8c6;
+
+  --md-code-bg-color: hsl(226, 23%, 14%);
+  --md-code-fg-color: #bcbdd0;
+  --md-code-border-color: hsl(226, 23%, 20%);
+  --md-code-hl-color: #2b79a2;
 }
 
-.md-typeset h1,
-.md-typeset h2,
-.md-typeset h3,
-.md-typeset h4 {
-  letter-spacing: -0.015em;
+/* ────────────────────────────────────────────────────────────────────────────
+   LAYOUT — 3-column (sidebar + content + scroll-offset)
+   ──────────────────────────────────────────────────────────────────────────── */
+.md-grid {
+  max-width: 1200px;
+}
+.md-main {
+  margin-left: 300px;
+}
+@media (max-width: 76em) {
+  .md-main { margin-left: 0; }
 }
 
-.md-typeset h2 {
-  border-bottom: 1px solid var(--nr-ink-soft);
-  padding-bottom: 0.35rem;
-  margin-top: 2.5rem;
-}
-
-[data-md-color-scheme="slate"] .md-typeset h2 {
-  border-bottom-color: rgba(237, 235, 224, 0.08);
-}
-
-/* ── h3 — colour-only differentiation from h2. Django paints h3 in
-   a muted brand colour so the eye lands on it as a subsection, not
-   a top-level section. We use --nr-state-allow, which is already
-   a light/dark pair: `#3B6D11` (dark green) on cream in light,
-   `#A8C97F` (light green) on ink in dark. No extra override needed
-   — the brand tokens carry the dark-scheme variant. */
-.md-typeset h3 {
-  color: var(--nr-state-allow);
-}
-
-/* ── Header permalinks (mkdocs.yml `toc.permalink: true`) ─────────
-   Django fades the ¶ in on hover (`opacity: 0 → 1`). Brand-faithful
-   variant: keep it visible at 0.25 by default, fade to 1 on hover
-   or focus. The ¶ glyph reads as a chain-link in our chosen font,
-   so we don't swap it for a custom icon. */
-.md-typeset .headerlink {
-  opacity: 0.25;
-  transition: opacity 120ms ease;
-  text-decoration: none;
-  font-family: var(--md-code-font);
-}
-
-.md-typeset h1:hover .headerlink,
-.md-typeset h2:hover .headerlink,
-.md-typeset h3:hover .headerlink,
-.md-typeset h4:hover .headerlink,
-.md-typeset .headerlink:focus {
-  opacity: 1;
-}
-
-.md-typeset a {
-  text-decoration: underline;
-  text-decoration-color: rgba(20, 20, 18, 0.25);
-  text-underline-offset: 2px;
-}
-
-.md-typeset a:hover {
-  text-decoration-color: var(--md-accent-fg-color);
-}
-
-/* ============================================================================
-   Header bar — brand chrome strip
-   ============================================================================ */
+/* ────────────────────────────────────────────────────────────────────────────
+   MENU-BAR (header) — Helix-style 50px icon-only strip
+   ──────────────────────────────────────────────────────────────────────────── */
 .md-header {
-  border-bottom: 1px solid var(--nr-ink-faint);
-  box-shadow: none;
-}
-
-[data-md-color-scheme="slate"] .md-header {
-  border-bottom: 1px solid rgba(237, 235, 224, 0.06);
-}
-
-.md-header__button.md-logo img,
-.md-header__button.md-logo svg {
-  height: 1.5rem;
-}
-
-/* Search placeholder */
-.md-search__form .md-search__input::placeholder {
-  color: var(--md-default-fg-color--lighter);
-}
-
-/* ============================================================================
-   Tables — dense list look (dashboard parity)
-   ============================================================================ */
-/* ── Tables — Django-style: horizontal-only rules, no full border ─
-   Drops the 1px frame, thead uppercase, and ghost background. The
-   header row gets a 2px bottom border (Django's heavier rule) so
-   it reads as a visual anchor; body rows get 1px dividers; the
-   last row's bottom border is dropped. */
-.md-typeset table:not([class]) {
-  font-size: 0.78rem;
-  border: none;
-  border-bottom: 2px solid var(--nr-ink-soft);
-  border-radius: 0;
-  overflow: hidden;
-}
-
-[data-md-color-scheme="slate"] .md-typeset table:not([class]) {
-  border-bottom-color: rgba(237, 235, 224, 0.10);
-}
-
-.md-typeset table:not([class]) th {
-  background-color: transparent;
-  font-weight: 600;
-  letter-spacing: 0;
-  text-transform: none;
-  font-size: 0.74rem;
-  color: var(--md-default-fg-color);
-  border-bottom: 2px solid var(--nr-ink-soft);
-}
-
-[data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
-  border-bottom-color: rgba(237, 235, 224, 0.12);
-}
-
-.md-typeset table:not([class]) td,
-.md-typeset table:not([class]) th {
-  padding: 0.5rem 0.7rem;
-  border-bottom: 1px solid var(--nr-ink-faint);
-}
-
-[data-md-color-scheme="slate"] .md-typeset table:not([class]) td,
-[data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
-  border-bottom-color: rgba(237, 235, 224, 0.05);
-}
-
-/* Drop the last row's bottom border — the table wrapper already
-   has its own 2px bottom rule (the "outer" anchor). */
-.md-typeset table:not([class]) tr:last-child td {
-  border-bottom: none;
-}
-
-/* ============================================================================
-   Python-specific code-block formatting
-   ----------------------------------------------------------------------------
-   Pygments emits language-specific CSS classes inside the `<code>` spans.
-   For fenced Python blocks the wrapper has `.language-python` (set by
-   Material), so we can scope per-language tweaks here. Inline code from
-   backticks does NOT carry a language marker — there's no CSS-only way to
-   tell whether a `<code>` fragment is Python, so the inline-code rules above
-   are language-agnostic.
-
-   What we style:
-     - REPL prompts (`>>>` / `...`, Pygments class `.gp`). Pygments only
-       emits `.gp` inside REPL transcripts, so it's safe to scope to
-       `.language-python`. Default Material mapping pushes these to
-       `--md-code-hl-generic-color` (muted gray) which makes the prompts
-       blend into the code. We lift them to a brand accent so the eye
-       reads "this line is the user typing" vs "this line is output".
-     - Decorators (`@protect`, `@sensitive`, class `.nd`). Default lilac
-       from `--md-code-hl-keyword-color` works but reads as another keyword.
-       Switch to `--nr-state-flag` (amber) so decorators stand apart from
-       language keywords (`def`, `class`, `return`).
-
-   Trade-off: keeping the rules language-scoped means we don't have to
-   maintain a per-language stylesheet — Python is the only language in
-   the docs that needs this treatment today.
-   ============================================================================ */
-.md-typeset .language-python .gp {
-  /* REPL prompts. Bold + brand-allow (green) — same accent as h3, so the
-     "go-ahead / interactive" semantic carries across the page. */
-  color: var(--nr-state-allow);
-  font-weight: 600;
-  user-select: none;
-}
-
-[data-md-color-scheme="slate"] .md-typeset .language-python .gp {
-  color: var(--nr-state-allow);  /* --nr-state-allow is already light green in dark */
-}
-
-.md-typeset .language-python .nd {
-  /* Decorators. Brand-flag (amber) so they don't blend with `def`/`class`
-     keywords (lilac). @protect / @sensitive / @sentry_sdk.trace, etc. */
-  color: var(--nr-state-flag);
-  font-weight: 600;
-}
-
-[data-md-color-scheme="slate"] .md-typeset .language-python .nd {
-  color: var(--nr-state-flag);
-}
-
-/* ── Pygments token colors (belt-and-suspenders) ─────────────────────
-   Material's main.css maps Pygments classes (`.kn`, `.n`, `.s2`, etc.)
-   to `var(--md-code-hl-*)` variables, which we override in the
-   `:root, [data-md-color-scheme="default"]` block above. The
-   variable-override path works in every test, but if a future
-   Material upgrade or a cache miss re-introduces the dark pastel
-   palette, the syntax formatting will appear muted on the cream
-   body. These explicit rules re-state the brand colors as direct
-   class → color mappings, so syntax highlighting is robust to
-   Material's own cascade.
-
-   Light mode: deep brand state colours (5–7:1 contrast on cream).
-   Dark mode:  unchanged from Material's defaults. */
-[data-md-color-scheme="default"] .md-typeset .kn,
-[data-md-color-scheme="default"] .md-typeset .kc,
-[data-md-color-scheme="default"] .md-typeset .kp,
-[data-md-color-scheme="default"] .md-typeset .kr,
-[data-md-color-scheme="default"] .md-typeset .kt {
-  color: #5D3F8C;                    /* deeper lilac — keywords */
-}
-[data-md-color-scheme="default"] .md-typeset .n,
-[data-md-color-scheme="default"] .md-typeset .nc,
-[data-md-color-scheme="default"] .md-typeset .ne,
-[data-md-color-scheme="default"] .md-typeset .nf,
-[data-md-color-scheme="default"] .md-typeset .nn,
-[data-md-color-scheme="default"] .md-typeset .nx,
-[data-md-color-scheme="default"] .md-typeset .py {
-  color: #1A1A18;                    /* ink — base identifier */
-}
-[data-md-color-scheme="default"] .md-typeset .s,
-[data-md-color-scheme="default"] .md-typeset .s1,
-[data-md-color-scheme="default"] .md-typeset .s2,
-[data-md-color-scheme="default"] .md-typeset .sb,
-[data-md-color-scheme="default"] .md-typeset .sc,
-[data-md-color-scheme="default"] .md-typeset .sd,
-[data-md-color-scheme="default"] .md-typeset .se,
-[data-md-color-scheme="default"] .md-typeset .sh,
-[data-md-color-scheme="default"] .md-typeset .si,
-[data-md-color-scheme="default"] .md-typeset .sx {
-  color: #3B6D11;                    /* state-allow — strings */
-}
-[data-md-color-scheme="default"] .md-typeset .m,
-[data-md-color-scheme="default"] .md-typeset .mb,
-[data-md-color-scheme="default"] .md-typeset .mf,
-[data-md-color-scheme="default"] .md-typeset .mh,
-[data-md-color-scheme="default"] .md-typeset .mi,
-[data-md-color-scheme="default"] .md-typeset .mo {
-  color: #854F0B;                    /* state-flag — numbers */
-}
-[data-md-color-scheme="default"] .md-typeset .c,
-[data-md-color-scheme="default"] .md-typeset .c1,
-[data-md-color-scheme="default"] .md-typeset .ch,
-[data-md-color-scheme="default"] .md-typeset .cm,
-[data-md-color-scheme="default"] .md-typeset .cp,
-[data-md-color-scheme="default"] .md-typeset .cpf,
-[data-md-color-scheme="default"] .md-typeset .cs {
-  color: #9A9890;                    /* fg-subtle — comments */
-  font-style: italic;
-}
-[data-md-color-scheme="default"] .md-typeset .o,
-[data-md-color-scheme="default"] .md-typeset .ow,
-[data-md-color-scheme="default"] .md-typeset .p {
-  color: #6B6A63;                    /* fg-muted — operators / punctuation */
-}
-
-/* Dark scheme Python syntax — same set of Pygments classes, but
-   soft PASTEL colors that pop on the dark `#0A0A08` body. The
-   light-mode rules above use deep brand state colors; the dark
-   counterparts use their `state-allow` light / `state-flag` light
-   variants (--nr-* already defined in the slate block) so the
-   brand identity carries across schemes. */
-[data-md-color-scheme="slate"] .md-typeset .kn,
-[data-md-color-scheme="slate"] .md-typeset .kc,
-[data-md-color-scheme="slate"] .md-typeset .kp,
-[data-md-color-scheme="slate"] .md-typeset .kr,
-[data-md-color-scheme="slate"] .md-typeset .kt {
-  color: #C5A8E8;                    /* soft lilac — keywords */
-}
-[data-md-color-scheme="slate"] .md-typeset .n,
-[data-md-color-scheme="slate"] .md-typeset .nc,
-[data-md-color-scheme="slate"] .md-typeset .ne,
-[data-md-color-scheme="slate"] .md-typeset .nf,
-[data-md-color-scheme="slate"] .md-typeset .nn,
-[data-md-color-scheme="slate"] .md-typeset .nx,
-[data-md-color-scheme="slate"] .md-typeset .py {
-  color: #EDEBE0;                    /* cream — base identifier */
-}
-[data-md-color-scheme="slate"] .md-typeset .s,
-[data-md-color-scheme="slate"] .md-typeset .s1,
-[data-md-color-scheme="slate"] .md-typeset .s2,
-[data-md-color-scheme="slate"] .md-typeset .sb,
-[data-md-color-scheme="slate"] .md-typeset .sc,
-[data-md-color-scheme="slate"] .md-typeset .sd,
-[data-md-color-scheme="slate"] .md-typeset .se,
-[data-md-color-scheme="slate"] .md-typeset .sh,
-[data-md-color-scheme="slate"] .md-typeset .si,
-[data-md-color-scheme="slate"] .md-typeset .sx {
-  color: #A8C97F;                    /* state-allow light — strings */
-}
-[data-md-color-scheme="slate"] .md-typeset .m,
-[data-md-color-scheme="slate"] .md-typeset .mb,
-[data-md-color-scheme="slate"] .md-typeset .mf,
-[data-md-color-scheme="slate"] .md-typeset .mh,
-[data-md-color-scheme="slate"] .md-typeset .mi,
-[data-md-color-scheme="slate"] .md-typeset .mo {
-  color: #E0A85F;                    /* state-flag light — numbers */
-}
-[data-md-color-scheme="slate"] .md-typeset .c,
-[data-md-color-scheme="slate"] .md-typeset .c1,
-[data-md-color-scheme="slate"] .md-typeset .ch,
-[data-md-color-scheme="slate"] .md-typeset .cm,
-[data-md-color-scheme="slate"] .md-typeset .cp,
-[data-md-color-scheme="slate"] .md-typeset .cpf,
-[data-md-color-scheme="slate"] .md-typeset .cs {
-  color: #5F5E58;                    /* fg-subtle dark — comments */
-  font-style: italic;
-}
-[data-md-color-scheme="slate"] .md-typeset .o,
-[data-md-color-scheme="slate"] .md-typeset .ow,
-[data-md-color-scheme="slate"] .md-typeset .p {
-  color: #9A9890;                    /* fg-muted dark — operators / punctuation */
-}
-
-/* ============================================================================
-   Code blocks — TerminalWindow chrome (dashboard parity)
-   ----------------------------------------------------------------------------
-   The anatomy we replicate from `components/ui/terminal-window.tsx`:
-
-       ┌─ border: --term-chrome (always near-black, "the metal frame") ─┐
-       │  ┌─ chrome bar: bg-surface + border-b + 10% ink divider ──┐    │
-       │  │  ●●●  filename.py                  [ Copy ]            │    │
-       │  └────────────────────────────────────────────────────────┘    │
-       │  ┌─ body: bg-bg-elevated, dark text on cream/dark surface ─┐    │
-       │  │  line-number │  $  command --flag                       │    │
-       │  │  line-number │  $  second line                          │    │
-       │  │  ...                                                       │
-       │  └────────────────────────────────────────────────────────┘    │
-       └────────────────────────────────────────────────────────────────┘
-
-   Material's `content.code.copy` feature injects `<button class="md-clipboard">`
-   in the top-right corner of every <pre>. We re-position it INTO the chrome
-   bar (so it lines up with the filename + dots row) and restyle it as a
-   brand pill. The original Material hook (clipboard.js) is preserved.
-   ============================================================================ */
-
-/* ── Code-block wrapper — Django-style: borders only on top + bottom ──
-   Material renders the fenced code as `.highlight > pre > code` (or
-   `.highlight > .highlighttable` when line numbers are on). We keep
-   the top + bottom 1px rules for visual separation but drop the side
-   borders — Django does the same. The "frame" now comes from the
-   ink-coloured filename tab above + the dark body below. */
-.md-typeset .highlight,
-.md-typeset .highlighttable {
-  position: relative;
-  margin: 1.25rem 0;
-  border-top: 1px solid var(--nr-ink-soft);
-  border-bottom: 1px solid var(--nr-ink-soft);
-  border-radius: 0;
-  overflow: hidden;
-}
-
-[data-md-color-scheme="slate"] .md-typeset .highlight,
-[data-md-color-scheme="slate"] .md-typeset .highlighttable {
-  border-top-color: rgba(237, 235, 224, 0.10);
-  border-bottom-color: rgba(237, 235, 224, 0.10);
-}
-
-/* ── Chrome bar — pseudo-element because <pre> has no header slot ──
-   Insert before the <code> via ::before so we don't have to alter the
-   Markdown source. The label defaults to "code" unless the page sets
-   a data-attribute via attr_list (used by individual snippets). */
-.md-typeset .highlight pre {
-  position: relative;
-  margin: 0;
-  padding: 0.85rem 1.1rem;
-  background-color: var(--md-code-bg-color);
-  color: var(--md-code-fg-color);
-  font-family: var(--md-code-font);
-  font-size: 0.82em;
-  line-height: 1.65;
-  letter-spacing: 0;
-  border-radius: 0;
-  /* Django-style: long lines wrap inside the box instead of producing
-     a horizontal scroll. overflow-wrap prevents the wrap from
-     happening mid-character where possible — Python indentation
-     stays intact. opt-out below for `pre` blocks the author marked
-     with `nowrap` via pymdownx details, e.g. ASCII diagrams. */
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-}
-
-[data-md-color-scheme="slate"] .md-typeset .highlight pre {
-  background-color: var(--md-code-bg-color);
-}
-
-/* ── Code body (`<code>` inside the <pre>) ─────────────────────────────
-   Material's bundled `mkdocs-material.css` sets `white-space: nowrap`
-   on `.md-typeset pre > code` ONLY when the block uses `line_spans`
-   rendering (mkdocs.yml `markdown_extensions.pymdownx.highlight.line_spans:
-   __span` + `anchor_linenums: true`). The narrow-collapse collapses
-   the leading whitespace of each line — every `    return` inside a
-   `def`, every indented YAML/hier config, every shell continuation —
-   flush to column 0. We re-assert `pre-wrap` here so indent is
-   preserved and long lines still wrap the same way the surrounding
-   `<pre>` does.
-
-   Scoped to `.highlight pre > code` so inline `<code>` (e.g.
-   `inline` backticks in prose) is left alone — Material keeps that
-   as `nowrap` on purpose. */
-.md-typeset .highlight pre > code {
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-}
-
-/* Chrome bar = pseudo-element on the .highlight wrapper. */
-.md-typeset .highlight::before {
-  content: "";
-}
-
-/* Filename tab — Django-style dark strip ABOVE the <pre>.
-   Replaces the old mac-terminal traffic-light dots.
-
-   The strip must read as a DISTINCT surface from the code body —
-   not just a tinted row. Django uses #234f32 dark-green over
-   #e0ffb8 pale-green, which is ~80% lightness contrast. We don't
-   have Django's two-tone palette, so we lift the strip into the
-   "elevated surface" zone (--md-default-bg-color--lighter): one
-   step lighter than the page, always dark in both schemes.
-
-   Light mode: strip = #1C1C1A, body = #0E0E0C → 14/255 lightness
-   step, the strip is unmistakably a different layer.
-   Dark mode:  strip = #262624, body = #0A0A08 → same delta.
-
-   Plus a 1px hairline border-bottom at higher opacity so the line
-   between strip and body is clearly visible even at a glance. */
-
-:root,
-[data-md-color-scheme="default"] {
-  --nr-filename-strip: #0E0E0C;             /* term-chrome — dark strip on light body */
-  --nr-filename-border: rgba(20, 20, 18, 0.12);
-}
-
-[data-md-color-scheme="slate"] {
-  --nr-filename-strip: #262624;             /* elevated dark — dark mode body stays dark */
-  --nr-filename-border: rgba(237, 235, 224, 0.10);
-}
-
-/* Filename strip — visible only when title="…" was set. */
-.md-typeset .highlight > .filename {
-  display: flex;
-  align-items: center;
-  margin: 0;
-  padding: 0 1.1rem;
-  height: 2rem;
-  font-family: var(--md-code-font);
-  font-size: 0.74rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--nr-cream);
-  background-color: var(--nr-filename-strip);
-  border-bottom: 1px solid var(--nr-filename-border);
-  border-radius: 0;
-}
-
-/* When the author didn't set `title="..."`, Material does NOT emit a
-   `.filename` span — the `.highlight` contains only `<pre>`. The
-   `.md-code__nav` (Copy button container) is still injected by the JS
-   runtime; it needs an anchor so the button doesn't overlap the first
-   line of code. We don't paint a fake empty dark strip (Django doesn't
-   do that either), but we DO offset the nav down into the pre's top
-   edge so it sits as an unobtrusive floating button. The :has() selector
-   scopes this to titled blocks. */
-.md-typeset .highlight:has(> .filename) .md-code__nav {
-  position: absolute;
+  position: sticky;
   top: 0;
-  right: 0;
+  height: 50px;
+  min-height: 50px;
+  background-color: var(--md-default-bg-color);
+  border-bottom: 1px solid var(--nr-sidebar-spacer);
+  box-shadow: none;
+  color: var(--nr-icons);
+}
+.md-header__inner { display: none; }   /* Hide Material's full inner row — we render our own. */
+
+.nr-menubar {
+  position: sticky;
+  top: 0;
+  height: 50px;
+  z-index: 5;
+}
+.nr-menubar__inner {
   display: flex;
   align-items: center;
-  height: 2rem;
-  padding: 0 0.55rem;
-  margin: 0;
-  z-index: 4;
+  height: 50px;
+  max-width: none;
+  padding: 0 12px;
+  gap: 6px;
 }
 
-/* Untitled blocks: park the Copy button inside the top-right of the
-   pre body itself (Material's pre-9.x default). Still semi-transparent
-   until the block is hovered. */
-.md-typeset .highlight:not(:has(> .filename)) .md-code__nav {
-  position: absolute;
-  top: 0.4rem;
-  right: 0.55rem;
-  display: flex;
+/* Left / right button clusters */
+.nr-menubar__left-buttons,
+.nr-menubar__right-buttons {
+  display: inline-flex;
   align-items: center;
-  margin: 0;
-  z-index: 4;
+  gap: 4px;
+  flex: 0 0 auto;
 }
+.nr-menubar__left-buttons { margin-right: 4px; }
+.nr-menubar__right-buttons { margin-left: auto; }
 
-/* ── Inline code (NOT inside <pre>) — Django `.literal` style ─────
-   Django's `.literal` rule is just `color + monospace + nowrap` —
-   no background pill, no border. On a cream/ink brand surface a
-   dotted underline gives the same visual weight without the chip
-   breaking prose rhythm.
-
-   IMPORTANT: Material's default `.md-typeset code` rule sets
-   `background-color: var(--md-code-bg-color)` (near-black in light,
-   near-black in dark), `padding`, and `border-radius` — i.e. it
-   paints a dark chip behind every inline `<code>`. We must EXPLICITLY
-   reset those three properties, otherwise the chip wins by default
-   and inline code reads as "painted black on the page".
-
-   Excluded contexts (no underline + monospace only, no pill):
-     - code inside <pre>: pre has its own dark surface, pill would
-       be invisible against the ink strip
-     - code inside <a>: the link already provides emphasis
-     - code inside <kbd>: keyboard-key surface, kept distinct */
-.md-typeset code {
-  font-family: var(--md-code-font);
-  font-size: 0.86em;
-  color: var(--md-default-fg-color);
+/* Title in centre */
+.nr-menubar__title {
+  flex: 1 1 auto;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-align: center;
+  margin: 0;
   white-space: nowrap;
-  /* Reset Material's chip defaults so inline code doesn't render
-     as a black-filled rectangle on the cream page. */
-  background-color: transparent;
-  padding: 0;
-  border-radius: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--md-default-fg-color);
+  line-height: 50px;
+  padding: 0 16px;
 }
 
-/* Standalone inline code — monospace + dotted underline. */
-.md-typeset :not(pre) > :not(table) > code {
-  border-bottom: 1px dotted var(--nr-ink-soft);
-  padding-bottom: 0.05em;
-}
-
-[data-md-color-scheme="slate"] .md-typeset :not(pre) > :not(table) > code {
-  border-bottom-color: rgba(237, 235, 224, 0.18);
-}
-
-/* Code inside a link — drop the dotted underline so it doesn't
-   stack on top of the link's own underline. */
-.md-typeset a code {
-  border-bottom: none;
-  color: inherit;
-}
-
-/* Code inside <kbd> — already has its own chip styling below. */
-.md-typeset kbd > code {
-  border-bottom: none;
-  background-color: transparent;
-}
-
-/* ── Copy button — Material `content.code.copy` (≥ 9.x API) ─────────
-   Material 9.x injects `<nav class="md-code__nav">` containing
-   `<button class="md-code__button">` at runtime into every `.highlight`
-   block. The button is empty — Material renders the copy icon via
-   a `::after` pseudo-element with `mask-image: var(--md-code-copy-icon)`
-   and `background-color: currentcolor` (so the icon's fill tracks
-   the button's `color`).
-
-   We pin the nav INTO the dark chrome strip above the code body.
-   Button surface: a SOLID cream pill with the icon in INK — fully
-   inverted, so the dark-strip background, the cream pill, and the
-   dark icon all have unambiguous contrast (≥ 12:1).
-
-   IMPORTANT: we use FIXED hex values here, NOT the brand tokens
-   `var(--nr-cream)` / `var(--nr-ink)`. In dark mode, both brand
-   tokens resolve to the same cream color (`#EDEBE0`) — using them
-   for bg + icon would make the button cream-on-cream (invisible).
-   Fixed hex values (`#FBFAF4` / `#1A1A18`) work in BOTH color
-   schemes: the cream pill is high-contrast on the dark strip in
-   both modes, and the dark icon is high-contrast on the cream pill. */
-.md-typeset .md-code__button {
+/* Icon-only button — Helix style: square, transparent, hover-glow */
+.nr-icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.6rem;
-  height: 1.6rem;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
   padding: 0;
-  font-family: var(--md-text-font);
-  font-size: 0.66rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #1A1A18;                       /* dark icon — fixed, works in both modes */
-  background-color: #FBFAF4;            /* solid cream pill — fixed, high contrast on any dark strip */
-  border: 1px solid #FBFAF4;
-  border-radius: var(--md-border-radius--sm);
+  color: var(--nr-icons);
   cursor: pointer;
-  opacity: 1;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  border-radius: 4px;
+  transition: color 120ms ease, background-color 120ms ease;
+  text-decoration: none;
 }
-
-/* `<nav class="md-code__nav">` is the container, `<button class="md-code__button">`
-   is the actual control. Pull the nav OUT of pre's flow (it sits at
-   position 0 inside pre, which would otherwise eat vertical space above
-   the first code line) and pin it to the chrome strip top-right corner. */
-.md-typeset .md-code__nav {
-  position: absolute;
-  top: 0.15rem;
-  right: 0.55rem;
-  display: flex;
-  align-items: center;
-  height: 1.7rem;
-  padding: 0;
-  margin: 0;
-  z-index: 4;
+.nr-icon-button:hover {
+  color: var(--nr-icons-hover);
+  background-color: var(--nr-sidebar-spacer);
 }
-
-/* On hover, invert: dark pill with cream icon. In light mode the
-   pill blends with the dark strip into a "pressed" look; in dark
-   mode the pill darkens further (toward the page bg) so the icon
-   pops. We use the brand's term-chrome (`#0E0E0C`) as the hover
-   pill in BOTH modes so the swap is consistent. */
-.md-typeset .highlight:hover .md-code__button,
-.md-typeset .md-code__button:hover,
-.md-typeset .md-code__button:focus-visible {
-  background-color: #0E0E0C;
-  border-color: #0E0E0C;
-  color: #FBFAF4;
-}
-
-/* Force the icon size — Material defaults to 1.2rem svg which clips. */
-.md-typeset .md-code__button svg {
-  width: 0.85rem;
-  height: 0.85rem;
+.nr-icon-button svg {
+  width: 18px;
+  height: 18px;
   fill: currentColor;
 }
 
-/* Hide the "Copied!" tooltip that Material injects — it conflicts with
-   our pinned button and was clipped on the old offset. */
-.md-typeset .md-clipboard__message {
-  /* Keep Material's hide-on-default behavior; the visual confirmation
-     is now the button label flipping to "Copied". */
-  display: none !important;
-}
-
-/* After-click feedback — `data-md-state="done"` is set by Material's
-   clipboard handler. */
-.md-typeset .md-code__button[data-md-state="done"] {
-  opacity: 1;
-  border-color: var(--nr-state-allow);
-  color: var(--nr-state-allow);
-}
-
-/* ── Inline `<kbd>` ──────────────────────────────────────────────── */
-.md-typeset kbd {
-  font-family: var(--md-code-font);
-  font-size: 0.78em;
-  padding: 0.1em 0.4em;
-  border-radius: var(--md-border-radius--sm);
-  border: 1px solid var(--nr-ink-soft);
-  background-color: var(--md-default-bg-color);
+/* ────────────────────────────────────────────────────────────────────────────
+   THEME POPUP
+   ──────────────────────────────────────────────────────────────────────────── */
+.nr-theme { position: relative; display: inline-flex; }
+.nr-theme-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--nr-sidebar-spacer);
+  border-radius: 4px;
+  font-size: 0.85rem;
   color: var(--md-default-fg-color);
-  box-shadow: 0 1px 0 var(--nr-ink-soft);
+  min-width: 100px;
+  display: none;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
 }
-
-/* ── Tabbed code blocks (pymdownx.tabbed) ────────────────────────── */
-.md-typeset .tabbed-set {
-  margin: 1.25rem 0;
-  border-radius: var(--md-border-radius);
-  overflow: hidden;
-  border: 1px solid var(--nr-ink-soft);
-}
-
-[data-md-color-scheme="slate"] .md-typeset .tabbed-set {
-  border-color: rgba(237, 235, 224, 0.08);
-}
-
-.md-typeset .tabbed-labels {
-  background-color: var(--md-default-bg-color);
-  border-bottom: 1px solid var(--nr-ink-soft);
-  padding: 0 0.5rem;
-}
-
-[data-md-color-scheme="slate"] .md-typeset .tabbed-labels {
-  background-color: var(--md-default-bg-color);
-  border-bottom-color: rgba(237, 235, 224, 0.08);
-}
-
-.md-typeset .tabbed-labels > label {
-  font-family: var(--md-code-font);
-  font-size: 0.72rem;
-  font-weight: 500;
-  padding: 0.6rem 0.8rem;
-  color: var(--md-default-fg-color--light);
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  transition: color 120ms ease, border-color 120ms ease;
-}
-
-.md-typeset .tabbed-labels > label:hover {
-  color: var(--md-default-fg-color);
-}
-
-.md-typeset .tabbed-labels > .tabbed-control:checked + label {
-  color: var(--md-default-fg-color);
-  border-bottom-color: var(--md-default-fg-color);
-}
-
-/* ── Line numbers (pymdownx.highlight anchor_linenums + line_spans) ──
-   The mkdocs.yml config uses `line_spans: __span` + `anchor_linenums: true`,
-   which renders line numbers as INLINE `<a id="__codelineno-N-N">` anchors
-   inside `<code>` — NOT as a separate `<table class="highlighttable">`.
-   The .highlighttable rules below are dead (no `.highlighttable` element
-   is produced by pymdownx with line_spans), kept only as a defensive
-   fallback in case a future renderer flips back to the table layout. */
-.md-typeset .highlighttable {
+.nr-theme:hover .nr-theme-list,
+.nr-theme:focus-within .nr-theme-list { display: block; }
+.nr-theme-btn {
   display: block;
-  border-collapse: collapse;
   width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.nr-theme-btn:hover {
+  background: var(--nr-sidebar-spacer);
+  color: var(--md-default-fg-color);
 }
 
-.md-typeset .highlighttable .linenos,
-.md-typeset .highlighttable .code {
-  display: table-cell;
-  padding: 1rem 0;
-  vertical-align: top;
+/* ────────────────────────────────────────────────────────────────────────────
+   SIDEBAR — fixed left, numbered chapters
+   ──────────────────────────────────────────────────────────────────────────── */
+.md-sidebar--primary {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 300px;
+  background-color: var(--nr-sidebar-bg);
+  color: var(--nr-sidebar-fg);
+  font-size: 0.875em;
+  border-right: 1px solid var(--nr-sidebar-spacer);
+  overflow-y: auto;
+  z-index: 4;
+}
+.md-sidebar--primary .md-sidebar__inner {
+  padding: 16px 0;
 }
 
-.md-typeset .highlighttable .linenos {
-  width: 3rem;
-  padding-left: 1rem;
-  padding-right: 0.5rem;
-  user-select: none;
-  font-family: var(--md-code-font);
-  font-size: 0.82em;
-  line-height: 1.65;
-  color: var(--md-default-fg-color--lighter);
-  text-align: right;
-  border-right: 1px solid rgba(237, 235, 224, 0.06);
-  background-color: rgba(237, 235, 224, 0.02);
-}
-
-.md-typeset .highlighttable .code {
-  padding-left: 1rem;
-  padding-right: 1.1rem;
-}
-
-/* ============================================================================
-   Admonitions — `note`/`warning`/`danger` map to state-allow/flag/block
-   ============================================================================ */
-.md-typeset .admonition,
-.md-typeset details {
-  border-radius: var(--md-border-radius);
-  border-left-width: 3px;
-  font-size: 0.85em;
-  padding: 0.85rem 1rem;
-}
-
-.md-typeset .admonition.note,
-.md-typeset details.note {
-  border-left-color: var(--md-default-fg-color);
-  background-color: var(--nr-ink-ghost);
-}
-
-.md-typeset .admonition.warning,
-.md-typeset details.warning {
-  border-left-color: var(--nr-state-flag);
-  background-color: rgba(133, 79, 11, 0.06);
-}
-
-.md-typeset .admonition.danger,
-.md-typeset details.danger {
-  border-left-color: var(--nr-state-block);
-  background-color: rgba(163, 45, 45, 0.06);
-}
-
-/* Admonition title — tighter, brand-weight */
-.md-typeset .admonition-title,
-.md-typeset summary {
-  font-weight: 600;
-  letter-spacing: -0.005em;
-}
-
-/* ============================================================================
-   Hero (consumed by overrides/home.html)
-   ============================================================================ */
-.nr-hero {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap: 3rem;
-  align-items: center;
-  padding: 3rem 0 4rem;
-  border-bottom: 1px solid var(--nr-ink-soft);
-}
-
-[data-md-color-scheme="slate"] .nr-hero {
-  border-bottom-color: rgba(237, 235, 224, 0.08);
-}
-
-@media (max-width: 920px) {
-  .nr-hero {
-    grid-template-columns: 1fr;
-    padding-top: 1.5rem;
+@media (max-width: 76em) {
+  .md-sidebar--primary {
+    transform: translateX(-100%);
+    transition: transform 200ms ease;
+  }
+  body[data-md-toggle="drawer"]:checked ~ .md-sidebar--primary,
+  .md-toggle--drawer:checked ~ .md-sidebar--primary {
+    transform: translateX(0);
   }
 }
 
-.nr-hero__title {
-  font-size: 2.6rem;
-  font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-  margin: 0 0 0.8rem;
+/* Hide the right-side TOC for narrower viewports — Helix only uses
+   the left sidebar. */
+.md-sidebar--secondary { display: none; }
+
+/* Hide sidebar when user toggled it off (via extra.js sidebar-hide). */
+body.nr-sidebar-hidden .md-sidebar--primary {
+  transform: translateX(-100%);
+}
+body.nr-sidebar-hidden .md-main {
+  margin-left: 0;
 }
 
-.nr-hero__subtitle {
-  font-size: 1.05rem;
-  line-height: 1.55;
-  color: var(--md-default-fg-color--light);
-  margin: 0 0 1.6rem;
-  max-width: 36rem;
+/* ── Section / chapter list ─────────────────────────────────────────
+   Helix renders chapters as:
+     <ol class="chapter">
+       <li>1. <a>Getting started</a></li>
+       <li>
+         <ol class="section">
+           <li>1.1. <a>First agent in 15 minutes</a></li>
+         </ol>
+       </li>
+     </ol>
+
+   Material renders the same structure with `.md-nav` classes — we
+   re-style to match Helix's line-height (2.2em for chapters,
+   1.5em for sub-items), no background, no rounded chips. */
+.md-nav--primary .md-nav__list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.md-nav--primary .md-nav__item {
+  padding: 0;
+  margin: 0;
 }
 
-.nr-hero__cta {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.nr-hero__cta a {
-  display: inline-block;
-  padding: 0.55rem 1.1rem;
-  border-radius: var(--md-border-radius);
-  font-weight: 600;
-  text-decoration: none;
-  font-size: 0.85rem;
-  border: 1px solid var(--md-default-fg-color);
-}
-
-.nr-hero__cta a.primary {
-  background-color: var(--md-default-fg-color);
-  color: var(--md-default-bg-color);
-}
-
-.nr-hero__cta a.secondary {
-  background-color: transparent;
-  color: var(--md-default-fg-color);
-}
-
-.nr-hero__screenshot {
-  border-radius: var(--md-border-radius--lg);
-  border: 1px solid var(--nr-ink-soft);
-  box-shadow: 0 12px 32px -16px rgba(20, 20, 18, 0.25);
-  max-width: 100%;
-  height: auto;
-}
-
-[data-md-color-scheme="slate"] .nr-hero__screenshot {
-  border-color: rgba(237, 235, 224, 0.10);
-  box-shadow: 0 12px 32px -16px rgba(0, 0, 0, 0.6);
-}
-
-/* ============================================================================
-   Sections + feature grid
-   ============================================================================ */
-.nr-section {
-  padding: 3rem 0;
-  border-bottom: 1px solid var(--nr-ink-soft);
-}
-
-[data-md-color-scheme="slate"] .nr-section {
-  border-bottom-color: rgba(237, 235, 224, 0.08);
-}
-
-.nr-section__title {
-  font-size: 1.4rem;
-  font-weight: 600;
-  margin: 0 0 1.5rem;
-  letter-spacing: -0.015em;
-}
-
-.nr-features {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1.5rem;
-}
-
-@media (max-width: 920px) {
-  .nr-features { grid-template-columns: 1fr 1fr; }
-}
-@media (max-width: 600px) {
-  .nr-features { grid-template-columns: 1fr; }
-}
-
-.nr-feature {
-  padding: 1.25rem;
-  border: 1px solid var(--nr-ink-soft);
-  border-radius: var(--md-border-radius);
-  background-color: var(--md-default-bg-color--light);
-}
-
-[data-md-color-scheme="slate"] .nr-feature {
-  background-color: var(--md-default-bg-color--light);
-  border-color: rgba(237, 235, 224, 0.10);
-}
-
-.nr-feature__icon {
-  font-size: 1.5rem;
-  margin-bottom: 0.5rem;
-  color: var(--md-default-fg-color);
-}
-
-.nr-feature__title {
-  font-size: 0.95rem;
-  font-weight: 600;
-  margin: 0 0 0.35rem;
-  letter-spacing: -0.01em;
-}
-
-.nr-feature__body {
-  font-size: 0.85rem;
-  color: var(--md-default-fg-color--light);
-  line-height: 1.55;
-}
-
-/* ============================================================================
-   Mermaid diagrams blend with cream
-   ============================================================================ */
-.mermaid {
-  background-color: var(--md-default-bg-color--light);
-  border: 1px solid var(--nr-ink-soft);
-  border-radius: var(--md-border-radius);
-  padding: 1rem;
-}
-
-[data-md-color-scheme="slate"] .mermaid {
-  background-color: var(--md-default-bg-color--light);
-  border-color: rgba(237, 235, 224, 0.08);
-}
-
-/* ============================================================================
-   Announcement banner — brand cream
-   ============================================================================ */
-.md-banner {
-  background-color: var(--md-default-bg-color--light);
-  color: var(--md-default-fg-color);
-  border-bottom: 1px solid var(--nr-ink-soft);
-  font-size: 0.85rem;
-}
-
-.md-banner a {
-  color: var(--md-default-fg-color);
-  text-decoration: underline;
-}
-
-/* ============================================================================
-   Side nav / TOC
-   ----------------------------------------------------------------------------
-   Hierarchy: section headers are uppercase + tracked + bold + ink-coloured,
-   so they read as "categories". Subsections are lowercase, regular weight,
-   slightly muted — they recede so the eye lands on the section first.
-
-   With `navigation.expand` removed from mkdocs.yml, sections default to
-   COLLAPSED. The chevron (`[data-md-toggle]` + caret) appears on hover,
-   same as Material's stock behaviour — just visually elevated by our
-   type ramp.
-   ============================================================================ */
-.md-nav--primary .md-nav__link--active,
-.md-nav--primary .md-nav__link--active code {
-  color: var(--md-default-fg-color);
-  font-weight: 600;
-}
-
-/* ── Section headers (top-level: "Getting started", "Concepts", …) ──
-   These are `.md-nav__item--section > .md-nav__link` — the parent has
-   the `section` modifier in Material's nav. They collapse on click. */
+/* Section header — uppercase numbers, large line-height, ink colour */
 .md-nav--primary .md-nav__item--section > .md-nav__link {
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
-  color: var(--md-default-fg-color);
-  margin-top: 1.1rem;
-  padding-top: 0.55rem;
-  padding-bottom: 0.55rem;
-  border-top: 1px solid var(--nr-ink-soft);
-  cursor: pointer;
+  display: flex;
+  align-items: center;
+  line-height: 2.2em;
+  padding: 0 16px;
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--nr-sidebar-fg);
+  text-decoration: none;
+  letter-spacing: 0.01em;
 }
-
-/* The very first section doesn't need the top divider — it sits flush
-   against the sidebar header. */
-.md-nav--primary .md-nav__item--section:first-child > .md-nav__link {
-  margin-top: 0.4rem;
-  border-top: none;
-  padding-top: 0.35rem;
-}
-
-[data-md-color-scheme="slate"] .md-nav--primary .md-nav__item--section > .md-nav__link {
-  border-top-color: rgba(237, 235, 224, 0.08);
-}
-
-/* Hover state on section header — same colour but a subtle inset so
-   the user knows the row is clickable. */
 .md-nav--primary .md-nav__item--section > .md-nav__link:hover {
-  background-color: var(--nr-ink-ghost);
-  color: var(--md-default-fg-color);
+  color: var(--nr-sidebar-active);
 }
 
-/* When the section is collapsed, Material hides the inner list via
-   `[hidden]`. We don't need to do anything — but we DO want the
-   caret to indicate "collapsible". Material's stock caret uses
-   `material/expand-more` SVG; we keep it but give it room. */
+/* The chevron caret on the right — Helix flips it 90° when expanded */
 .md-nav--primary .md-nav__item--section > .md-nav__link::after {
   width: 0.7rem;
   height: 0.7rem;
-  opacity: 0.55;
-  transition: transform 120ms ease, opacity 120ms ease;
+  margin-left: auto;
+  transition: transform 200ms ease;
+  opacity: 0.6;
+}
+/* Auto-rotate the caret based on the open/closed attribute Material
+   sets on the section. Material toggles `[data-md-state="lock"]` when
+   the user clicks. We use `.md-nav__item--section` + open state. */
+.md-nav--primary .md-nav__item--section.md-nav__item--expanded > .md-nav__link::after {
+  transform: rotate(90deg);
 }
 
-.md-nav--primary .md-nav__item--section > .md-nav__link:hover::after {
-  opacity: 1;
-}
-
-/* ── Subsection links (the actual pages) ── */
+/* Subsection — tighter line-height, indented */
 .md-nav--primary .md-nav__item:not(.md-nav__item--section) .md-nav__link {
-  font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  line-height: 1.5em;
+  padding: 0 16px 0 28px;
+  font-size: 0.95em;
   font-weight: 400;
-  color: var(--md-default-fg-color--light);
-  padding-top: 0.35rem;
-  padding-bottom: 0.35rem;
+  color: var(--nr-sidebar-fg);
+  text-decoration: none;
+  margin-block-start: 0.4em;
 }
-
 .md-nav--primary .md-nav__item:not(.md-nav__item--section) .md-nav__link:hover {
-  color: var(--md-default-fg-color);
+  color: var(--nr-sidebar-active);
 }
-
-/* Active subsection — keep the Material left bar but make it stand out. */
 .md-nav--primary .md-nav__item:not(.md-nav__item--section) .md-nav__link--active {
-  color: var(--md-default-fg-color);
+  color: var(--nr-sidebar-active);
   font-weight: 600;
 }
 
-/* On this page (TOC, right column) — smaller and indented. */
-.md-sidebar--secondary .md-nav__link {
-  font-size: 0.72rem;
-}
-/* ============================================================================
-   Tier 4 — 4-column footer layout (2026-08-26, revised)
-   ----------------------------------------------------------------------------
-   navigation.tabs removed from features so top-level sections render only
-   in the left sidebar. This block:
-     1. Hides the now-orphaned header palette toggle + header social
-        icons (they live in the footer instead via overrides/partials/footer.html).
-     2. Locks the left sidebar as `position: sticky` so it never scrolls
-        out of view (Material does this by default above 1220px; we
-        reinforce it for narrower viewports too).
-     3. Paints the custom 4-column footer:
-          [ brand + tagline ]  [ docs links ]  [ project links ]  [ theme ]
-        The palette toggle is a segmented control (two pill buttons with
-        icons + labels); the active theme is highlighted via :has().
-   ============================================================================ */
-
-/* (1) Header — palette + social icons moved to footer. */
-.md-header form[data-md-component="palette"] { display: none; }
-.md-header__option.md-header__option--social,
-.md-header__option--social { display: none; }
-
-/* (2) Left sidebar — static, doesn't scroll out of view. */
-.md-sidebar--primary {
-  position: sticky;
-  top: 55px;
-  align-self: stretch;
-  height: 100%;
-  max-height: calc(100vh - 55px);
-  overflow-y: auto;
+/* Hide the Material default separator / dividers between sections */
+.md-nav--primary .md-nav__item--section {
+  border: none;
+  margin-top: 0;
 }
 
-/* (3) Custom 4-column footer. */
-.nr-footer {
-  border-top: 1px solid var(--md-default-fg-color--lightest);
-  background: var(--md-default-bg-color--light);
-  padding-block: 3rem 2.5rem;
-}
+/* Hide "Table of contents" label above the sidebar — Helix has none. */
+.md-sidebar--primary .md-sidebar__title { display: none; }
 
-[data-md-color-scheme="slate"] .nr-footer {
-  background: var(--md-default-bg-color);
-  border-top-color: rgba(237, 235, 224, 0.10);
+/* ────────────────────────────────────────────────────────────────────────────
+   CONTENT — centred, max-width, sans body
+   ──────────────────────────────────────────────────────────────────────────── */
+.md-content {
+  max-width: 750px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
 }
-
-.nr-footer__inner {
-  display: grid;
-  grid-template-columns: 1.5fr 1fr 1fr auto;
-  gap: 2rem 3rem;
-  align-items: start;
-}
-
-/* ── Column 1 — brand ────────────────────────────────────────────── */
-.nr-footer__brand { display: flex; flex-direction: column; gap: 0.55rem; }
-.nr-footer__logo {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  text-decoration: none;
-  color: var(--md-default-fg-color);
-  font-weight: 600;
-  font-size: 0.95rem;
-}
-.nr-footer__logo img { height: 1.3rem; width: auto; }
-.nr-footer__copy {
+.md-content__inner {
   margin: 0;
-  font-size: 0.85rem;
-  color: var(--md-default-fg-color--light);
-  line-height: 1.5;
-  max-width: 24rem;
 }
 
-/* ── Columns 2 / 3 — link groups (docs + project) ───────────────── */
-.nr-footer__group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding-top: 0.15rem;
-}
-.nr-footer__group-title {
-  font-size: 0.68rem;
+/* Body type */
+.md-typeset { font-size: 1rem; line-height: 1.6; }
+.md-typeset h1 {
+  font-size: 2.2rem;
   font-weight: 700;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
-  color: var(--md-default-fg-color);
-  margin: 0 0 0.35rem;
-}
-.nr-footer__group-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  text-decoration: none;
-  color: var(--md-default-fg-color--light);
-  font-size: 0.85rem;
-  font-weight: 500;
-  transition: color 120ms ease;
-}
-.nr-footer__group-link:hover {
-  color: var(--md-default-fg-color);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.nr-footer__group-link svg {
-  width: 0.95rem;
-  height: 0.95rem;
-  fill: currentColor;
-  flex-shrink: 0;
-}
-
-/* ── Column 4 — theme toggle (segmented control) ──────────────────
-   Two visible pill buttons side-by-side. The active option is highlighted
-   via CSS :has() — we mirror the `checked` state of the underlying
-   <input> onto the matching <label>. Material's JS keeps the radios
-   in sync (the form has `name="__palette"` so the radios are a group). */
-.nr-footer__palette {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.55rem;
-}
-.nr-footer__palette-label {
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
-  color: var(--md-default-fg-color);
-}
-.nr-footer__palette-form {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.2rem;
-  padding: 0.3rem;
-  border-radius: 999px;
-  border: 1px solid var(--nr-ink-soft);
-  background: var(--md-default-bg-color);
-}
-[data-md-color-scheme="slate"] .nr-footer__palette-form {
-  border-color: rgba(237, 235, 224, 0.12);
-}
-/* Hide the radios visually — Material's JS still updates them, and
-   the labels stay clickable. */
-.nr-footer__palette-form .md-option {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.5em;
+  border: none;
   padding: 0;
-  margin: -1px;
+}
+.md-typeset h2 {
+  font-size: 1.6rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 2em 0 0.5em;
+  border-bottom: 1px solid var(--nr-sidebar-spacer);
+  padding-bottom: 0.3em;
+}
+.md-typeset h3 { font-size: 1.3rem; font-weight: 600; margin: 1.8em 0 0.4em; }
+.md-typeset h4 { font-size: 1.1rem; font-weight: 600; margin: 1.5em 0 0.3em; }
+.md-typeset p  { margin: 0 0 1em; }
+.md-typeset a  {
+  color: var(--nr-links);
+  text-decoration: none;
+}
+.md-typeset a:hover { text-decoration: underline; }
+
+.md-typeset code {
+  background: var(--md-code-bg-color);
+  color: var(--nr-inline-code-color);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+.md-typeset pre {
+  background: var(--md-code-bg-color);
+  color: var(--md-code-fg-color);
+  padding: 12px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--md-code-border-color);
+  overflow-x: auto;
+  font-size: 0.92em;
+  line-height: 1.5;
+}
+.md-typeset pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
 }
 
-.nr-footer__palette-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.35rem 0.75rem;
-  border-radius: 999px;
-  cursor: pointer;
-  color: var(--md-default-fg-color--light);
-  background: transparent;
-  font-family: var(--md-text-font);
-  font-size: 0.78rem;
+/* Tables */
+.md-typeset table:not([class]) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+  margin: 1em 0;
+}
+.md-typeset table:not([class]) th {
+  background: var(--md-default-bg-color--light);
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--nr-sidebar-spacer);
+  text-align: left;
   font-weight: 600;
-  letter-spacing: 0;
-  transition: background 140ms ease, color 140ms ease;
 }
-.nr-footer__palette-btn svg {
-  width: 0.85rem;
-  height: 0.85rem;
-  fill: currentColor;
+.md-typeset table:not([class]) td {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--nr-sidebar-spacer);
 }
-.nr-footer__palette-btn:hover {
+
+/* Admonitions — Helix uses a left orange border for warnings */
+.md-typeset .admonition {
+  border-left: 4px solid var(--nr-sidebar-active);
+  background: var(--md-default-bg-color--light);
+  border-radius: 0;
+  padding: 12px 16px;
+  margin: 1em 0;
+}
+.md-typeset .admonition.warning {
+  border-left-color: #ff8e00;
+  background: var(--md-default-bg-color--light);
+}
+.md-typeset .admonition-title {
+  font-weight: 600;
+  font-size: 0.95em;
+  margin-bottom: 0.5em;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   FOOTER — Helix-style prev/next pager only
+   ──────────────────────────────────────────────────────────────────────────── */
+.nr-footer {
+  background: var(--md-default-bg-color);
+  border-top: 1px solid var(--nr-sidebar-spacer);
+  padding: 0;
+  margin: 32px 0 0;
+}
+.nr-footer__pager {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  max-width: 750px;
+  margin: 0 auto;
+}
+.nr-footer__pager-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  text-decoration: none;
+  color: var(--nr-sidebar-fg);
+  font-size: 0.9rem;
+  border-radius: 4px;
+  transition: background-color 120ms ease;
+}
+.nr-footer__pager-link:hover {
+  background: var(--nr-sidebar-spacer);
   color: var(--md-default-fg-color);
 }
-/* Active button (the one whose sibling radio is `checked`) — the
-   pill fills with ink, the icon + label invert to cream. Mirrors
-   Material's existing JS state-sync. */
-.nr-footer__palette-form:has(#__palette_footer_light:checked) label[for="__palette_footer_light"],
-.nr-footer__palette-form:has(#__palette_footer_dark:checked) label[for="__palette_footer_dark"] {
-  background: var(--md-default-fg-color);
-  color: var(--md-default-bg-color);
+.nr-footer__pager-link--prev {
+  justify-content: flex-start;
+  text-align: left;
 }
-.nr-footer__palette-form:has(#__palette_footer_light:checked) label[for="__palette_footer_dark"],
-.nr-footer__palette-form:has(#__palette_footer_dark:checked) label[for="__palette_footer_light"] {
-  background: transparent;
-  color: var(--md-default-fg-color--light);
+.nr-footer__pager-link--next {
+  justify-content: flex-end;
+  text-align: right;
 }
+.nr-footer__pager-link svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  flex: 0 0 auto;
+}
+.nr-footer__pager-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.nr-footer__pager-label {
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--nr-sidebar-non-existant);
+}
+.nr-footer__pager-title {
+  font-size: 0.95em;
+  color: var(--md-default-fg-color);
+  font-weight: 500;
+}
+.nr-footer__pager-spacer { display: block; }
 
-/* Prev / next pager — REMOVED. navigation.footer dropped from mkdocs.yml
-   features and the pager block was removed from footer.html. No CSS
-   rules needed for non-existent markup. */
+/* Drop Material's default footer chrome */
+.md-footer-meta,
+.md-footer-meta__inner { background: transparent; padding: 0; margin: 0; max-width: none; border: none; }
 
-/* Responsive: footer collapses on narrow viewports. */
-@media (max-width: 76em) {
-  .nr-footer__inner {
-    grid-template-columns: 1fr 1fr;
-    gap: 2rem;
-  }
-  .nr-footer__palette {
-    align-items: flex-start;
-    grid-column: 1 / -1;
-  }
+/* ────────────────────────────────────────────────────────────────────────────
+   BANNER (announcement) — slim top-of-page strip
+   ──────────────────────────────────────────────────────────────────────────── */
+.md-banner {
+  background: var(--md-default-bg-color--light);
+  color: var(--md-default-fg-color);
+  border-bottom: 1px solid var(--nr-sidebar-spacer);
+  font-size: 0.85rem;
 }
-@media (max-width: 44em) {
-  .nr-footer__inner {
-    grid-template-columns: 1fr;
-    gap: 1.75rem;
-  }
+.md-banner a {
+  color: var(--nr-links);
+  text-decoration: underline;
 }
-
-/* Drop Material's default footer chrome — our override replaces it. */
-.md-footer-meta { background: transparent; border: 0; padding: 0; }
-.md-footer-meta__inner { padding: 0; margin: 0; max-width: none; }
