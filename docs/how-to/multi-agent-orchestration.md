@@ -91,7 +91,9 @@ API calls, another is read-only), but you lose the "one cap protects
 everything" guarantee.
 
 Full LangGraph, CrewAI, and OpenAI Agents orchestration examples live
-in [`nullrun-examples`](https://github.com/nullrunio/nullrun-examples/tree/main/orchestration).
+in [`nullrun-examples/examples/`](https://github.com/nullrunio/nullrun-examples/tree/master/examples)
+— `langgraph_basic.py`, `crewai_basic.py`, and
+`openai_agents_basic.py` show the independent-pools wiring.
 
 ## Operator kill across the tree
 

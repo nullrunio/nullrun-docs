@@ -19,6 +19,14 @@ when you need them.
 4. Copy the key (`nr_live_…`) shown once and store it somewhere safe
    (env var, secret manager). You'll need it in step 3.
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/api-key-new-light.png"
+       alt="NullRun New API key dialog, with the workflow dropdown and key name field.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/api-key-new-dark.png"
+       alt="NullRun New API key dialog, with the workflow dropdown and key name field.">
+  <figcaption class="nr-shot__caption">API keys · New key</figcaption>
+</figure>
+
 ## 2. Install the SDK
 
 ```bash title="shell"

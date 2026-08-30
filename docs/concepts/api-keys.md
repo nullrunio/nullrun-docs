@@ -43,6 +43,22 @@ The dashboard shows the new key value **once** — a string starting
 with `nr_live_...`. Copy it into your secret manager **immediately**.
 The dashboard will never show it again.
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/api-keys-list-light.png"
+       alt="API keys list with the New key button highlighted in the top right.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/api-keys-list-dark.png"
+       alt="API keys list with the New key button highlighted in the top right.">
+  <figcaption class="nr-shot__caption">API keys · New key</figcaption>
+</figure>
+
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/api-key-new-light.png"
+       alt="New API key dialog open — Key name field, Workflow dropdown, Create button.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/api-key-new-dark.png"
+       alt="New API key dialog open — Key name field, Workflow dropdown, Create button.">
+  <figcaption class="nr-shot__caption">API keys · New key dialog</figcaption>
+</figure>
+
 ## What's in the response
 
 When you create a key, the dashboard shows:

@@ -17,6 +17,14 @@ type, the dashboard shows a JSON editor for the `tool_pattern`,
 bottom lets you paste a tool name and see whether any pattern
 matches — useful for debugging.
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/policies-list-light.png"
+       alt="Policies list with the New policy button highlighted in the top right.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/policies-list-dark.png"
+       alt="Policies list with the New policy button highlighted in the top right.">
+  <figcaption class="nr-shot__caption">Governance · Policies · New policy</figcaption>
+</figure>
+
 ## What a tool name looks like
 
 The agent calls tools by name. The canonical tool name format:

@@ -1,8 +1,10 @@
 /* ============================================================================
-   NullRun Docs — Helix-style overrides (2026-08-27)
+   NullRun Docs — Neo-brutalist re-skin (2026-08-30)
    ----------------------------------------------------------------------------
-   Mirrors the visual language of https://docs.helix-editor.com/ (mdBook
-   "Helix" theme) on top of MkDocs Material.
+   Mirrors the visual language of the product site (https://nullrun.io) on
+   top of MkDocs Material. Product design system is documented in
+   `frontend/app/globals.css` and `frontend/tailwind.config.ts`; the tokens
+   below mirror that system 1:1 where Material's CSS-var surface allows.
 
    Layout
    ------
@@ -11,7 +13,7 @@
      │ sidebar  │  menu-bar (50px, offset right)   │
      │  (fixed  ├──────────────────────────────────┤
      │  340px,  │                                  │
-     │  full    │  content (max 750px, centered)   │
+     │  full    │  content (max 900px, centered)   │
      │  height) │                                  │
      │          │                                  │
      │  numbered│                                  │
@@ -24,75 +26,112 @@
    page width — its left edge starts at 340px. The footer is
    removed entirely (no prev/next pager, no Material chrome).
 
-   Palette
-   -------
-   Light: hsl(0, 0%, 100%) page, hsl(0, 0%, 0%) ink, sidebar #fafafa,
-          active link #1f1fff, icon #747474
-   Dark (slate): hsl(200, 7%, 8%) page, hsl(200, 7%, 8%) ink (muted),
-          sidebar #292c2f, active link #3473ad
-   Navy:  hsl(226, 23%, 11%) page, hsl(226, 23%, 16%) ink,
-          sidebar #282d3f, active link #2b79a2
+   Palette (mirrors frontend tokens)
+   ---------------------------------
+   Light (cream):  bg #F1EDDA paper, ink #1A1A1A, surface #F8F4E6,
+                   elevated #FCFAF0, inset #D9D4BD
+                   FLAG #E6AF1E  (accent / brand voice / CTA)
+                   BLOCK #D1372B (destructive — used sparingly)
+                   Allow #1E8A59 (success / positive)
+   Dark:           bg #1A1A1A machined, fg #EBEBEB neutral paper,
+                   chrome = neutral grays (no warm tint), accent bases
+                   unchanged from cream.
 
-   Hex values flatten the HSL values from Helix's variables.css so
-   they can sit in Material's CSS-var surface without recomputation.
+   Typography
+   ----------
+   Inter (body, .font-sans) — loaded by overrides/main.html woff2 subsets
+   Space Grotesk (display, .font-display) — for hero / h1 / large section
+                                             titles (opt-in via class)
+   IBM Plex Mono (UI labels / code) — for inline code, code blocks,
+                                       section chips, kbd.
 
-   Font: Source Code Pro for code, system sans for body (mirrors
-   Helix's fonts.css without bundling the webfonts — system stack
-   is good enough for docs; the brand Google Sans Flex lives only
-   in the menu-bar title via extra.css @font-face in main.html).
+   Neo-brutalist signature
+   -----------------------
+     • 2px solid ink borders everywhere (replaces Material's hairline)
+     • hard-offset box-shadow (2/4/6/8px solid ink, blur 0)
+     • radius = 0 (square corners) — only md=4px for cards, full for
+       avatars/dots
+     • solid hex/HSL only — no opacity fills, no rgba tints
+     • FLAG-yellow selection highlight
+     • 3px solid neutral-gray focus ring with 2px offset
    ============================================================================ */
 
 /* ────────────────────────────────────────────────────────────────────────────
-   COLOR TOKENS
+   1. COLOR TOKENS — cream (default + [data-md-color-scheme="default"])
    ──────────────────────────────────────────────────────────────────────────── */
-
-/* Light theme — Helix's "light" + "rust" combined. */
 :root,
 [data-md-color-scheme="default"] {
-  /* Surface */
-  --md-default-bg-color: hsl(0, 0%, 100%);
-  --md-default-bg-color--light: hsl(0, 0%, 97%);
-  --md-default-bg-color--lighter: hsl(0, 0%, 100%);
-  --md-default-bg-color--lightest: hsl(0, 0%, 100%);
+  /* Surfaces — mirrors globals.css :root bg-* tokens */
+  --md-default-bg-color: #F1EDDA;          /* cream paper (--bg-base) */
+  --md-default-bg-color--light: #F8F4E6;   /* surface lift (--bg-surface) */
+  --md-default-bg-color--lighter: #FCFAF0; /* elevated (--bg-elevated) */
+  --md-default-bg-color--lightest: #FCFAF0;
 
-  /* Ink */
-  --md-default-fg-color: hsl(0, 0%, 0%);
-  --md-default-fg-color--light: hsl(0, 0%, 35%);
-  --md-default-fg-color--lighter: hsl(0, 0%, 50%);
-  --md-default-fg-color--lightest: hsl(0, 0%, 70%);
+  /* Ink + foreground — machined black on cream paper */
+  --md-default-fg-color: #1A1A1A;          /* --ink */
+  --md-default-fg-color--light: #6B6657;   /* --fg-muted (warm gray) */
+  --md-default-fg-color--lighter: #A09B8B; /* --fg-subtle */
+  --md-default-fg-color--lightest: #C4BFB0;
+  --md-default-fg-color--md: #1A1A1A;
 
-  /* Sidebar */
-  --nr-sidebar-bg: hsl(0, 0%, 98%);
-  --nr-sidebar-fg: hsl(0, 0%, 20%);
-  --nr-sidebar-non-existant: hsl(0, 0%, 65%);
-  --nr-sidebar-active: #1f1fff;
-  --nr-sidebar-spacer: hsl(0, 0%, 94%);
+  /* Sidebar — same cream surface as page, 2px ink border-right */
+  --nr-sidebar-bg: #F1EDDA;
+  --nr-sidebar-fg: #1A1A1A;
+  --nr-sidebar-non-existant: #A09B8B;
+  --nr-sidebar-active: #1A1A1A;            /* active link = ink + bold */
+  --nr-sidebar-spacer: #D9D4BD;            /* = --bg-inset */
 
   /* Icons + accents */
-  --nr-icons: hsl(0, 0%, 45%);
-  --nr-icons-hover: hsl(0, 0%, 0%);
-  --nr-links: #20609f;
-  --nr-inline-code-color: #301900;
+  --nr-icons: #6B6657;
+  --nr-icons-hover: #1A1A1A;
+  --nr-links: #1A1A1A;                     /* default link = ink */
+  --nr-link-info: #6B4F0A;                 /* FLAG-ink for info callouts */
+  --nr-inline-code-color: #1A1A1A;
 
-  /* Accent (links/hover in content) */
-  --md-accent-fg-color: #20609f;
-  --md-accent-bg-color: hsl(0, 0%, 95%);
-  --md-accent-border-color: hsl(0, 0%, 50%);
+  /* Material accent — kept neutral to avoid blue tint on links */
+  --md-accent-fg-color: #1A1A1A;
+  --md-accent-bg-color: #F8F4E6;
+  --md-accent-border-color: #D9D4BD;
 
-  /* Code */
-  --md-code-bg-color: hsl(0, 0%, 96%);
-  --md-code-fg-color: hsl(0, 0%, 0%);
-  --md-code-border-color: hsl(0, 0%, 88%);
-  --md-code-hl-color: #1f1fff;
-  --md-code-hl-color--light: hsl(0, 0%, 92%);
+  /* Code blocks — dark ink bg + FLAG-yellow text (terminal aesthetic) */
+  --md-code-bg-color: #1A1A1A;
+  --md-code-fg-color: #E6AF1E;
+  --md-code-border-color: #1A1A1A;
+  --md-code-hl-color: #FAEFCB;             /* FLAG wash for highlight */
+  --md-code-hl-color--light: #2D2614;      /* dim FLAG wash for dark highlight */
 
-  /* Typography — Helix uses system sans + Source Code Pro for code */
-  --md-text-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --md-code-font: "Source Code Pro", Consolas, "Ubuntu Mono", Menlo, "DejaVu Sans Mono", monospace;
-  --md-typeset-font-size: 1rem;            /* Helix base: 1.6rem at default zoom = ~16px */
-  --md-typeset-line-height: 1.45;
-  --md-typeset-h1-font-size: 2.2rem;
-  --md-typeset-h2-font-size: 1.6rem;
+  /* ── Neo-brutalist accent palette (FLAG / BLOCK / Allow) ─────────
+     3 anchors × 3 layers each (base / -ink / -wash). -strong-ink and
+     -fill omitted — only used for buttons / chips which consumer
+     stylesheets render directly. Mirrors globals.css :root exactly. */
+  --accent-flag: #E6AF1E;
+  --accent-flag-ink: #6B4F0A;
+  --accent-flag-wash: #FAEFCB;
+
+  --accent-block: #D1372B;
+  --accent-block-ink: #8A1E16;
+  --accent-block-wash: #FAD7D2;
+
+  --accent-allow: #1E8A59;
+  --accent-allow-ink: #0D4A2F;
+  --accent-allow-wash: #C9E9D4;
+
+  /* Focus ring — warm gray neutral, NOT bound to any state accent */
+  --focus-ring: #9A9893;
+  --focus-ring-color: #F1EDDA;
+
+  /* Selection — FLAG base at 0.25 alpha */
+  --selection-bg: #E6AF1E;
+  --selection-alpha: 0.25;
+
+  /* Typography */
+  --md-text-font: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --md-code-font: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --md-typeset-font-size: 0.9375rem;
+  --md-typeset-line-height: 1.55;
+  --md-typeset-h1-font-size: 2.25rem;
+  --md-typeset-h2-font-size: 1.65rem;
   --md-typeset-h3-font-size: 1.3rem;
   --md-typeset-h4-font-size: 1.1rem;
   --md-typeset-h1-weight: 700;
@@ -100,117 +139,175 @@
   --md-typeset-h3-weight: 600;
   --md-typeset-h4-weight: 600;
 
-  /* Radii — Helix is square, no rounding. */
+  /* Radii — neo-brutalism: keep radii minimal */
   --md-border-radius: 0;
   --md-border-radius--sm: 0;
   --md-border-radius--lg: 0;
 }
 
-/* Dark theme — Helix's "coal" (warm grey). */
+/* ────────────────────────────────────────────────────────────────────────────
+   1b. DARK THEME — machined black + neutral chrome (mirrors .dark)
+   ──────────────────────────────────────────────────────────────────────────── */
 [data-md-color-scheme="slate"] {
-  --md-default-bg-color: hsl(200, 7%, 8%);
-  --md-default-bg-color--light: hsl(200, 7%, 11%);
-  --md-default-bg-color--lighter: hsl(200, 7%, 13%);
-  --md-default-bg-color--lightest: hsl(200, 7%, 13%);
+  --md-default-bg-color: #1A1A1A;          /* machined black (--bg-base) */
+  --md-default-bg-color--light: #2A2A2A;   /* --bg-surface */
+  --md-default-bg-color--lighter: #353535; /* --bg-elevated */
+  --md-default-bg-color--lightest: #353535;
 
-  --md-default-fg-color: #98a3ad;
-  --md-default-fg-color--light: hsl(200, 7%, 55%);
-  --md-default-fg-color--lighter: hsl(200, 7%, 40%);
-  --md-default-fg-color--lightest: hsl(200, 7%, 30%);
+  --md-default-fg-color: #EBEBEB;          /* --fg-default (neutral) */
+  --md-default-fg-color--light: #999999;
+  --md-default-fg-color--lighter: #6B6B6B;
+  --md-default-fg-color--lightest: #6B6B6B;
+  --md-default-fg-color--md: #EBEBEB;
 
-  --nr-sidebar-bg: hsl(200, 7%, 11%);
-  --nr-sidebar-fg: #a1adb8;
-  --nr-sidebar-non-existant: hsl(200, 7%, 35%);
-  --nr-sidebar-active: #3473ad;
-  --nr-sidebar-spacer: hsl(200, 7%, 14%);
+  --nr-sidebar-bg: #1A1A1A;
+  --nr-sidebar-fg: #EBEBEB;
+  --nr-sidebar-non-existant: #6B6B6B;
+  --nr-sidebar-active: #EBEBEB;
+  --nr-sidebar-spacer: #353535;
 
-  --nr-icons: hsl(200, 7%, 35%);
-  --nr-icons-hover: #b3c0cc;
-  --nr-links: #2b79a2;
-  --nr-inline-code-color: #c5c8c6;
+  --nr-icons: #999999;
+  --nr-icons-hover: #EBEBEB;
+  --nr-links: #EBEBEB;
+  --nr-link-info: #F5D67A;                 /* lifted FLAG-ink for dark AA */
+  --nr-inline-code-color: #EBEBEB;
 
-  --md-accent-fg-color: #2b79a2;
-  --md-accent-bg-color: hsl(200, 7%, 14%);
-  --md-accent-border-color: hsl(200, 7%, 30%);
+  --md-accent-fg-color: #EBEBEB;
+  --md-accent-bg-color: #2A2A2A;
+  --md-accent-border-color: #353535;
 
-  --md-code-bg-color: hsl(200, 7%, 12%);
-  --md-code-fg-color: #98a3ad;
-  --md-code-border-color: hsl(200, 7%, 18%);
-  --md-code-hl-color: #3473ad;
-  --md-code-hl-color--light: hsl(200, 7%, 18%);
-}
+  --md-code-bg-color: #1A1A1A;             /* stays dark, paper text */
+  --md-code-fg-color: #E6AF1E;
+  --md-code-border-color: #353535;
+  --md-code-hl-color: #F5D67A;
+  --md-code-hl-color--light: #2D2614;
 
-/* Navy theme — Helix's "navy" variant. Activated via JS by setting
-   data-md-color-scheme="slate" + a body class. We re-bind vars here. */
-body.nr-theme-navy {
-  --md-default-bg-color: hsl(226, 23%, 11%);
-  --md-default-bg-color--light: hsl(226, 23%, 14%);
-  --md-default-bg-color--lighter: hsl(226, 23%, 16%);
-  --md-default-bg-color--lightest: hsl(226, 23%, 16%);
+  /* Accent bases UNCHANGED from cream. -ink LIFTED for dark AA.
+     -wash DIMMED to near-base so wash surfaces stay distinguishable
+     without glowing. Mirrors globals.css .dark exactly. */
+  --accent-flag: #E6AF1E;
+  --accent-flag-ink: #F5D67A;
+  --accent-flag-wash: #2D2614;
 
-  --md-default-fg-color: #bcbdd0;
-  --md-default-fg-color--light: hsl(226, 23%, 65%);
-  --md-default-fg-color--lighter: hsl(226, 23%, 50%);
-  --md-default-fg-color--lightest: hsl(226, 23%, 35%);
+  --accent-block: #D1372B;
+  --accent-block-ink: #E0665C;
+  --accent-block-wash: #2D1A18;
 
-  --nr-sidebar-bg: hsl(226, 23%, 14%);
-  --nr-sidebar-fg: #c8c9db;
-  --nr-sidebar-non-existant: hsl(226, 23%, 30%);
-  --nr-sidebar-active: #2b79a2;
-  --nr-sidebar-spacer: hsl(226, 23%, 16%);
+  --accent-allow: #1E8A59;
+  --accent-allow-ink: #4DBB85;
+  --accent-allow-wash: #142C20;
 
-  --nr-icons: hsl(226, 23%, 40%);
-  --nr-icons-hover: #b7b9cc;
-  --nr-links: #2b79a2;
-  --nr-inline-code-color: #c5c8c6;
+  --focus-ring: #ADADAD;                   /* lifted neutral for AA */
+  --focus-ring-color: #1A1A1A;
 
-  --md-code-bg-color: hsl(226, 23%, 14%);
-  --md-code-fg-color: #bcbdd0;
-  --md-code-border-color: hsl(226, 23%, 20%);
-  --md-code-hl-color: #2b79a2;
+  --selection-bg: #E6AF1E;
+  --selection-alpha: 0.35;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   LAYOUT — 3-column (sidebar full-height + content + menu-bar offset)
+   2. GLOBAL DEFAULTS — neo-brutalist signature (apply site-wide)
    ──────────────────────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family: var(--md-text-font);
+  color: var(--md-default-fg-color);
+  background: var(--md-default-bg-color);
+}
+
+html { scroll-behavior: smooth; }
+
+/* Selection — FLAG base + ink color so muted/subtle text still reads
+   when highlighted. Mirrors globals.css ::selection. */
+::selection {
+  background-color: rgba(230, 175, 30, var(--selection-alpha));
+  color: var(--md-default-fg-color);
+}
+
+/* Focus ring — 3px solid neutral gray with 2px offset. Distinct from
+   any semantic accent so a yellow plate / red badge / green success
+   never confuses focus state. `border-radius: 0` keeps square corners
+   on focus. Mirrors globals.css *:focus-visible. */
+*:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 0;
+}
+
+/* Display heading opt-in (matches .font-display in product) */
+.font-display { font-family: var(--font-display); }
+
+/* ────────────────────────────────────────────────────────────────────────────
+   3. LAYOUT — 3-column (sidebar + content + TOC), sticky sidebar
+   ──────────────────────────────────────────────────────────────────────────── */
+/* `max-width: none` lets .md-grid span the full viewport instead of
+   centering at 1400px. With sidebar (340px, flush left) + content
+   (max 900, centered in slot) + TOC (~242px, flush right), removing
+   the max-width pushes the TOC all the way to the viewport's right
+   edge so both sidebars sit "at the edges with minimal margins" —
+   the gap that used to exist on the right side of the TOC (when the
+   1400px-centered grid left ~150px of unused space) is gone. The
+   primary sidebar is already pinned to the left edge (it's a flex
+   item starting at x=0), so no change is needed there. */
 .md-grid {
-  max-width: 1400px;
+  max-width: none;
 }
-/* Content area starts at 340px (sidebar width). The footer is
-   removed in the partial override, so .md-footer isn't offset
-   here — but kept as a safety net in case Material's base.html
-   ever wraps the empty partial in a <footer> element. */
-.md-main,
-.md-footer {
-  margin-left: 340px;
-}
-/* Hide the footer entirely — the override partial renders empty,
-   but Material's base.html may still emit a <footer class="md-footer">
-   wrapper around it. Belt-and-braces. */
+/* No `margin-left: 340px` on .md-main — the primary sidebar is now
+   `position: sticky` (in flex flow, occupying 340px column), so the
+   flex layout naturally positions content + TOC to its right. The
+   header (menu-bar) is independently constrained to the same content
+   area via `margin-left: 340px; width: calc(100% - 340px)` (see §4). */
 .md-footer { display: none; }
-/* On narrow viewports the 340px sidebar leaves almost no room for
-   content — collapse the sidebar off-screen by default and let the
-   menu-bar hamburger (body.nr-sidebar-hidden) toggle it back.
-   Menu-bar inner drops its offset too so the icon strip spans the
-   full viewport width. */
 @media (max-width: 76em) {
   .md-sidebar--primary { transform: translateX(-100%); }
-  .md-main,
-  .md-footer { margin-left: 0; }
+  /* On narrow viewports the sidebar is hidden by transform, so the
+     menu-bar (and its inner) span the full viewport width, and
+     .md-main__inner drops the 340px sidebar offset (no sidebar in
+     flow → content occupies full viewport). */
+  .md-header,
+  .nr-menubar {
+    margin-left: 0;
+    width: 100%;
+    max-width: 100%;
+  }
   .nr-menubar__inner { margin-left: 0; }
+  .md-main__inner {
+    margin-left: 0 !important;
+    max-width: 100vw !important;
+  }
   body.nr-sidebar-hidden .md-sidebar--primary { transform: translateX(0); }
 }
 
+/* ── Sidebar hidden via header hamburger ────────────────────────────
+   The user clicks the `nr-sidebar-toggle` button (overrides/partials/
+   header.html) and extra.js toggles `nr-sidebar-hidden` on <body>.
+   When hidden, the sidebar slides off-screen via `transform:
+   translateX(-100%)` (set in the @media block above for narrow
+   viewports, replicated here at all widths). To match user feedback
+   "основной контент увеличивается на размер сайдбара", we ALSO drop
+   the 340px left offset on the menu-bar + .md-main__inner so the
+   content column expands to fill the freed viewport space — otherwise
+   a 340px empty strip would appear on the left while the sidebar is
+   hidden. */
+body.nr-sidebar-hidden .md-sidebar--primary { transform: translateX(-100%); }
+body.nr-sidebar-hidden .md-header,
+body.nr-sidebar-hidden .nr-menubar {
+  margin-left: 0;
+  width: 100%;
+  max-width: 100%;
+}
+body.nr-sidebar-hidden .md-main__inner {
+  margin-left: 0 !important;
+  max-width: 100vw !important;
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
-   MENU-BAR (header) — Helix-style 50px icon-only strip, OFFSET RIGHT
+   4. MENU-BAR (header) — Helix-style 50px icon-only strip, OFFSET RIGHT
    ──────────────────────────────────────────────────────────────────────────── */
-/* .md-header sits at the top of the page but its background is
-   transparent — the sidebar (z-index 4) shows through above the
-   sticky header (z-index 5) where the menu-bar's offset would
-   otherwise paint a full-width white strip. The visible chrome
-   (background + bottom border) lives on .nr-menubar__inner, which
-   starts at 340px from the left edge (i.e. immediately right of
-   the sidebar). */
 .md-header {
   position: sticky;
   top: 0;
@@ -220,21 +317,28 @@ body.nr-theme-navy {
   border-bottom: none;
   box-shadow: none;
   color: var(--nr-icons);
+  /* Constrain to the content column. Sticky block-level elements with
+     width:auto occupy the full containing-block width — `left/right`
+     alone don't clip them. So we use margin-left + width:calc() to
+     shift the menu-bar 340px to the right of the sidebar (where the
+     content begins) and shrink it to fill only the remaining space. */
+  margin-left: 340px;
+  width: calc(100% - 340px);
+  max-width: calc(100% - 340px);
 }
-.md-header__inner { display: none; }   /* Hide Material's full inner row — we render our own. */
+.md-header__inner { display: none; }
 
 .nr-menubar {
   position: sticky;
   top: 0;
   height: 50px;
   z-index: 5;
+  margin-left: 340px;
+  width: calc(100% - 340px);
+  max-width: calc(100% - 340px);
 }
 .nr-menubar__inner {
-  /* Offset right by the sidebar width so the icon strip does NOT
-     span the full page width. Background + bottom-border painted
-     here, not on .md-header, so the strip doesn't visually cover
-     the sidebar. */
-  margin-left: 340px;
+  margin-left: 0;
   display: flex;
   align-items: center;
   height: 50px;
@@ -242,10 +346,8 @@ body.nr-theme-navy {
   padding: 0 12px;
   gap: 6px;
   background-color: var(--md-default-bg-color);
-  border-bottom: 1px solid var(--nr-sidebar-spacer);
+  border-bottom: 2px solid var(--nr-sidebar-spacer);
 }
-
-/* Left / right button clusters */
 .nr-menubar__left-buttons,
 .nr-menubar__right-buttons {
   display: inline-flex;
@@ -255,13 +357,8 @@ body.nr-theme-navy {
 }
 .nr-menubar__left-buttons { margin-right: 4px; }
 .nr-menubar__right-buttons { margin-left: auto; }
-
-/* Title — intentionally hidden. The <h1> is preserved (empty
-   content) for layout / a11y landmark stability, but takes no
-   visible space. */
 .nr-menubar__title { display: none; }
 
-/* Icon-only button — Helix style: square, transparent, hover-glow */
 .nr-icon-button {
   display: inline-flex;
   align-items: center;
@@ -273,7 +370,7 @@ body.nr-theme-navy {
   padding: 0;
   color: var(--nr-icons);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 0;
   transition: color 120ms ease, background-color 120ms ease;
   text-decoration: none;
 }
@@ -287,8 +384,18 @@ body.nr-theme-navy {
   fill: currentColor;
 }
 
+/* Lucide-style iconography — applied to all SVG icons in the doc.
+   Matches globals.css svg.lucide rule (2px stroke, square caps,
+   miter joins). Without this, Material's bundled icons render thin
+   and out-of-place against the brutalist 2px borders. */
+svg {
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  stroke-width: 2;
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
-   THEME POPUP
+   5. THEME POPUP
    ──────────────────────────────────────────────────────────────────────────── */
 .nr-theme { position: relative; display: inline-flex; }
 .nr-theme-list {
@@ -300,13 +407,13 @@ body.nr-theme-navy {
   padding: 4px;
   list-style: none;
   background: var(--md-default-bg-color);
-  border: 1px solid var(--nr-sidebar-spacer);
-  border-radius: 4px;
+  border: 2px solid var(--ink, var(--md-default-fg-color));
+  border-radius: 0;
   font-size: 0.85rem;
   color: var(--md-default-fg-color);
   min-width: 100px;
   display: none;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
 }
 .nr-theme:hover .nr-theme-list,
 .nr-theme:focus-within .nr-theme-list { display: block; }
@@ -320,7 +427,7 @@ body.nr-theme-navy {
   color: inherit;
   font: inherit;
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: 0;
 }
 .nr-theme-btn:hover {
   background: var(--nr-sidebar-spacer);
@@ -328,91 +435,121 @@ body.nr-theme-navy {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   SIDEBAR — fixed left, full height, numbered chapters
+   6. SIDEBAR — fixed left, full viewport height, numbered chapters,
+                 drop-down tree (top-level chapters collapsed by default)
    ──────────────────────────────────────────────────────────────────────────── */
-/* Always visible at every viewport — overrides Material's mobile
-   hide (which sets `left: -12.1rem` at <1220px and relies on the
-   drawer-checkbox toggle to bring it back). Helix's mdBook sidebar
-   is visible by default and only hides via the menu-bar toggle.
-
-   The sidebar spans the FULL height of the viewport (top: 0 →
-   bottom: 0). It is wider than the menu-bar above it, so the
-   sidebar's top edge is the visible boundary between sidebar
-   content and the menu-bar strip — no offset needed. */
 .md-sidebar--primary {
-  position: fixed;
-  top: 0;
-  bottom: 0;
+  /* Fixed (not sticky) so the sidebar sits at viewport top-left at
+     ALL scroll positions. Helix-style: `position: fixed; top: 0;
+     left: 0; bottom: 0` keeps the logo flush against y=0 with no
+     empty 50px gap that the menu-bar's flow position would otherwise
+     introduce (sticky only pins AFTER scrollY passes the natural
+     position, leaving a jarring ~50px jump at scrollY=50). We
+     compensate for being out of flow with `margin-left: 340px` on
+     `.md-main__inner` below — see the comment block on that rule.
+     `z-index: 6` keeps the sidebar above the menu-bar (z-index: 5) so
+     the 50px tall menu-bar (offset right of the sidebar at x>=340)
+     never overlaps visually. */
+  position: fixed !important;
+  top: 0 !important;
   left: 0 !important;
   width: 340px;
-  height: 100%;
-  display: block;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  min-height: 100vh !important;
+  display: flex;
+  flex-direction: column;
   background-color: var(--nr-sidebar-bg);
   color: var(--nr-sidebar-fg);
   font-size: 0.875em;
-  border-right: 1px solid var(--nr-sidebar-spacer);
-  /* No overflow here — scrollwrap handles scrolling. */
-  z-index: 4;
+  border-right: 2px solid var(--nr-sidebar-spacer);
+  z-index: 6;
+  overflow: hidden;
+  padding-top: 0 !important;
 }
-/* Scrollwrap fills the fixed sidebar AND scrolls. Material's default
-   chain is: scrollwrap gets `overflow-y: auto` only after JS hovers
-   the sidebar (the snap-scroll mechanic). We want always-on scroll,
-   so we set `overflow-y: auto` here with the higher-specificity
-   descendant selector to override Material's `overflow: hidden`
-   shorthand that wins via source order otherwise. */
+/* Material's `.md-main__inner { margin-top: 1.5rem }` pushes the
+   sidebar (and content) ~24px down from the header. Overriding this
+   makes the sidebar start right under the menu-bar with no gap. */
+.md-main__inner { margin-top: 0 !important; }
+/* With `.md-sidebar--primary` now `position: fixed` (out of flow),
+   `.md-main__inner` only contains the content + TOC flex children —
+   the 340px sidebar column no longer pushes them right automatically.
+   Re-add that 340px offset via `margin-left` so content and TOC start
+   at x=340 (flush against the sidebar's right border). The TOC
+   (`md-sidebar--secondary`) keeps its static positioning and now
+   sits inside this 340px-shifted flex container, naturally flush
+   against the right viewport edge (combined with §3
+   `max-width: none` on .md-grid). */
+.md-main__inner {
+  margin-left: 340px !important;
+  max-width: calc(100vw - 340px) !important;
+}
 .md-sidebar--primary .md-sidebar__scrollwrap {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  width: auto;
-  height: auto;
+  width: 100%;
+  background-color: var(--nr-sidebar-bg);
 }
 .md-sidebar--primary .md-sidebar__inner {
-  padding: 16px 0;
+  /* Padding-top was 16px (Material default). With the sidebar now
+     `position: fixed; top: 0` and the logo (.md-nav__title) sticky
+     at top:0 of the scrollwrap, 16px of inner padding pushed the
+     logo down to y=16, creating a 16px cream gap between the
+     viewport top and the "NULLRUN DOCS" lockup. Removing the
+     top padding makes the logo sit flush at y=0. The bottom 16px
+     stays so the last nav item isn't flush against the viewport
+     bottom. */
+  padding: 0 0 16px;
 }
-
-/* Hide the right-side TOC for narrower viewports — Helix only uses
-   the left sidebar. */
-.md-sidebar--secondary { display: none; }
-
-/* Suppress Material's sticky-active-link behaviour for section
-   headers. With `navigation.expand` enabled, all sections are
-   expanded by default, so the active section header is already
-   visible at its natural position in the list. Material's sticky
-   `position: top: 0` would create a phantom duplicate that pins to
-   the top of the sidebar when scrolled. */
 .md-nav--primary > .md-nav__list > .md-nav__item--active > .md-nav__link {
   position: static;
   box-shadow: none;
   background: transparent;
 }
-
-/* Hide sidebar when user toggled it off (via extra.js sidebar-hide). */
 body.nr-sidebar-hidden .md-sidebar--primary {
   transform: translateX(-100%);
 }
-body.nr-sidebar-hidden .md-main {
-  margin-left: 0;
+
+/* ── Secondary sidebar — TOC ("On this page") ─────────────────────────
+   Right rail listing current page's h2/h3 headings. Only renders on
+   pages that have TOC entries (Material's JS toggles `display` based
+   on heading count).
+
+   2026-08-30 — reverted to Material stock styling (user feedback:
+   "должен быть как был раньше, без этих рамок, границ и скролов").
+   The neo-brutalist border-left spine, FLAG-accent active marker,
+   IBM Plex Mono title, and opaque background have all been removed.
+
+   2026-08-30 (later) — two overrides remain so the TOC sits flush
+   against the right viewport edge AND scrolls naturally with the
+   page instead of pinning to viewport-top:
+     1. `position: static !important` — keeps the TOC in normal
+        document flow so it scrolls down with the content (and out
+        of view at the bottom, like any other block element).
+        Material's stock rule pins the secondary sidebar with
+        `position: sticky; top: 1.5rem` at min-width 60em; our
+        `!important` wins that fight.
+     2. `margin-right: 0 !important; padding-right: 0 !important` —
+        flushes the TOC against the right edge of the viewport
+        (combined with §3 `max-width: none` on .md-grid, this drops
+        the ~150px of empty space that used to sit between the TOC's
+        right edge and the viewport edge).
+   Width, typography, colours, hover, and active-link all inherit
+   Material's bundle defaults. */
+.md-sidebar--secondary {
+  position: static !important;
+  margin-right: 0 !important;
+  padding-right: 0 !important;
 }
 
-/* ── Section / chapter list ─────────────────────────────────────────
-   Helix renders chapters as:
-     <ol class="chapter">
-       <li>1. <a>Getting started</a></li>
-       <li>
-         <ol class="section">
-           <li>1.1. <a>First agent in 15 minutes</a></li>
-         </ol>
-       </li>
-     </ol>
+@media (max-width: 76em) {
+  /* On narrow viewports TOC collapses — Material hides it. */
+  .md-sidebar--secondary { display: none; }
+}
 
-   Material renders the same structure with `.md-nav` classes — we
-   re-style to match Helix's line-height (2.2em for chapters,
-   1.5em for sub-items), no background, no rounded chips. */
 .md-nav--primary .md-nav__list {
   padding: 0;
   margin: 0;
@@ -423,7 +560,6 @@ body.nr-sidebar-hidden .md-main {
   margin: 0;
 }
 
-/* Section header — uppercase numbers, large line-height, ink colour */
 .md-nav--primary .md-nav__item--section > .md-nav__link {
   display: flex;
   align-items: center;
@@ -434,12 +570,13 @@ body.nr-sidebar-hidden .md-main {
   color: var(--nr-sidebar-fg);
   text-decoration: none;
   letter-spacing: 0.01em;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  text-transform: uppercase;
 }
 .md-nav--primary .md-nav__item--section > .md-nav__link:hover {
   color: var(--nr-sidebar-active);
+  background-color: var(--nr-sidebar-spacer);
 }
-
-/* The chevron caret on the right — Helix flips it 90° when expanded */
 .md-nav--primary .md-nav__item--section > .md-nav__link::after {
   width: 0.7rem;
   height: 0.7rem;
@@ -447,14 +584,10 @@ body.nr-sidebar-hidden .md-main {
   transition: transform 200ms ease;
   opacity: 0.6;
 }
-/* Auto-rotate the caret based on the open/closed attribute Material
-   sets on the section. Material toggles `[data-md-state="lock"]` when
-   the user clicks. We use `.md-nav__item--section` + open state. */
 .md-nav--primary .md-nav__item--section.md-nav__item--expanded > .md-nav__link::after {
   transform: rotate(90deg);
 }
 
-/* Subsection — tighter line-height, indented */
 .md-nav--primary .md-nav__item:not(.md-nav__item--section) .md-nav__link {
   display: flex;
   align-items: center;
@@ -468,55 +601,31 @@ body.nr-sidebar-hidden .md-main {
 }
 .md-nav--primary .md-nav__item:not(.md-nav__item--section) .md-nav__link:hover {
   color: var(--nr-sidebar-active);
+  background-color: var(--nr-sidebar-spacer);
 }
 .md-nav--primary .md-nav__item:not(.md-nav__item--section) .md-nav__link--active {
   color: var(--nr-sidebar-active);
   font-weight: 600;
+  border-left: 3px solid var(--accent-flag);
+  padding-left: 25px;
 }
 
-/* Hide the Material default separator / dividers between sections */
 .md-nav--primary .md-nav__item--section {
   border: none;
   margin-top: 0;
 }
 
-/* Material's `nav-item.html` renders TWO siblings for the active
-   page: a `<label class="md-nav__link" for="__toc">` (TOC toggle,
-   normally hidden) and an `<a class="md-nav__link">` (the actual
-   link). The general `display: flex` rule above for non-section
-   nav__links has higher specificity than Material's `display: none`
-   on the `[for=__toc]` selector, which makes the TOC toggle label
-   visible and duplicates the active page row in the sidebar.
-   Re-hide both with the matching specificity. */
 .md-nav--primary .md-nav__item:not(.md-nav__item--section) .md-nav__link[for="__toc"],
 .md-nav--primary .md-nav__item:not(.md-nav__item--section) .md-nav__link[for="__toc"] ~ .md-nav {
   display: none;
 }
 
-/* Hide "Table of contents" label above the sidebar — Helix has none. */
 .md-sidebar--primary .md-sidebar__title { display: none; }
 
-/* ── Sidebar header — logo + "NULLRUN Docs" ──────────────────────
-   Material renders a `<label class="md-nav__title" for="__drawer">`
-   at the top of the primary sidebar with the site logo + name.
-   Its stock styles make it look like a button (background, shadow,
-   border-radius) which doesn't fit a flat sidebar. We strip the
-   button styling and lay it out as a centered header row: logo +
-   "NULLRUN Docs" text in the middle, with a thin divider under it.
-
-   The block is `position: sticky; top: 0` so it stays visible while
-   the chapter list scrolls beneath it. Its background uses
-   `--nr-sidebar-bg` (theme-aware: light/dark/navy all define this
-   variable) so the header never reads transparent against the
-   scrolling list — regardless of theme.
-
-   Size is LOCKED: explicit height (52px = 12px padding × 2 + 28px
-   logo), `min-height` / `max-height` clamped to the same value,
-   `flex-shrink: 0` so the flex container can't compress it, and
-   `transition: none` so nothing animates as Material toggles
-   state classes on scroll. The block is pixel-invariant under
-   scroll, hover, focus, theme change, and Material's data-md-
-   state toggling. */
+/* ── Sidebar header — logo + "NULLRUN Docs" ────────────────────────────
+   Sticky to top of scrollwrap. 2px ink border-bottom, cream paper bg.
+   Logo lockup mirrors product auth page .auth-logo__mark — yellow
+   tile, 2px ink border, 2px offset shadow. */
 .md-sidebar--primary .md-nav__title {
   display: flex;
   align-items: center;
@@ -533,20 +642,17 @@ body.nr-sidebar-hidden .md-main {
   background-color: var(--nr-sidebar-bg);
   box-shadow: none;
   border: none;
-  border-bottom: 1px solid var(--nr-sidebar-spacer);
+  border-bottom: 2px solid var(--nr-sidebar-spacer);
   border-radius: 0;
   cursor: default;
   font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--md-default-fg-color);
   text-decoration: none;
+  font-family: var(--font-display);
   text-transform: uppercase;
   transition: none;
-  /* Stick to the top of the scrollwrap so the header stays put
-     while the user scrolls the chapter list. The sidebar itself
-     is `position: fixed` with its own scroll context, so this
-     sticky works against the scrollwrap — not the viewport. */
   position: sticky;
   top: 0;
   z-index: 1;
@@ -574,137 +680,326 @@ body.nr-sidebar-hidden .md-main {
   height: 28px;
   display: block;
 }
-.md-sidebar--primary .md-nav__title .md-logo + :not(img),
-.md-sidebar--primary .md-nav__title {
-  /* Site name sits to the right of the logo. */
-  text-transform: uppercase;
-}
 
 /* ────────────────────────────────────────────────────────────────────────────
-   CONTENT — centred, max-width, sans body
+   7. CONTENT — flush against sidebar, max-width, Inter body
    ──────────────────────────────────────────────────────────────────────────── */
 .md-content {
+  /* No horizontal padding — article sits flush against the sidebar
+     (sidebar ends at x=340, article starts at x=340). Material's
+     default `padding: 32px 32px 64px` was creating a 56px gap
+     (32px container padding + 24px .md-content__inner margin) on
+     each side that felt wasteful next to a 340px sidebar.
+     Vertical 16px keeps a little breathing room above the H1. */
   max-width: 900px;
   margin: 0 auto;
-  padding: 24px 24px 48px;
+  padding: 16px 0;
 }
+/* Material's `.md-content__inner` is the `<article>` tag and ends
+   up with `margin-left: 24px` / `margin-right: 24px` even though
+   the source rule reads `margin: 0 0.8rem 1.2rem` — Material's
+   minified bundle applies 1.5rem at this viewport width via
+   cascade. Override on both `article` element and `.md-content__inner`
+   class selectors with `!important`. */
+article.md-content__inner,
 .md-content__inner {
-  margin: 0;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding-top: 0 !important;
 }
 
-/* Body type */
-.md-typeset { font-size: 1rem; line-height: 1.6; }
+.md-typeset {
+  font-family: var(--md-text-font);
+  font-size: var(--md-typeset-font-size);
+  line-height: var(--md-typeset-line-height);
+  color: var(--md-default-fg-color);
+}
 .md-typeset h1 {
-  font-size: 2.2rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-size: var(--md-typeset-h1-font-size);
+  font-weight: var(--md-typeset-h1-weight);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
   margin: 0 0 0.5em;
   border: none;
   padding: 0;
+  color: var(--md-default-fg-color);
 }
 .md-typeset h2 {
-  font-size: 1.6rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-size: var(--md-typeset-h2-font-size);
+  font-weight: var(--md-typeset-h2-weight);
+  letter-spacing: -0.015em;
+  line-height: 1.2;
   margin: 2em 0 0.5em;
-  border-bottom: 1px solid var(--nr-sidebar-spacer);
+  border-bottom: 2px solid var(--nr-sidebar-spacer);
   padding-bottom: 0.3em;
 }
-.md-typeset h3 { font-size: 1.3rem; font-weight: 600; margin: 1.8em 0 0.4em; }
-.md-typeset h4 { font-size: 1.1rem; font-weight: 600; margin: 1.5em 0 0.3em; }
-.md-typeset p  { margin: 0 0 1em; }
-.md-typeset a  {
-  color: var(--nr-links);
-  text-decoration: none;
+.md-typeset h3 {
+  font-size: var(--md-typeset-h3-font-size);
+  font-weight: var(--md-typeset-h3-weight);
+  margin: 1.8em 0 0.4em;
+  color: var(--md-default-fg-color);
 }
-.md-typeset a:hover { text-decoration: underline; }
+.md-typeset h4 {
+  font-size: var(--md-typeset-h4-font-size);
+  font-weight: var(--md-typeset-h4-weight);
+  margin: 1.5em 0 0.3em;
+  color: var(--md-default-fg-color);
+}
+.md-typeset p { margin: 0 0 1em; }
+.md-typeset a {
+  color: var(--nr-links);
+  text-decoration: underline;
+  text-decoration-color: var(--nr-sidebar-spacer);
+  text-underline-offset: 3px;
+}
+.md-typeset a:hover {
+  text-decoration-color: var(--accent-flag);
+  color: var(--md-default-fg-color);
+}
 
+/* Inline code — bg-inset half-step darker surface + 1px ink border.
+   Matches product's inline-code pill (globals.css .inline-code). */
 .md-typeset code {
-  background: var(--md-code-bg-color);
+  background: var(--md-default-bg-color--light);
   color: var(--nr-inline-code-color);
   padding: 0.1em 0.35em;
-  border-radius: 3px;
-  font-size: 0.92em;
+  border-radius: 2px;
+  border: 1px solid var(--nr-sidebar-spacer);
+  font-size: 0.9em;
+  font-family: var(--md-code-font);
 }
+
+/* Code blocks — dark ink bg + FLAG-yellow text. Terminal aesthetic.
+   2px ink border + 4px offset shadow for the brutalist plate look. */
 .md-typeset pre {
   background: var(--md-code-bg-color);
   color: var(--md-code-fg-color);
-  padding: 12px 14px;
-  border-radius: 4px;
-  border: 1px solid var(--md-code-border-color);
+  padding: 14px 16px;
+  border-radius: 0;
+  border: 2px solid var(--md-code-border-color);
+  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
   overflow-x: auto;
-  font-size: 0.92em;
-  line-height: 1.5;
+  font-size: 0.88em;
+  line-height: 1.55;
+  font-family: var(--md-code-font);
 }
 .md-typeset pre code {
   background: transparent;
   color: inherit;
   padding: 0;
+  border: none;
 }
 
-/* Tables */
+/* Tables — ink plate header (--table-header-bg in product = ink + paper text). */
 .md-typeset table:not([class]) {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.92em;
   margin: 1em 0;
+  border: 2px solid var(--md-default-fg-color);
 }
 .md-typeset table:not([class]) th {
-  background: var(--md-default-bg-color--light);
+  background: var(--md-default-fg-color);
+  color: var(--md-default-bg-color);
   padding: 8px 12px;
-  border-bottom: 2px solid var(--nr-sidebar-spacer);
   text-align: left;
-  font-weight: 600;
+  font-weight: 700;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.85em;
 }
 .md-typeset table:not([class]) td {
   padding: 6px 12px;
   border-bottom: 1px solid var(--nr-sidebar-spacer);
 }
 
-/* Admonitions — Helix uses a left orange border for warnings */
+/* Admonitions — neo-brutalist treatment: 2px ink border + 4px offset
+   shadow + accent-wash surface. Title in mono uppercase. */
 .md-typeset .admonition {
-  border-left: 4px solid var(--nr-sidebar-active);
+  border-left: none;
+  border: 2px solid var(--md-default-fg-color);
   background: var(--md-default-bg-color--light);
   border-radius: 0;
-  padding: 12px 16px;
+  padding: 14px 18px;
   margin: 1em 0;
+  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
 }
-.md-typeset .admonition.warning {
-  border-left-color: #ff8e00;
-  background: var(--md-default-bg-color--light);
+.md-typeset .admonition.note,
+.md-typeset .admonition.info {
+  background: var(--accent-flag-wash);
+  border-color: var(--md-default-fg-color);
+}
+.md-typeset .admonition.warning,
+.md-typeset .admonition.danger {
+  background: var(--accent-block-wash);
+  border-color: var(--accent-block);
+}
+.md-typeset .admonition.success,
+.md-typeset .admonition.tip {
+  background: var(--accent-allow-wash);
+  border-color: var(--accent-allow);
 }
 .md-typeset .admonition-title {
-  font-weight: 600;
-  font-size: 0.95em;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  font-weight: 700;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   margin-bottom: 0.5em;
+  color: var(--md-default-fg-color);
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   FOOTER — removed entirely
-   ────────────────────────────────────────────────────────────────────────────
-   The footer (and its prev/next pager) was removed. Helix's mdBook
-   theme has no footer; navigation happens entirely through the left
-   sidebar. The footer partial override renders empty, and we also
-   hide any `<footer class="md-footer">` wrapper that Material's
-   base.html might still emit, plus drop Material's default footer
-   chrome (`.md-footer-meta`) for the same reason.
-   .md-footer { display: none; } is declared in the LAYOUT block
-   above. */
+   8. HERO (home page) — Space Grotesk display, brutalist CTA plates
+   ──────────────────────────────────────────────────────────────────────────── */
+.nr-hero {
+  padding: 48px 0 32px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+}
+.nr-hero__title {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+  margin: 0 0 16px;
+  color: var(--md-default-fg-color);
+}
+.nr-hero__subtitle {
+  font-size: 1.1rem;
+  line-height: 1.5;
+  color: var(--md-default-fg-color--light);
+  margin: 0 0 24px;
+  max-width: 640px;
+}
+.nr-hero__screenshot {
+  width: 100%;
+  max-width: 720px;
+  height: auto;
+  border: 2px solid var(--md-default-fg-color);
+  box-shadow: 6px 6px 0 0 var(--md-default-fg-color);
+  display: block;
+}
+
+/* CTA cluster — primary + secondary brutalist plates */
+.nr-hero__cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}
+.nr-hero__cta a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 18px;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-decoration: none;
+  border: 2px solid var(--md-default-fg-color);
+  border-radius: 0;
+  transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  cursor: pointer;
+}
+.nr-hero__cta a.primary {
+  background: var(--md-default-fg-color);
+  color: var(--md-default-bg-color);
+  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+}
+.nr-hero__cta a.primary:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 0 var(--md-default-fg-color);
+}
+.nr-hero__cta a.secondary {
+  background: var(--accent-flag);
+  color: var(--md-default-fg-color);
+  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+}
+.nr-hero__cta a.secondary:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 0 var(--md-default-fg-color);
+  background: var(--accent-flag-ink);
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   9. SECTIONS + FEATURE GRID (home page)
+   ──────────────────────────────────────────────────────────────────────────── */
+.nr-section {
+  padding: 32px 0;
+  border-top: 2px solid var(--nr-sidebar-spacer);
+}
+.nr-section__title {
+  font-family: var(--font-display);
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin: 0 0 20px;
+  color: var(--md-default-fg-color);
+}
+
+.nr-features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin: 16px 0;
+}
+.nr-feature {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  background: var(--md-default-bg-color--light);
+  border: 2px solid var(--md-default-fg-color);
+  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+  border-radius: 0;
+}
+.nr-feature__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: var(--accent-flag);
+  color: var(--md-default-fg-color);
+  border: 2px solid var(--md-default-fg-color);
+  box-shadow: 2px 2px 0 0 var(--md-default-fg-color);
+  border-radius: 0;
+}
+.nr-feature__icon svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2;
+}
+.nr-feature__title {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--md-default-fg-color);
+}
+.nr-feature__body {
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--md-default-fg-color--light);
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   10. FOOTER — removed entirely (Material emits nothing via partial override)
+   ──────────────────────────────────────────────────────────────────────────── */
 .md-footer-meta,
 .md-footer-meta__inner { display: none; }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   BACK-TO-TOP BUTTON (Material `navigation.top`)
-   ────────────────────────────────────────────────────────────────────────────
-   Material renders a floating "Back to top" button fixed to the
-   viewport: `margin-left: 50%; transform: translate(-50%)` centers
-   it on the viewport's horizontal axis. Our layout puts a 340px
-   sidebar on the left edge, so the stock center (50% of viewport)
-   lands the button behind the sidebar / menu-bar instead of over
-   the content. Offset `margin-left` by +170px (half the sidebar
-   width) so it centers on the content area (right of sidebar).
-   Below the sidebar-collapse breakpoint (≤76em) the sidebar is
-   off-screen, so the button centers on the viewport as before. */
+   11. BACK-TO-TOP BUTTON — Material `navigation.top` centered on content
+   ──────────────────────────────────────────────────────────────────────────── */
 .md-top {
   margin-left: calc(50% + 170px);
 }
@@ -715,15 +1010,73 @@ body.nr-sidebar-hidden .md-main {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   BANNER (announcement) — slim top-of-page strip
+   12. ANNOUNCEMENT BANNER — FLAG-yellow plate, ink text
    ──────────────────────────────────────────────────────────────────────────── */
 .md-banner {
-  background: var(--md-default-bg-color--light);
+  background: var(--accent-flag);
   color: var(--md-default-fg-color);
-  border-bottom: 1px solid var(--nr-sidebar-spacer);
+  border-bottom: 2px solid var(--md-default-fg-color);
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
   font-size: 0.85rem;
+  font-weight: 600;
 }
 .md-banner a {
-  color: var(--nr-links);
+  color: var(--md-default-fg-color);
   text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-banner a:hover {
+  text-decoration-color: var(--md-default-bg-color);
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   13. THEME-AWARE SCREENSHOTS — pair <img> elements that swap on theme
+   ────────────────────────────────────────────────────────────────────────────
+   Each docs page embeds screenshots via `.nr-shot` (the visible frame
+   around the image) plus `.nr-shot__light` / `.nr-shot__dark` (the two
+   variants). The current theme is read from Material's
+   `body[data-md-color-scheme]` attribute:
+
+     default   → cream paper (light)
+     slate     → machined black (dark)
+
+   We hide the variant that doesn't match. The "auto" mode falls back to
+   the OS preference via `prefers-color-scheme`. Both images are
+   loaded eagerly; the CSS toggle is zero-cost. The frame carries the
+   same neo-brutalist border + offset shadow as the hero screenshot.
+*/
+.nr-shot {
+  display: block;
+  margin: 24px auto;
+  max-width: 100%;
+  border: 2px solid var(--md-default-fg-color);
+  box-shadow: 6px 6px 0 0 var(--md-default-fg-color);
+  background: var(--md-default-bg-color);
+  overflow: hidden;
+}
+.nr-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.nr-shot img.nr-shot__dark { display: none; }
+body[data-md-color-scheme="slate"] .nr-shot img.nr-shot__light { display: none; }
+body[data-md-color-scheme="slate"] .nr-shot img.nr-shot__dark  { display: block; }
+
+@media (prefers-color-scheme: dark) {
+  body:not([data-md-color-scheme="default"]):not([data-md-color-scheme="slate"]) .nr-shot img.nr-shot__light { display: none; }
+  body:not([data-md-color-scheme="default"]):not([data-md-color-scheme="slate"]) .nr-shot img.nr-shot__dark  { display: block; }
+}
+
+/* Caption strip — small mono label sitting below the screenshot. */
+.nr-shot__caption {
+  display: block;
+  padding: 10px 16px;
+  border-top: 2px solid var(--md-default-fg-color);
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--md-default-bg-color--light);
+  color: var(--md-default-fg-color);
 }

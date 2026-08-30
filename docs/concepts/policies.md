@@ -152,6 +152,14 @@ and the SDK parks until the operator clicks Approve / Deny. See
    time and shows errors before you save.
 5. Save. The policy is active immediately.
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/policies-list-light.png"
+       alt="Policies list with the New policy button highlighted in the top right.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/policies-list-dark.png"
+       alt="Policies list with the New policy button highlighted in the top right.">
+  <figcaption class="nr-shot__caption">Governance · Policies · New policy</figcaption>
+</figure>
+
 To test a new policy before rolling it out broadly, scope it to
 one workflow. The dashboard's **Effective policy** tab on that
 workflow's detail page shows the merged result so you can see exactly

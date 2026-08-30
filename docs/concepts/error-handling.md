@@ -19,6 +19,14 @@ and **Governance → Audit log**:
   filterable by workflow, time range, decision type, tool name.
   Useful for compliance review and incident forensics.
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/audit-log-light.png"
+       alt="Audit log page listing every gate decision ever made by the org.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/audit-log-dark.png"
+       alt="Audit log page listing every gate decision ever made by the org.">
+  <figcaption class="nr-shot__caption">Governance · Audit log</figcaption>
+</figure>
+
 The audit log is the source of truth for "did the agent call the
 right thing?". Pair it with [Traces](tracing.md) for full context.
 

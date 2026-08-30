@@ -11,3 +11,4 @@ site/
 .gitignore
 docs/.claude-flow/data/pending-insights.jsonl
 .claude-flow/
+.verify-venv/

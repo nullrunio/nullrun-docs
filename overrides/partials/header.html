@@ -39,12 +39,13 @@
         </svg>
       </button>
 
-      {# ── Theme picker — popup list like Helix ──────────────────────
-         Three themes (Auto / Light / Dark) exposed via radios +
-         custom form. The popup is a CSS-only dropdown using the
-         `:focus-within` pseudo-class — no JavaScript required to
-         open/close. The chosen theme is written to localStorage
-         and applied via the body class hook. #}
+      {# ── Theme picker — popup list, two product themes ──────────────
+         Three options (Auto / Light / Dark) exposed as a CSS-only
+         dropdown using the `:focus-within` pseudo-class — no
+         JavaScript required to open/close. Chosen theme is persisted
+         to localStorage (nullrun-docs-theme + Material __palette).
+         Navy was retired 2026-08-30 — it was a helix-parity hack
+         not part of the product design system. #}
       <div class="nr-theme">
         <button class="nr-icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-controls="nr-theme-list">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
@@ -55,7 +56,6 @@
           <li role="none"><button role="menuitem" class="nr-theme-btn" data-theme="auto" type="button">Auto</button></li>
           <li role="none"><button role="menuitem" class="nr-theme-btn" data-theme="light" type="button">Light</button></li>
           <li role="none"><button role="menuitem" class="nr-theme-btn" data-theme="dark" type="button">Dark</button></li>
-          <li role="none"><button role="menuitem" class="nr-theme-btn" data-theme="navy" type="button">Navy</button></li>
         </ul>
       </div>
 

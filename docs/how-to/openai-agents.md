@@ -41,4 +41,4 @@ rate-limited by the policy.
 
 ## See also
 
-- [Examples → OpenAI Agents](https://github.com/nullrunio/nullrun-examples/blob/main/examples/openai_agents_basic.py)
+- [Examples → OpenAI Agents](https://github.com/nullrunio/nullrun-examples/blob/master/examples/openai_agents_basic.py)

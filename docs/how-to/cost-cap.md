@@ -75,4 +75,4 @@ budget instead.
 - [Budgets](../concepts/budgets.md) — reservation lifecycle and the
   pre-flight `/gate` end-to-end
 - [Errors](../reference/errors.md)
-- [Examples → cost cap demo](https://github.com/nullrunio/nullrun-examples/blob/main/examples/cost_cap_demo.py)
+- [Examples → cost cap demo](https://github.com/nullrunio/nullrun-examples/blob/master/examples/cost_cap_demo.py)

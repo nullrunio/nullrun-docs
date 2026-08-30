@@ -106,6 +106,14 @@ To set the budget:
 3. Find **Budget** and enter cents (`$50` = `5000`).
 4. Save.
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/workflow-detail-light.png"
+       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/workflow-detail-dark.png"
+       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap.">
+  <figcaption class="nr-shot__caption">Workflows · Budget card</figcaption>
+</figure>
+
 Reasonable starting budgets:
 
 | Use case | Suggested budget |

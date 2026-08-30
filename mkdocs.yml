@@ -24,12 +24,17 @@ theme:
   logo: assets/images/logo.svg
   favicon: assets/images/favicon.png
   palette:
-    # Helix-style palette: multiple selectable themes + auto (system).
-    # - Light = cream/white scheme (was "default" in pre-helix docs)
-    # - Dark  = near-black scheme (was "slate")
-    # - Navy  = blue-tinted dark scheme (helix parity)
+    # Neo-brutalist palette mirroring the product (https://nullrun.io):
+    #   Light = cream paper (#F1EDDA) + machined ink (#1A1A1A) — mirrors
+    #           globals.css :root --bg-base / --ink.
+    #   Dark  = machined black (#1A1A1A) + neutral paper (#EBEBEB) —
+    #           mirrors globals.css .dark.
     # The actual chrome / sidebar surface is painted by extra.css
-    # (--bg, --sidebar-bg, --fg, etc., helix-style variables).
+    # (--bg, --sidebar-bg, --fg, --accent-flag, --accent-block,
+    # --accent-allow, neo-brutalist variables).
+    # The earlier 3-theme (default + slate + navy JS hack) layout was
+    # retired on 2026-08-30 — navy was a helix-parity hack, not part of
+    # the product design system.
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: black
@@ -52,10 +57,12 @@ theme:
     # the left sidebar are numbered (1. / 2. / 2.1. …) and act as the
     # primary navigation; the right-side TOC appears only on long pages.
     #
-    # navigation.expand enabled: sections default to EXPANDED so the
-    # full chapter tree is visible in the left sidebar at all times
-    # (mirrors mdBook Helix). Sections can still be collapsed by
-    # clicking the chevron — Material's toggle behaviour is preserved.
+    # navigation.expand removed 2026-08-30: top-level chapters (1, 2,
+    # 3, 4, 5, 6) are now COLLAPSED by default — the sidebar acts as
+    # a drop-down tree. Clicking a chapter title expands its sub-pages.
+    # Material's stock `navigation.sections` toggle behaviour wires the
+    # click; the CSS at `.md-nav__item--expanded > .md-nav__link::after`
+    # rotates the chevron 90° on expand.
     #
     # navigation.tracking enabled: Material's bundle intercepts clicks
     # on internal links, fetches the next page in the background,
@@ -75,7 +82,6 @@ theme:
     # navigation.footer removed — the footer is gone (override partial
     # renders empty), so prev/next pager isn't used. Navigation
     # between chapters happens through the left sidebar only.
-    - navigation.expand
     - navigation.sections
     - navigation.tracking
     - navigation.instant
@@ -88,8 +94,6 @@ theme:
     - content.code.annotate
     - content.tabs.link
     - toc.follow
-    # Tier 2 banner — set via `extra.announcement` block below.
-    - announce.dismiss
   # Open Graph / Twitter card preview when a doc URL is pasted into
   # Slack / Twitter / Discord. `image` is the global fallback; per-page
   # overrides via `image:` front-matter on any Markdown file.
@@ -140,14 +144,9 @@ nav:
       - 5.3. Sanctions screening: compliance/sanctions-screening.md
   - 6. Troubleshooting: troubleshooting.md
 
-# Tier 2 announcement — rendered as a dismissible top-of-page bar by
-# the `announce.dismiss` Material feature. Empty / unset hides it.
+# No announcement banner — banner removed on 2026-08-30 per design
+# decision. (Old: Plan-rebalance 2026-06-24 dismissible banner. Removed.)
 extra:
-  announcement: |
-    <strong>Plan rebalance 2026-06-24</strong> — Lite/Starter/Growth/Scale caps
-    were rebalanced and overage billing was disabled on every tier.
-    See the <a href="/#plans">Plans table</a> for the new numbers.
-
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/nullrunio/nullrun-docs

@@ -23,6 +23,22 @@ The **Executions** page lists every agent run. Each row shows:
 - **Cost** — total cost for this run
 - **LLM calls** — how many LLM invocations
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/executions-light.png"
+       alt="Executions page listing every agent run with workflow, duration, status and cost columns.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/executions-dark.png"
+       alt="Executions page listing every agent run with workflow, duration, status and cost columns.">
+  <figcaption class="nr-shot__caption">Executions</figcaption>
+</figure>
+
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/traces-light.png"
+       alt="Traces page with the waterfall of LLM and tool calls for a single execution.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/traces-dark.png"
+       alt="Traces page with the waterfall of LLM and tool calls for a single execution.">
+  <figcaption class="nr-shot__caption">Traces · Waterfall</figcaption>
+</figure>
+
 Click an execution to open the **Trace** view. The trace is a
 hierarchical tree:
 

@@ -46,6 +46,14 @@ In the dashboard:
    The secret is shown **once** — store it in your secrets manager
    immediately.
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/api-keys-list-light.png"
+       alt="API keys page showing the New key button highlighted in the top right.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/api-keys-list-dark.png"
+       alt="API keys page showing the New key button highlighted in the top right.">
+  <figcaption class="nr-shot__caption">API keys · New key</figcaption>
+</figure>
+
 Export both in your shell:
 
 ```bash title="shell"
@@ -99,15 +107,24 @@ You will see ~7–10 successful LLM calls, then
 
 ## Step 4 — Watch the decisions
 
-Open `nullrun.io/decisions` (or the dashboard **Decision History**
-tab). You will see:
+Open `nullrun.io/control-center/audit` (the dashboard **Audit log**
+page — Decision History is the recent-events view at the top of the
+same page). You will see:
 
 - One row per `@protect` call
-- `decision = allow` for the first ~7–10 rows
+- `decision = allow` for the first ~7–10 rows (filter chip on the
+  top bar selects `Allow` / `Deny` / `Require approval` / etc.)
 - `decision = block` on the last row with `error_code = NR-B004`,
-  `wire = BUDGET_HARD_BLOCKED`
-- The **reason** column links to the budget snapshot at the time
-  of the block
+  `wire = BUDGET_HARD_BLOCKED` — click the row to see the budget
+  snapshot at the time of the block
+
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/audit-log-light.png"
+       alt="Audit log page — Allow / Deny / Require approval filter chips and the events table.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/audit-log-dark.png"
+       alt="Audit log page — Allow / Deny / Require approval filter chips and the events table.">
+  <figcaption class="nr-shot__caption">Governance · Audit log</figcaption>
+</figure>
 
 Each row is a `record_governance_audit_event` from the backend —
 identical to what ships in your customer's audit trail.

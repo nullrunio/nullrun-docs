@@ -39,6 +39,30 @@ tabs:
    zero, which blocks every call until you raise it.
 5. Click **Create**.
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/workflows-list-light.png"
+       alt="Workflows list with the New workflow button highlighted in the top right.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/workflows-list-dark.png"
+       alt="Workflows list with the New workflow button highlighted in the top right.">
+  <figcaption class="nr-shot__caption">Workflows · New workflow</figcaption>
+</figure>
+
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/workflow-new-light.png"
+       alt="Create workflow dialog open — Workflow name field and External ID optional field.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/workflow-new-dark.png"
+       alt="Create workflow dialog open — Workflow name field and External ID optional field.">
+  <figcaption class="nr-shot__caption">Workflows · Create dialog</figcaption>
+</figure>
+
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/workflow-detail-light.png"
+       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/workflow-detail-dark.png"
+       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls.">
+  <figcaption class="nr-shot__caption">Workflows · Workflow detail</figcaption>
+</figure>
+
 You'll land on the new workflow's detail page. From there:
 
 - **Mint an API key** under the **Keys** tab. The key value

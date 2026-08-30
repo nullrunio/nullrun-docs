@@ -65,4 +65,4 @@ used `wrapper()` or relied on the auto-instrumentation path above.
 ## See also
 
 - [Quickstart](../getting-started/quickstart.md)
-- [Examples → LangGraph](https://github.com/nullrunio/nullrun-examples/blob/main/examples/langgraph_basic.py)
+- [Examples → LangGraph](https://github.com/nullrunio/nullrun-examples/blob/master/examples/langgraph_basic.py)

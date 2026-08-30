@@ -27,18 +27,17 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     const buttons = document.querySelectorAll(".nr-theme-btn");
     if (!buttons.length) return;
 
-    // Map our user-facing theme names to Material's expected values.
-    // "navy" is our custom addition; Material only knows "default" +
-    // "slate". For navy we apply slate + a body class so our CSS
-    // overrides win by specificity.
+    // Map user-facing theme names to Material's expected values.
+    // Two product themes (cream / machined-black) — navy was retired
+    // 2026-08-30 (was a helix-parity hack, not part of the product
+    // design system).
     const themeMap = {
-        light: { scheme: "default", primary: "black",   accent: "grey", bodyClass: "" },
-        dark:  { scheme: "slate",   primary: "white",   accent: "grey", bodyClass: "" },
-        navy:  { scheme: "slate",   primary: "white",   accent: "grey", bodyClass: "nr-theme-navy" },
+        light: { scheme: "default", primary: "black", accent: "grey", bodyClass: "" },
+        dark:  { scheme: "slate",   primary: "white", accent: "grey", bodyClass: "" },
     };
 
     function clearBodyClasses() {
-        document.body.classList.remove("nr-theme-navy");
+        // No-op today (navy retired); kept for future theme additions.
     }
 
     function applyTheme(name) {

@@ -137,6 +137,14 @@ expired request. Each row shows:
 - How long ago it was created
 - How long until `expires_at`
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/approvals-light.png"
+       alt="Approvals page listing every pending, approved, denied and expired request.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/approvals-dark.png"
+       alt="Approvals page listing every pending, approved, denied and expired request.">
+  <figcaption class="nr-shot__caption">Approvals</figcaption>
+</figure>
+
 Click an approval to see the full context — what the agent was
 trying to do, the tool's arguments, and any notes you attached.
 
@@ -178,6 +186,14 @@ channel configured on your org:
 
 Disable a channel per-user under **Settings → Notifications**, or
 per-channel under **Settings → Notification channels**.
+
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/approval-rules-light.png"
+       alt="Approval rules page with the New rule button highlighted in the top right.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/approval-rules-dark.png"
+       alt="Approval rules page with the New rule button highlighted in the top right.">
+  <figcaption class="nr-shot__caption">Governance · Approval rules · New rule</figcaption>
+</figure>
 
 ## Programmatic approval (for automations)
 
