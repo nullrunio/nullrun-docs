@@ -78,7 +78,7 @@ next `yield` boundary. It is a `BaseException` — catch it before any
 `except Exception` block, otherwise you'll swallow the kill.
 
 ```python
-from nullrun.breaker.exceptions import WorkflowKilledInterrupt
+from nullrun import WorkflowKilledInterrupt
 
 @protect
 async def stream_kill_safe(prompt: str):

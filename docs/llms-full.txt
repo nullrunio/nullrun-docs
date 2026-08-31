@@ -276,7 +276,7 @@ Export both in your shell:
 
 ```bash title="shell"
 export NULLRUN_API_KEY="nr_live_xxxxxxxxxxxxxxxx"
-export NULLRUN_HMAC_SECRET="hmac_xxxxxxxxxxxxxxxxxxxx"
+export NULLRUN_SECRET_KEY="hmac_xxxxxxxxxxxxxxxxxxxx"
 ```
 
 !!! warning "Where the HMAC secret lives"
@@ -335,8 +335,8 @@ tab). You will see:
 - The **reason** column links to the budget snapshot at the time
   of the block
 
-Each row is a `record_governance_audit_event` from the backend —
-identical to what ships in your customer's audit trail.
+Each row is recorded by the gateway's audit pipeline and surfaces
+in your own customer's audit trail identically.
 
 ## Step 5 — Trip a ToolBlock
 
@@ -575,7 +575,7 @@ gateway.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `NULLRUN_API_KEY` | unset (required) | API key from the NullRun dashboard (`nr_live_...`). Missing at `init()` raises `NullRunAuthenticationError` (NR-C001). |
-| `NULLRUN_API_URL` | `https://api.nullrun.io` | Gateway REST base URL. The WebSocket control plane URL is derived — `wss://<api-host>/ws/control` — and is **not** a separate env var. |
+| `NULLRUN_API_URL` | `https://api.nullrun.io` | Gateway REST base URL. The WebSocket control plane URL is derived from this as `wss://<api-host>/ws/control/{org_id}` — `{org_id}` is the `organization_id` returned by `POST /api/v1/auth/verify`, and is **not** a separate env var. |
 | `NULLRUN_SECRET_KEY` | unset | HMAC-SHA256 signing secret. The SDK signs every request automatically when this is set. Whether the gateway *verifies* the signature is controlled by the server-side `NULLRUN_HMAC_REQUIRED` (default `false`). |
 | `NULLRUN_ENV` | unset | Environment tag (`production` / `staging` / ...). Used by prod-guard logic — e.g. `NULLRUN_SKIP_BUDGET_CHECK` and `NULLRUN_SENSITIVE_FAIL_OPEN` opt-outs require a second explicit ack in production. |
 | `NULLRUN_SKIP_BUDGET_CHECK` | unset | Dev/test opt-out — full bypass of `/gate` budget pre-flight. Production requires a second ack (`NULLRUN_ALLOW_SKIP_BUDGET_CHECK=1`); absent that, the SDK raises at `init()`. |
@@ -1481,21 +1481,23 @@ In environments where the WebSocket is firewalled, you can force the
 SDK into polling mode by constructing the runtime directly:
 
 ```python
-from nullrun.runtime import NullRunRuntime
+from nullrun import NullRunRuntime
 
 runtime = NullRunRuntime(api_key="...", polling=True)
 ```
 
-This is internal-only — `polling=True` is not exposed as an env var
-because it's a deploy-time decision, not something you want to flip
-per-request.
+`polling=True` is an internal knob intended for tests, CI, and
+integration setups that explicitly need HTTP polling. The default
+in production traffic is the WS transport — auto-negotiated by the
+SDK, no opt-in required. There is no env var for it because it is
+a deploy-time decision, not something you want to flip per-request.
 
 ## What your agent sees {#how-the-sdk-reacts}
 
 The two exceptions your agent code will encounter:
 
 ```python
-from nullrun.breaker.exceptions import WorkflowKilledInterrupt
+from nullrun import WorkflowKilledInterrupt
 
 @nullrun.protect
 def my_agent_step(prompt):
@@ -2504,7 +2506,7 @@ when you need it for metrics / dashboards.
 You catch a specific exception type and inspect the fields:
 
 ```python
-from nullrun import RateLimitError
+from nullrun.breaker.exceptions import RateLimitError
 
 @nullrun.protect
 def my_agent(prompt):
@@ -3638,7 +3640,7 @@ next `yield` boundary. It is a `BaseException` — catch it before any
 `except Exception` block, otherwise you'll swallow the kill.
 
 ```python
-from nullrun.breaker.exceptions import WorkflowKilledInterrupt
+from nullrun import WorkflowKilledInterrupt
 
 @protect
 async def stream_kill_safe(prompt: str):
@@ -4262,7 +4264,7 @@ internal surface.
 Base URL:
 
 - Production: `https://api.nullrun.io/api/v1`
-- WebSocket control plane: `wss://api.nullrun.io/ws/control`
+- WebSocket control plane: `wss://api.nullrun.io/ws/control/{org_id}`
 
 The OpenAPI spec is generated from the router and is the source of
 truth.

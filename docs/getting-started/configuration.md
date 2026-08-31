@@ -19,7 +19,7 @@ gateway.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `NULLRUN_API_KEY` | unset (required) | API key from the NullRun dashboard (`nr_live_...`). Missing at `init()` raises `NullRunAuthenticationError` (NR-C001). |
-| `NULLRUN_API_URL` | `https://api.nullrun.io` | Gateway REST base URL. The WebSocket control plane URL is derived — `wss://<api-host>/ws/control` — and is **not** a separate env var. |
+| `NULLRUN_API_URL` | `https://api.nullrun.io` | Gateway REST base URL. The WebSocket control plane URL is derived from this as `wss://<api-host>/ws/control/{org_id}` — `{org_id}` is the `organization_id` returned by `POST /api/v1/auth/verify`, and is **not** a separate env var. |
 | `NULLRUN_SECRET_KEY` | unset | HMAC-SHA256 signing secret. The SDK signs every request automatically when this is set. |
 | `NULLRUN_ENV` | unset | Environment tag (`production` / `staging` / ...). |
 | `NULLRUN_APPROVAL_TIMEOUT_SECONDS` | `300` | SDK-side wait for the `approval_resolved` WS push before fail-CLOSED kill. |
@@ -28,6 +28,21 @@ gateway.
 | `NULLRUN_GATE_CACHE_DISABLE` | unset | `=1` disables the SDK's local gate cache (force `/check` on every call). |
 | `NULLRUN_TLS_CLIENT_CERT` / `NULLRUN_TLS_CLIENT_KEY` / `NULLRUN_TLS_CA_CERT` | unset | Optional mTLS material for the SDK-to-gateway connection. |
 | `NULLRUN_MAX_RESPONSE_BYTES` | library default | Cap on captured LLM response body size for span metadata. |
+
+## Developer and CI overrides
+
+These override safety defaults — useful for local SDK development,
+integration tests, and CI; do not enable in production traffic.
+
+| Variable | Effect | When to use |
+| --- | --- | --- |
+| `NULLRUN_SKIP_BUDGET_CHECK=1` | Fully bypasses the gate on every `@protect` call in the process. **For local SDK development and CI only** — do not export in production environments. Production with this flag set silently skips every policy check. | Local SDK experiments, integration tests where you want to verify business logic without gate noise. |
+| `NULLRUN_ALLOW_SKIP_BUDGET_CHECK=1` | Acknowledges the previous flag in CI logs so an audit reviewer can see the bypass was deliberate. Has no effect by itself; safe to set alongside the previous flag in CI. | CI pipelines that intentionally skip the gate. |
+| `NULLRUN_SENSITIVE_FAIL_OPEN=1` | Returns a permissive result instead of failing-CLOSED when a sensitive-tool transport error blocks the gate call. | Legacy environments without a working transport for sensitive-tool lookups — modern installs should leave this unset. |
+
+If a CI test "passes only with `NULLRUN_SKIP_BUDGET_CHECK=1`" that's a
+signal the gate is blocking what it should not — fix the gate, not
+the bypass.
 
 ## Server-side configuration
 

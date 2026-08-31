@@ -50,7 +50,7 @@ If you need to attach the callback manually — e.g. inside a library
 that re-compiles graphs after `init()` ran — the canonical wrapper is:
 
 ```python title="langgraph_manual_wrapper.py"
-from nullrun.integrations.langgraph import wrapper
+from nullrun.toolbox.langgraph import wrapper
 
 app = wrapper(graph.compile())
 ```

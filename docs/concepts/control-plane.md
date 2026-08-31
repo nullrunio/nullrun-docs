@@ -50,21 +50,23 @@ In environments where the WebSocket is firewalled, you can force the
 SDK into polling mode by constructing the runtime directly:
 
 ```python
-from nullrun.runtime import NullRunRuntime
+from nullrun import NullRunRuntime
 
 runtime = NullRunRuntime(api_key="...", polling=True)
 ```
 
-This is internal-only — `polling=True` is not exposed as an env var
-because it's a deploy-time decision, not something you want to flip
-per-request.
+`polling=True` is an internal knob intended for tests, CI, and
+integration setups that explicitly need HTTP polling. The default
+in production traffic is the WS transport — auto-negotiated by the
+SDK, no opt-in required. There is no env var for it because it is
+a deploy-time decision, not something you want to flip per-request.
 
 ## What your agent sees {#how-the-sdk-reacts}
 
 The two exceptions your agent code will encounter:
 
 ```python
-from nullrun.breaker.exceptions import WorkflowKilledInterrupt
+from nullrun import WorkflowKilledInterrupt
 
 @nullrun.protect
 def my_agent_step(prompt):

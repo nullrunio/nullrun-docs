@@ -55,14 +55,25 @@ The full catalog lives in that reference page; the standard set is:
 
 - `NR-B004` — workflow budget exhausted
 - `NR-B002` — gateway 5xx
+- `NR-B006` — post-approval budget re-check failed on the same envelope as the original `/gate`. The SDK raises `NullRunBudgetRecheckFailedError`. Operator must re-approve or the workflow can no longer run.
 - `NR-R001` — per-workflow rate limit
 - `NR-R002` — rate-limit Redis unavailable
 - `NR-T001` — tool block list hit
 - `NR-CH001` — chain context invalid
 - `NR-W004` — workflow soft-deleted or killed
 - `NR-A003` — API key rejected
+- `NR-A010` — approval row exists, status `PENDING` — operator has not decided yet
+- `NR-A011` — operator explicitly denied the approval — terminal, request a fresh grant
+- `NR-A012` — approval expired (`expires_at` is in the past)
+- `NR-A013` — business-impact digest drifted since operator approval — re-approval required
+- `NR-A014` — capability digest drifted (silent capability-gain attack surface) — re-approval required
+- `NR-A015` — grant already consumed by a prior `/execute` (replay rejected)
 - `NR-P001` — wire-protocol version mismatch
 - `NR-O001` — actual cost > reservation + ε (HTTP 422)
+- `NR-X001` — generic catch-all raised when a policy block matches a code the SDK does not have a dedicated class for. Match on `NullRunBlockedException` and read `.error_code` if you want specific handling.
+
+For the exception classes used to surface these codes, see
+[Reference → Errors → SDK exception hierarchy](../reference/errors.md#sdk-exception-hierarchy-python).
 
 The wire code is still available via the response body or `.status_code`
 when you need it for metrics / dashboards.
@@ -70,7 +81,7 @@ when you need it for metrics / dashboards.
 You catch a specific exception type and inspect the fields:
 
 ```python
-from nullrun import RateLimitError
+from nullrun.breaker.exceptions import RateLimitError
 
 @nullrun.protect
 def my_agent(prompt):

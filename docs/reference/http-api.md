@@ -13,7 +13,12 @@ internal surface.
 Base URL:
 
 - Production: `https://api.nullrun.io/api/v1`
-- WebSocket control plane: `wss://api.nullrun.io/ws/control`
+- WebSocket control plane: `wss://api.nullrun.io/ws/control/{org_id}`
+
+The `{org_id}` for the WebSocket comes from the credential bundle
+returned by `POST /api/v1/auth/verify` (`organization_id` field).
+The SDK negotiates this automatically — only set the URL by hand
+when you are building a custom WebSocket client.
 
 The OpenAPI spec is generated from the router and is the source of
 truth.
@@ -69,6 +74,7 @@ documents every field.
 | `GET` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Workflow lookup (called from SDK on first gate per workflow) |
 | `GET` | `/api/v1/orgs/{org_id}/status` | Control-plane poll fallback (only used when WS is down) |
 | `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat |
+| `POST` | `/api/v1/cancel` | Cancel an in-flight execution. Idempotent; the reservation TTL cleans up even if the call doesn't reach the gateway. |
 
 | Method | Path | Status |
 | --- | --- | --- |
@@ -125,6 +131,18 @@ documents every field.
 
 Most-restrictive-wins composition across applicable policies — see [Concepts → Policies](../concepts/policies.md).
 
+## Approvals
+
+Programmatic approval / denial — useful for on-call bots and CI
+runbooks. Dashboard uses the same endpoints internally. See
+[Concepts → Human approval](../concepts/human-approval.md) for the
+end-to-end flow.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/v1/orgs/{org_id}/approvals/{approval_id}/approve` | Approve a pending approval. Idempotent — already-approved returns `409 approval_already_decided`. |
+| `POST` | `/api/v1/orgs/{org_id}/approvals/{approval_id}/deny` | Deny a pending approval. The SDK raises `WorkflowKilledInterrupt` for the parked agent. |
+
 ## Executions, audit, observability
 
 | Method | Path | Purpose |
@@ -132,9 +150,27 @@ Most-restrictive-wins composition across applicable policies — see [Concepts �
 | `GET` | `/api/v1/orgs/{org_id}/executions` | List executions |
 | `GET` | `/api/v1/orgs/{org_id}/executions/{execution_id}` | One execution |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log` | Audit trail |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export` | Start an async audit-log export job (returns a job id) |
+| `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | Same — POST variant, useful from web forms |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/status` | Poll export job status (`pending` / `ready` / `failed`) |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/download` | Download the exported file once status is `ready` |
+| `GET` | `/api/v1/orgs/{org_id}/traces` | List trace spans |
+| `GET` | `/api/v1/orgs/{org_id}/traces/{trace_id}` | One trace (full span tree) |
+| `GET` | `/api/v1/orgs/{org_id}/incidents` | Active and recent incidents (rate-limit outages, budget overruns, etc.) |
 | `GET` | `/api/v1/orgs/{org_id}/dashboard` | Dashboard payload |
-| `GET` | `/api/v1/orgs/{org_id}/quota` | Quota / per-key usage breakdown |
+| `GET` | `/api/v1/orgs/{org_id}/control-center` | Single-call control-center view (workflows + recent decisions + alerts) |
+| `GET` | `/api/v1/orgs/{org_id}/usage` | Per-key usage breakdown (canonical) |
+| `GET` | `/api/v1/orgs/{org_id}/quota` | Per-key usage breakdown (legacy alias of `/usage` — same payload) |
+| `GET` | `/api/v1/budget/approximate` | Approximate budget view for UI display — see [Budgets → Approximate budget endpoint](../concepts/budgets.md#approximate-budget-endpoint) |
 | `GET` | `/api/v1/orgs/{org_id}/status` | Single-call dashboard status (budget + rate + plan limits + time-to-exhaustion) |
+
+### Cancellations
+
+`POST /api/v1/cancel` cancels an in-flight execution. Cancellation is
+idempotent — calling it twice on the same execution is a no-op and
+releases the reservation by TTL even if the call never reaches the
+gateway. See [Control plane](../concepts/control-plane.md) for the
+related kill / pause endpoints.
 
 ## Org management
 

@@ -204,13 +204,17 @@ exposed via REST:
 ```bash title="approve_via_api.sh"
 curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/approve" \
   -H "Authorization: Bearer ***"
+
+# Or deny explicitly
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/deny" \
+  -H "Authorization: Bearer ***"
 ```
 
-The endpoint is idempotent — calling approve on an already-approved
-request returns `409 approval_already_decided`. Use this in your
-incident-response automation: an approval surfaces in Slack, your
-bot detects the `risk_level = high`, and approves or denies based on
-your runbook.
+Both endpoints are idempotent — calling approve on an already-approved
+request returns `409 approval_already_decided`; calling deny twice on
+the same request is a no-op. Use these in your incident-response
+automation: an approval surfaces in Slack, your bot detects the
+`risk_level = high`, and approves or denies based on your runbook.
 
 ## When to use approval instead of blocking
 

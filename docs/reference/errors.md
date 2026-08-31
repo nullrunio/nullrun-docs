@@ -12,6 +12,14 @@ non-2xx response the gateway returns. This page maps each code to:
 - the HTTP status code the gateway returns
 - when it happens
 
+There are **two parallel taxonomies** you may see:
+
+- **Gateway error slugs** — short SCREAMING_SNAKE_CASE strings in the
+  `error` field of every non-2xx response. Listed below in
+  *Gateway error codes*.
+- **NR-* codes** — the SDK's user-facing `error_code` field on every
+  exception. The full catalog is below in *NR-* error code catalog*.
+
 For the **three-layer error model** (structured exceptions →
 `on_error` hook → `format_user_message` / `@guarded`) and the
 boundary between developer-facing and end-user-facing wording, see
@@ -193,6 +201,56 @@ for a one-line setup.
 When the gateway is unreachable, the SDK raises
 `NullRunTransportError` with `source` set to one of `NETWORK_ERROR`,
 `GATEWAY_ERROR`, `AUTH_ERROR`.
+
+## NR-* error code catalog
+
+Stable, machine-readable identifiers on every SDK exception. The
+catalog splits into two families:
+
+- **decision / enforcement codes** — what the gate decided (block,
+  deny, require approval, …). Most are surfaced as `NullRunDecision`
+  subclasses in Python.
+- **infrastructure codes** — transport / backend / config failures.
+  Surfaced as `NullRunInfrastructureError` subclasses.
+
+The three-layer error model and the boundary between developer-facing
+and end-user-facing wording lives in
+[Concepts → Error handling](../concepts/error-handling.md).
+
+### Decision / enforcement codes
+
+| `error_code` | When | HTTP | SDK class |
+| --- | --- | --- | --- |
+| `NR-B004` | Workflow budget exhausted | 402 | `NullRunBudgetError` |
+| `NR-B006` | Post-approval budget re-check failed on the same envelope as the original `/gate` | 503 | `NullRunBudgetRecheckFailedError` |
+| `NR-O001` | Actual cost > reservation + ε | 422 | (consume over-budget block) |
+| `NR-R001` | Per-workflow rate limit | 429 | `RateLimitError` |
+| `NR-T001` | Tool in block list | 403 | `NullRunToolBlockedError` |
+| `NR-CH001` | Chain context invalid | 402/403 | `NullRunError` |
+| `NR-W004` | Workflow soft-deleted, killed, or paused | 403/503 | `WorkflowPausedException` / kill signal |
+| `NR-A003` | API key rejected | 401 | `NullRunAuthenticationError` |
+| `NR-A010` | Approval exists, status `PENDING` — operator has not decided yet | 403 | `NullRunApprovalNotYetApprovedError` |
+| `NR-A011` | Operator explicitly denied the approval | 403 | `NullRunApprovalDeniedError` |
+| `NR-A012` | Approval expired (`expires_at` in the past) | 403 | `NullRunApprovalExpiredError` |
+| `NR-A013` | Business-impact digest drifted since approval — re-approval required | 403 | `NullRunApprovalDigestMismatchError` |
+| `NR-A014` | Capability digest drifted since approval — re-approval required | 403 | `NullRunApprovalToolDigestMismatchError` |
+| `NR-A015` | Grant already consumed (replay rejected) | 403 | `NullRunApprovalReplayRejectedError` |
+| `NR-X001` | Generic policy block — no dedicated subclass | varies | `NullRunBlockedException` (default) |
+
+Approval grant-consume codes (NR-A010..NR-A015) are most often seen
+inside a running agent flow: the SDK has parked for human review and
+the operator has acted (or the grant aged out). Match on the
+specific subclass first; fall back to `NullRunBlockedException` if
+you don't care about the exact cause.
+
+### Infrastructure codes
+
+| `error_code` | When | HTTP | SDK class |
+| --- | --- | --- | --- |
+| `NR-B002` | Gateway 5xx | 500/503 | `NullRunBackendError` |
+| `NR-R002` | Rate-limit Redis unavailable | 503 | `NullRunRateLimitRedisError` |
+| `NR-C001` | Missing or invalid `NULLRUN_API_KEY` at `init()` | n/a (raised) | `NullRunAuthenticationError` |
+| `NR-P001` | Wire-protocol version mismatch | 400 | `NullRunConfigError` |
 
 ## See also
 

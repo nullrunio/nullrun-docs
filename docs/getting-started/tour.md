@@ -58,7 +58,7 @@ Export both in your shell:
 
 ```bash title="shell"
 export NULLRUN_API_KEY="nr_live_xxxxxxxxxxxxxxxx"
-export NULLRUN_HMAC_SECRET="hmac_xxxxxxxxxxxxxxxxxxxx"
+export NULLRUN_SECRET_KEY="hmac_xxxxxxxxxxxxxxxxxxxx"
 ```
 
 !!! warning "Where the HMAC secret lives"
@@ -126,8 +126,8 @@ same page). You will see:
   <figcaption class="nr-shot__caption">Governance · Audit log</figcaption>
 </figure>
 
-Each row is a `record_governance_audit_event` from the backend —
-identical to what ships in your customer's audit trail.
+Each row is recorded by the gateway's audit pipeline and surfaces
+in your own customer's audit trail identically.
 
 ## Step 5 — Trip a ToolBlock
 

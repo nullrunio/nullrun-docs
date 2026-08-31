@@ -149,6 +149,25 @@ reconciles the actual cost after. If the LLM call returns a cost
 that meaningfully exceeds the reservation, the `/track` commit
 rejects with `CONSUME_OVERBUDGET` — no implicit re-reserve, ever.
 
+## Approximate budget endpoint
+
+If you want to show "you've used X of Y" in a custom dashboard or
+notification without enrolling in the full NullRun dashboard, the
+gateway exposes an approximate-spend endpoint:
+
+```bash title="shell"
+curl "https://api.nullrun.io/api/v1/budget/approximate" \
+  -H "Authorization: Bearer ***"
+```
+
+The response carries `current_spend_cents_estimate`, an
+`is_approximate: true` flag, a `source` field, a `confidence` level
+(`High` / `Medium` / `Low`), and `last_updated_at`. **Use this for
+display only** — never for enforcement, rate-limit logic, or
+agent-side gating. When the source is unavailable the endpoint
+returns `503 BUDGET_DATA_UNAVAILABLE`; render that as "data
+unavailable", never as `≈ $0 spent`.
+
 ## See also
 
 - [Workflows](workflow.md) — where the budget lives
