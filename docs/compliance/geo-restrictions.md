@@ -43,7 +43,7 @@ The blocklist has two tiers.
 | `SY` | Syria | OFAC + EU comprehensive |
 | `CU` | Cuba | OFAC comprehensive |
 | `BY` | Belarus | Post-2022 UK + EU sectoral |
-| `VE` | Venezuela | Partial — block at signup, allow read-only API |
+| `VE` | Venezuela | Partial — signups blocked; existing read-only API access preserved (write operations blocked) |
 | `MM` | Myanmar | OFAC + EU restrictive measures |
 | `AF` | Afghanistan | Post-2021 sanctions regime |
 | `ZW` | Zimbabwe | OFAC selective sanctions |

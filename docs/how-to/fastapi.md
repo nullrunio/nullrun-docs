@@ -62,7 +62,7 @@ attribute.
 | `WORKFLOW_INACTIVE` | decision | `403` | Workflow was soft-deleted or killed |
 | `CHAIN_MAX_DURATION_EXCEEDED` | decision | `402` | Chain exceeded `max_chain_duration_seconds` |
 | `BUDGET_REDIS_UNAVAILABLE` | infrastructure | `402` | `retryable: true` — money math fail-CLOSED |
-| `BUDGET_DATA_UNAVAILABLE` | infrastructure | `503` | ApproximateBudget endpoint: all sources down |
+| `BUDGET_DATA_UNAVAILABLE` | infrastructure | `503` | Approximate-budget lookup: all sources down |
 
 `WorkflowKilledInterrupt` always maps to `503`. See
 [Reference → Errors](../reference/errors.md) for the full catalog.
@@ -84,6 +84,47 @@ install(
 ```
 
 A buggy resolver degrades silently to `"en"`.
+
+## Custom exception mapping
+
+If you want to override `install()`'s defaults for a single endpoint
+(rare), wrap the agent call and map the exception yourself:
+
+```python title="custom_mapping.py"
+from fastapi import HTTPException
+from nullrun import (
+    NullRunDecision,
+    NullRunInfrastructureError,
+    WorkflowKilledInterrupt,
+    format_user_message,
+)
+
+@app.post("/chat")
+@nullrun.protect
+def chat(message: str) -> dict:
+    try:
+        return {"reply": agent.run(message)}
+    except NullRunDecision as exc:
+        # Expected policy outcome — pass it to the client as-is
+        raise HTTPException(
+            status_code=exc.status_code or 403,
+            detail={
+                "message": format_user_message(exc),
+                "code": exc.error_code,
+                "retryable": exc.retryable,
+            },
+        )
+    except NullRunInfrastructureError as exc:
+        # System failure — log to Sentry, return generic 503
+        sentry_sdk.capture_exception(exc)
+        raise HTTPException(
+            status_code=exc.status_code or 503,
+            detail={"message": format_user_message(exc), "code": exc.error_code},
+        )
+```
+
+`WorkflowKilledInterrupt` (a `BaseException`) bypasses both handlers
+and reaches the ASGI middleware in `install(app)`.
 
 ## Response body shape
 

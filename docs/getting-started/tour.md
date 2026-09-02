@@ -151,11 +151,13 @@ except nullrun.NullRunToolBlockedError as exc:
 ```
 
 Run it again. The dashboard shows a `decision = block` row with
-`error_code = NR-T001`, `wire = TOOL_BLOCKED`. The default
-policy ships with `send_*` blocked.
+`error_code = NR-T001`, `wire = TOOL_BLOCKED`. New organizations
+ship with a permissive default policy; if your admin has added a
+stricter default, you may see additional blocks.
 
-To allow it, open **Policies → Default → Tool patterns** and
-remove the `send_*` entry (or scope it to a different workflow).
+To allow `send_email`, open **Policies → Tool patterns** for the
+workflow and either narrow the `send_*` entry or scope it to a
+different workflow.
 
 ## Step 6 — Raise the budget and try again
 

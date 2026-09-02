@@ -96,7 +96,7 @@ documents every field.
 | --- | --- | --- |
 | `organization_id` | string (UUID) | Canonical org identifier |
 | `organization_name` | string \| null | Canonical org display name |
-| `plan` | string | Plan tier (`lite`, `pro`, …) |
+| `plan` | string | Plan tier (`lite`, `starter`, `growth`, `scale`, `enterprise_unlimited`, …) |
 | `features` | object | Plan-feature flags resolved for this org |
 | `limits` | object | Plan-limits block (workflows, seats, …) |
 | `role` | string \| null | Member role; `null` on API-key path — SDK treats `null` as "role unknown, escalate to session auth" |
@@ -229,6 +229,10 @@ is older than what the gateway requires.
 When `init()` detects that the SDK is older than the gateway's
 required minimum version, it emits a warning so the operator sees
 the gap before the first `/gate` call fails with `400 PROTOCOL_TOO_OLD`.
+
+The current wire-protocol version is **4** (min supported: **2**).
+`init()` negotiates the version automatically via `/capabilities`; you
+do not need to set anything by hand.
 
 ## Heartbeat
 

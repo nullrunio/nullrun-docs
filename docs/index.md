@@ -10,11 +10,9 @@ home: true
 <section class="nr-hero md-grid md-typeset">
   <div>
     <h1 class="nr-hero__title">Runtime decision layer for tool-using AI agents</h1>
-    <p class="nr-hero__subtitle">
-      Before your agent executes a supported tool or model call, the
-      SDK asks the gate. <code>allow</code>, <code>block</code>, or
-      <code>require_approval</code> — backed by tool patterns,
-      budgets, rate limits, and human approvals.
+    <p class="nr-hero__subtitle">Before your agent executes a supported tool or model call, the SDK asks the gate.
+      <br/><code>allow</code>, <code>block</code>, or
+      <code>require_approval</code> — backed by tool patterns, budgets, rate limits, and human approvals.
     </p>
     <div class="nr-hero__cta">
       <a class="primary" href="getting-started/quickstart/">Get started →</a>
@@ -142,10 +140,9 @@ flowchart LR
       <div class="nr-feature__title">Decision history + audit chain</div>
       <div class="nr-feature__body">
         Every gate decision (allow / block / require_approval) is
-        recorded in <code>audit_events</code> with hash-chained
-        <code>content_hash</code> + <code>previous_hash</code>. The
-        chain is recompute-verifiable on demand via <code>GET
-        /api/v1/orgs/{org_id}/audit-log/verify</code>.
+        recorded in an append-only audit log with a tamper-evident
+        hash chain. The chain is recompute-verifiable on demand via
+        the audit-log verify endpoint.
       </div>
     </div>
   </div>
@@ -168,7 +165,7 @@ sequenceDiagram
 
   loop every @protect call
     U->>SDK: step()
-    SDK->>G: POST /api/v1/gate (tokens=1)
+    SDK->>G: POST /api/v1/gate (with projected cost)
     G-->>SDK: {decision: "allow"}
     SDK->>SDK: run wrapped function
     SDK->>G: POST /api/v1/track (actual cost)
@@ -178,6 +175,7 @@ sequenceDiagram
   G-->>SDK: WS push: StateChange(killed)
   SDK->>U: raise WorkflowKilledInterrupt
 ```
+<figcaption>End-to-end: SDK wiring, gate evaluation, kill signal path.</figcaption>
 </section>
 
 <section class="nr-section md-grid md-typeset">

@@ -211,6 +211,16 @@ plugins:
 # dotfile directories into the build, and adding a plugin just for
 # one alias file is overkill. The canonical /llms.txt is the spec-
 # compliant location; /llms-full.txt is the full corpus.
+#
+# IMPORTANT — `docs/llms-full.txt` is a GENERATED corpus, not a hand-
+# edited file. It is rebuilt from the Markdown source files by
+# `infra/scripts/build-llms-full.ps1` after any content change in
+# `docs/**`. The script must apply a redaction pass before emitting:
+# it must strip any internal storage table names (audit_events,
+# approval_rules, approvals, overdraft_used), internal class names
+# (ApproximateBudget), internal service names (breaker-core,
+# gate-core, prod-guard), and any SQL fragments. The source MD
+# files are the contract — if the corpus diverges, regenerate it.
 validation:
   nav:
     omitted_files: ignore

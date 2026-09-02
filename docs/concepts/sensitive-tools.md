@@ -13,6 +13,23 @@ the gate at `/gate` evaluation time, regardless of the SDK's local
 context. This page covers the *recommended* patterns and how to wire
 them.
 
+!!! info "`@sensitive` vs `ToolBlock`"
+    Two distinct mechanisms, often confused:
+
+    - **`@sensitive` (SDK-side)** — a parameterless decorator that
+      marks a function so its kwargs are extracted into the
+      `BusinessImpact` predicate bag. Used with **approval rules**
+      that evaluate a typed predicate. Affects the SDK only; the
+      gate still has the final say.
+    - **`ToolBlock` (server-side)** — a policy rule evaluated by
+      the gate on every `/gate` call. The gate fails-CLOSED if it
+      cannot reach Redis or the policy cache to evaluate. This is
+      the canonical "this tool is forbidden" mechanism.
+
+    Use `@sensitive` when you want a typed `BusinessImpact` approval
+    flow (e.g. "refunds over $500 need approval"). Use `ToolBlock`
+    when you want a hard rule ("never call `bash`").
+
 ## What a sensitive tool is, in policy terms
 
 There is no SDK-side built-in sensitive tool list. The shipped

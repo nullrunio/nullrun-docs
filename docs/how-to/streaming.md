@@ -77,6 +77,16 @@ An operator hit on **Kill** raises `WorkflowKilledInterrupt` at the
 next `yield` boundary. It is a `BaseException` — catch it before any
 `except Exception` block, otherwise you'll swallow the kill.
 
+### Cancellation latency
+
+The kill signal typically arrives at the SDK within ~100 ms of the
+operator clicking **Kill** (WebSocket push path). If the WebSocket
+is unavailable and polling fallback is active, latency rises to the
+poll interval (default **1 s**) plus the next `/gate` boundary.
+For long-running streams, keep the WS connection healthy — set
+`NULLRUN_TRANSPORT=ws` (the default) and avoid restrictive outbound
+firewalls on the SDK host.
+
 ```python
 from nullrun import WorkflowKilledInterrupt
 

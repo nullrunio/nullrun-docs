@@ -103,10 +103,10 @@ The complete flow, end-to-end:
 
 1. SDK sends `/api/v1/gate` with the live `BusinessImpact`. Gate
    evaluates rules. Match fires.
-2. Gate inserts `approvals` row with `business_impact`, `action_digest`,
-   `expires_at = NOW() + expires_in_seconds` (server-side, clamped
-   `[1, 3600]` s), and emits `approval_required` alert to
-   configured channels.
+2. Gate creates a pending approval record with the `business_impact`,
+   `action_digest`, and an `expires_at` set server-side
+   (clamped `[1, 3600]` s from `expires_in_seconds`). The gateway
+   then emits an `approval_required` alert to configured channels.
 3. Gate returns `decision = "require_approval"` plus `approval_id`,
    `approval_timeout_seconds`, `approval_expires_at`.
 4. SDK parks on `threading.Event.wait(timeout=approval_timeout_seconds)`.

@@ -56,6 +56,9 @@ the agent framework modules it can detect in `sys.modules`:
 | `anthropic` | HTTP transport hook |
 | `langgraph` | Graph runtime hook (`invoke` / `stream` / `ainvoke` / `astream`) |
 | `langchain` | Callback manager hook |
+| `llama-index` | LlamaIndex tool/agent hook |
+| `crewai` | CrewAI EventBus bridge (1.15+) |
+| `autogen` | AutoGen agent runtime hook |
 | `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock) | per-vendor extractors |
 
 The Gemini vendor extra is `google-genai` (the actively maintained
@@ -83,6 +86,8 @@ pre-flight + kill/pause + sensitive-tool decision).
 | `nullrun[llama-index]` | `llama-index-core` |
 | `nullrun[crewai]` | `crewai` |
 | `nullrun[autogen]` | `autogen-agentchat`, `autogen-ext[openai]` |
+| `nullrun[fastapi]` | `fastapi`, `starlette`, `httpx` (server-framework integration) |
+| `nullrun[opentelemetry]` | `opentelemetry-api`, `opentelemetry-sdk` |
 | `nullrun[all]` | every vendor extra |
 
 ```bash title="shell"

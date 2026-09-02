@@ -76,6 +76,7 @@ gate decision:             block
 SDK raises:                 NullRunBudgetError (NR-B004)
 @guarded:                   prints friendly message, sys.exit(1)
 ```
+<figcaption>Hard mode — the projected cost of the next call exceeds the remaining budget. The gate returns `block` before the model runs.</figcaption>
 
 The agent stops cleanly at the boundary. No partial charge — the
 projected cost is reserved when the gate approves, and the actual
@@ -147,7 +148,9 @@ exactly $50.00, no rounding errors.
 The gate reserves your projected cost before the model runs and
 reconciles the actual cost after. If the LLM call returns a cost
 that meaningfully exceeds the reservation, the `/track` commit
-rejects with `CONSUME_OVERBUDGET` — no implicit re-reserve, ever.
+rejects with `CONSUME_OVERBUDGET` (HTTP **422**, `error_code = "NR-O001"`) — no implicit re-reserve, ever. The tolerance is a
+fixed cents value (`policies.consume_epsilon_cents`, default **1¢**);
+no percentage-based epsilon is supported.
 
 ## Approximate budget endpoint
 

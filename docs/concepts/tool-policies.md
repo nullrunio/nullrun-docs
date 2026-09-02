@@ -59,8 +59,9 @@ A ToolBlock policy **blocks** tool calls whose name matches one of
 its patterns. There is no `action = require_approval` field on a
 ToolBlock — for "I want a human to approve before this tool runs",
 create an **approval rule** instead (see
-[Human approval](human-approval.md)). The two are separate entities
-on the backend (`policies` vs `approval_rules`).
+[Human approval](human-approval.md)). The two are separate rule
+objects; ToolBlock and approval rules don't share a configuration
+schema.
 
 ToolBlock is **always Hard**: it never lets through, regardless of
 the budget's `enforcement_mode`. See
@@ -69,6 +70,10 @@ If the gate cannot evaluate the ToolBlock check (Redis or policy
 cache unavailable), it fails closed — `403 TOOL_BLOCKED` (SDK
 `error_code = "NR-T001"`). The agent never runs an unverified
 sensitive operation.
+
+ToolBlock and approval rules are distinct rule objects — they don't
+share a configuration schema. A ToolBlock policy always *blocks*; to
+require human review first, use an approval rule instead.
 
 ## A worked example
 
@@ -83,6 +88,8 @@ You want to:
 - Allow normal DB writes (`db.write`) but block `db.drop`
 
 Two ToolBlock policies and one approval rule:
+
+!!! info "The example below shows the request payload shape — what you POST to the dashboard / API. It's not the storage schema, just the public input format."
 
 ```json title="tool_block_policy.json"
 {

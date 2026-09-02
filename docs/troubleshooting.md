@@ -8,6 +8,11 @@ description: Common NullRun questions answered: why is my agent blocked, how to 
 What to expect when NullRun is doing its job — and how to recover
 when it isn't.
 
+> **Format:** symptom → diagnosis → fix. If your question isn't here,
+> see the [Errors reference](reference/errors.md) or open a ticket
+> from the dashboard's **Help → Send feedback** form (include the
+> `workflow_id` and the failing row's `decision_id`).
+
 ## What can go wrong (and how NullRun reacts)
 
 | Situation | Default behaviour | Exception raised |

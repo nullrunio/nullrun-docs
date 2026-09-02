@@ -223,12 +223,13 @@ and end-user-facing wording lives in
 | --- | --- | --- | --- |
 | `NR-B004` | Workflow budget exhausted | 402 | `NullRunBudgetError` |
 | `NR-B006` | Post-approval budget re-check failed on the same envelope as the original `/gate` | 503 | `NullRunBudgetRecheckFailedError` |
-| `NR-O001` | Actual cost > reservation + ε | 422 | (consume over-budget block) |
+| `NR-O001` | Actual cost > reservation + ε | 422 | `NullRunConsumeOverbudgetError` |
 | `NR-R001` | Per-workflow rate limit | 429 | `RateLimitError` |
 | `NR-T001` | Tool in block list | 403 | `NullRunToolBlockedError` |
-| `NR-CH001` | Chain context invalid | 402/403 | `NullRunError` |
+| `NR-CH001` | Chain context invalid (CHAIN_MAX_DURATION_EXCEEDED) | 402 | `NullRunChainError` |
+| `NR-W001` | Workflow does not exist or is not visible to this API key | 404 | `NullRunError` |
 | `NR-W004` | Workflow soft-deleted, killed, or paused | 403/503 | `WorkflowPausedException` / kill signal |
-| `NR-A003` | API key rejected | 401 | `NullRunAuthenticationError` |
+| `NR-A003` | API key rejected | 401 | `NullRunAuthError` |
 | `NR-A010` | Approval exists, status `PENDING` — operator has not decided yet | 403 | `NullRunApprovalNotYetApprovedError` |
 | `NR-A011` | Operator explicitly denied the approval | 403 | `NullRunApprovalDeniedError` |
 | `NR-A012` | Approval expired (`expires_at` in the past) | 403 | `NullRunApprovalExpiredError` |
@@ -248,9 +249,11 @@ you don't care about the exact cause.
 | `error_code` | When | HTTP | SDK class |
 | --- | --- | --- | --- |
 | `NR-B002` | Gateway 5xx | 500/503 | `NullRunBackendError` |
+| `NR-B003` | Budget Redis unavailable (fail-CLOSED on the budget path) | 402 | `NullRunBudgetError` |
+| `NR-B005` | Budget data unavailable (approximate-budget lookup, all sources down) | 503 | `NullRunBackendError` |
 | `NR-R002` | Rate-limit Redis unavailable | 503 | `NullRunRateLimitRedisError` |
 | `NR-C001` | Missing or invalid `NULLRUN_API_KEY` at `init()` | n/a (raised) | `NullRunAuthenticationError` |
-| `NR-P001` | Wire-protocol version mismatch | 400 | `NullRunConfigError` |
+| `NR-P001` | Wire-protocol version mismatch | 400 | `NullRunProtocolError` |
 
 ## See also
 

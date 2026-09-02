@@ -60,8 +60,8 @@ Soft mode requires **all three**:
 
 If any of the three is missing, soft mode is unavailable and the
 gate behaves as Hard. Multiple parallel chains on the same org share
-one `overdraft_used` counter — N concurrent chains do **not**
-multiply the overdraft cap.
+one overdraft counter — N concurrent chains do **not** multiply the
+overdraft cap.
 
 A chain dies on the first of: `op="end"`, 5 minutes of `/gate`
 inactivity (idle TTL), or exceeding `max_chain_duration_seconds`.
@@ -133,10 +133,9 @@ dashboard shows the feature greyed out with an "Upgrade" link.
 ## Approval rules — separate from ToolBlock
 
 Approval rules are **not** a `ToolBlock` policy with an `action =
-require_approval` field. They are a separate entity in the
-`approval_rules` table with `tool_patterns`, a projected-cost
-threshold, a typed `BusinessImpact` predicate, and operational
-metadata.
+require_approval` field. They are a separate rule object with
+`tool_patterns`, a projected-cost threshold, a typed `BusinessImpact`
+predicate, and operational metadata.
 
 When a rule fires, the gate returns `decision = "require_approval"`
 and the SDK parks until the operator clicks Approve / Deny. See

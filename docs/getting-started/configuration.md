@@ -25,14 +25,17 @@ gateway.
 | `NULLRUN_APPROVAL_TIMEOUT_SECONDS` | `300` | SDK-side wait for the `approval_resolved` WS push before fail-CLOSED kill. |
 | `NULLRUN_REQUEST_TIMEOUT` | `30` | HTTP request timeout in seconds. |
 | `NULLRUN_TRANSPORT` | `ws` | Control-plane transport mode (`ws` or `http`). |
-| `NULLRUN_GATE_CACHE_DISABLE` | unset | `=1` disables the SDK's local gate cache (force `/check` on every call). |
+| `NULLRUN_GATE_CACHE_DISABLE` | unset | `=1` disables the SDK's local gate cache (forces a fresh gate evaluation on every `@protect` call). |
 | `NULLRUN_TLS_CLIENT_CERT` / `NULLRUN_TLS_CLIENT_KEY` / `NULLRUN_TLS_CA_CERT` | unset | Optional mTLS material for the SDK-to-gateway connection. |
 | `NULLRUN_MAX_RESPONSE_BYTES` | library default | Cap on captured LLM response body size for span metadata. |
 
 ## Developer and CI overrides
 
-These override safety defaults — useful for local SDK development,
-integration tests, and CI; do not enable in production traffic.
+!!! danger "Production-safe default: do NOT set these in production traffic"
+    The variables below override the gate's safety defaults. They
+    exist for local SDK development and CI only. Exporting them in
+    a production environment silently disables protection — your
+    agent will run un-gated.
 
 | Variable | Effect | When to use |
 | --- | --- | --- |

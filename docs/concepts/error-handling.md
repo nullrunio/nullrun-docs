@@ -7,6 +7,15 @@ Errors in NullRun come in three layers, designed for three audiences:
 your code, your monitoring, and your end users. The SDK does most of
 the work — you pick how much of each layer to use.
 
+!!! tip "Quick reference"
+    | Audience | Hook / Class | Catches |
+    |---|---|---|
+    | Your code | `except NullRunDecision` | Expected policy outcomes (budget, tool block, pause) |
+    | Your code | `except NullRunInfrastructureError` | Transport / 5xx / auth / config failures |
+    | Your code | `except WorkflowKilledInterrupt` | Operator kill — `BaseException`, not `Exception` |
+    | Your monitoring | `@nullrun.on_error` hook | Every `NullRunError`, fired before propagation |
+    | Your end user | `@guarded` / `format_user_message` | Friendly text from the catalog |
+
 ## Where errors appear in the dashboard
 
 Every error the SDK raises lands in **Governance → Decision History**

@@ -10,19 +10,20 @@ behaviour, and let NullRun halt it when it goes off the rails.
 
 ```python title="app.py"
 from openai import OpenAI
-from nullrun import init_or_die, guarded, protect, shutdown
+from nullrun import init_or_die, guarded, protect, workflow, shutdown
 
 init_or_die(api_key="nr_live_...")        # exits cleanly if api_key missing
 client = OpenAI()
 
-@guarded                                # catches NullRunError, prints
-@protect                                # the catalog user-message,
-def answer(prompt: str) -> str:         # sys.exit(1) — zero boilerplate
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.choices[0].message.content
+with workflow("my-first-agent"):       # scopes the gate to a workflow
+    @guarded                           # catches NullRunError, prints
+    @protect                           # the catalog user-message,
+    def answer(prompt: str) -> str:    # sys.exit(1) — zero boilerplate
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.choices[0].message.content
 
 if __name__ == "__main__":
     try:
@@ -30,6 +31,12 @@ if __name__ == "__main__":
     finally:
         shutdown()
 ```
+
+> The `with workflow("..."):` block binds every `@protect` call inside
+> to a named workflow — required, otherwise the SDK falls back to an
+> ad-hoc workflow_id with no budget policy attached. For production,
+> the workflow name should match the dashboard workflow your API key
+> is bound to.
 
 Every call inside `answer()` is cost-attributed and governed by your
 workspace policy. On any policy outcome (budget cap, tool block, rate
