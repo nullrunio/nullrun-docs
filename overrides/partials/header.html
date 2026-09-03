@@ -60,17 +60,17 @@
       </div>
 
       {% if "material/search" in config.plugins %}
-        <label class="nr-icon-button" for="__search" title="Search" aria-label="Search">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5Z"/>
-          </svg>
-        </label>
-        {# Material renders the search overlay/modal (the input box +
-           live results panel) via this partial. Without it the
-           `__search` checkbox toggles into the void — click registered,
-           no modal on screen. The include is the last thing inside
-           the `material/search` plugin block so the overlay markup
-           lives in the same DOM location as upstream Material. #}
+        {# Material renders BOTH the search overlay/modal (input box +
+           live results panel) AND its own menu-bar magnifier icon
+           (`<label class="md-search__icon md-icon" for="__search">`).
+           We use Material's label as the single visible trigger — it
+           already targets the `__search` checkbox, opens the dialog,
+           and gets hidden automatically when the dialog opens. An
+           earlier hand-rolled `<label class="nr-icon-button">` rendered
+           a SECOND magnifier next to Material's, both visible at the
+           same time. The fix: drop our custom label, restyle
+           Material's `.md-search__icon` to match the menu-bar icon
+           shape (see extra.css `.md-search__icon`). #}
         {% include "partials/search.html" %}
       {% endif %}
 
@@ -86,7 +86,14 @@
     {# ── Right buttons: print, github ───────────────────────────────── #}
     <div class="nr-menubar__right-buttons">
 
-      <a href="{{ 'print.html' | url }}" title="Print this page" aria-label="Print this page" class="nr-icon-button">
+      {# Print document — full docs flattened into a single printable
+         page at /print/ (MkDocs' default `use_directory_urls: true`
+         renders `docs/print.md` as `/print/index.html`). The page is
+         not in the nav so `| url` cannot resolve it; the relative URL
+         `/print/` works regardless of `use_directory_urls` because
+         MkDocs only generates the URL — the directory is built by
+         MkDocs and served by nginx regardless of how we link. #}
+      <a href="print/" title="Printable documentation" aria-label="Printable documentation" class="nr-icon-button">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3m-3 11H8v-5h8v5m3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1m-1-9H6v4h12V3Z"/>
         </svg>

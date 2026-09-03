@@ -135,4 +135,33 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     });
 })();
 
+/* ── 4. Print page body class ─────────────────────────────────────────
+   `/print/` is a single-page printable edition. We add a body class
+   when the URL matches so CSS can:
+     - hide the right-side TOC (the page is one long document; a
+       floating TOC competes with the on-page TOC anchor list)
+     - let the content column use the full width
+   The class is applied on first paint AND on Material's SPA
+   navigation, since `extra.js` re-runs only on initial load — the
+   popstate listener catches subsequent nav-internal navigations. */
+(function initPrintPageClass() {
+    function apply() {
+        const isPrint = window.location.pathname.replace(/\/+$/, "").endsWith("/print");
+        document.body.classList.toggle("nr-print-page", isPrint);
+    }
+    apply();
+    window.addEventListener("popstate", apply);
+    /* Material's SPA nav uses fetch + pushState; popstate alone misses
+       forward navigation. Hook into the click on internal links as a
+       cheap approximation that fires before the SPA swap. */
+    document.addEventListener("click", (ev) => {
+        const a = ev.target.closest("a[href]");
+        if (!a) return;
+        const url = new URL(a.href, window.location.origin);
+        if (url.origin !== window.location.origin) return;
+        // Defer until after the SPA swap so the new pathname is set.
+        setTimeout(apply, 0);
+    });
+})();
+
 console.info("[nullrun-docs] extra.js loaded.");

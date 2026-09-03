@@ -394,6 +394,56 @@ svg {
   stroke-width: 2;
 }
 
+/* Material's `.md-search__icon[for="__search"]` is the single visible
+   search trigger in the menu-bar. Material positions it `absolute`
+   inside the search form (which is hidden until the dialog opens).
+   In the menu-bar context we treat it as a sibling icon-button:
+   - `position: static` lets the flex layout in
+     `.nr-menubar__left-buttons` position it.
+   - The 32×32 box matches `.nr-icon-button`.
+   - `cursor: pointer` so it reads as a click target like the others.
+   - The hover treatment matches `.nr-icon-button:hover`.
+   - The second SVG inside (Material's "back arrow") is hidden via
+     `:first-child` so only the magnifier shows — the back arrow is
+     meant for the dialog's "close search" state, which we let
+     Material's own CSS handle when the dialog is open. */
+.md-search__icon.md-icon {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+  color: var(--nr-icons);
+  cursor: pointer;
+  border-radius: 0;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+.md-search__icon.md-icon:hover {
+  color: var(--nr-icons-hover);
+  background-color: var(--nr-sidebar-spacer);
+}
+.md-search__icon.md-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+/* Hide the back-arrow SVG inside `.md-search__icon` — Material ships
+   two icons inside the same label (magnifier + back-arrow). The
+   magnifier is the first child, the back-arrow is the second. We only
+   want the magnifier visible in the menu-bar trigger. */
+.md-search__icon.md-icon svg + svg { display: none; }
+/* When the search dialog is open (`:focus-within` on the search
+   component), hide the magnifier trigger so only the dialog shows —
+   this mirrors Material's stock behaviour where the icon disappears
+   while search is active. The dialog itself stays visible via
+   Material's `:checked` selector on `__search`. */
+.md-search:focus-within .md-search__icon.md-icon { display: none; }
+
 /* ────────────────────────────────────────────────────────────────────────────
    5. THEME POPUP
    ──────────────────────────────────────────────────────────────────────────── */
@@ -1079,4 +1129,222 @@ body[data-md-color-scheme="slate"] .nr-shot img.nr-shot__dark  { display: block;
   text-transform: uppercase;
   background: var(--md-default-bg-color--light);
   color: var(--md-default-fg-color);
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   14. PRINT DOCUMENT — `/print/` styling
+   ────────────────────────────────────────────────────────────────────────────
+
+   `/print/` is a single-page printable edition of the docs. It is NOT
+   in the left sidebar nav (the header printer icon is the only way in),
+   so on screen it looks like an ordinary page; the print-specific
+   surface lives under `@media print` (further down). On screen, two
+   styles are unique to this page:
+     1. `.nr-print-btn` — a chunky "Print this page" button at the top
+        of the print document. Calls `window.print()` on click.
+     2. `.nr-print-toc` — a hand-curated Table of Contents with anchor
+        links. MkDocs auto-generates a TOC from h2/h3, but the print
+        document's TOC includes section numbers and a "back to top"
+        link, so it's hand-written into the markdown. */
+.nr-print-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  margin: 8px 0;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--md-default-bg-color);
+  background: var(--md-default-fg-color);
+  border: 2px solid var(--md-default-fg-color);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.nr-print-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 0 var(--md-default-fg-color);
+}
+.nr-print-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 0 var(--md-default-fg-color);
+}
+
+/* On the print page itself, hide the right-side "On this page" TOC
+   (the page has its own inline anchor list at the top, so a second
+   floating TOC is noise) and let the content column use the full
+   width. The body class `nr-print-page` is set by extra.js when the
+   URL matches `/print` (see initPrintPageClass). */
+body.nr-print-page .md-sidebar--secondary { display: none !important; }
+body.nr-print-page .md-content {
+  max-width: 100% !important;
+  margin: 0 !important;
+  padding: 32px 40px !important;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   15. PRINT MEDIA — clean output when the user presses Ctrl+P / Cmd+P
+   ────────────────────────────────────────────────────────────────────────────
+
+   On `/print/`, the goal is a paper-friendly output:
+     - No sidebar (no nav chrome)
+     - No menu-bar (no header chrome)
+     - No footer
+     - No search overlay
+     - No neo-brutalist shadows / borders (paper is white, ink is black)
+     - Wider text column (no sidebar reserving 340px)
+     - Page-break hints so chapters start on a fresh page
+
+   On other pages we still hide the chrome, but we keep the content
+   width and typography intact so printing a single chapter produces
+   a clean, readable output. */
+@media print {
+  /* Strip all chrome — sidebar, menu-bar, search overlay, footer,
+     back-to-top button. None of it serves the printed page. */
+  .md-sidebar,
+  .md-sidebar--primary,
+  .md-sidebar--secondary,
+  .nr-menubar,
+  .md-header,
+  .md-footer,
+  .md-search,
+  .md-top,
+  .md-banner,
+  .md-overlay,
+  .md-nav {
+    display: none !important;
+  }
+
+  /* Drop the 340px left offset that the sidebar normally reserves —
+     without the sidebar in flow, the offset would leave a blank
+     strip down the left edge of every printed page. */
+  .md-main__inner,
+  body.nr-sidebar-hidden .md-main__inner {
+    margin-left: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* Reset sticky / fixed positioning so nothing prints in the wrong
+     spot on multi-page output. */
+  .md-header,
+  .nr-menubar,
+  .md-sidebar--primary {
+    position: static !important;
+  }
+
+  /* Force a clean paper-friendly palette. The cream + FLAG-yellow
+     surfaces look muddy on paper; the dark theme is unreadable on
+     white paper. Force light-theme values for the print output. */
+  :root,
+  [data-md-color-scheme] {
+    --md-default-bg-color: #ffffff;
+    --md-default-bg-color--light: #ffffff;
+    --md-default-bg-color--lighter: #ffffff;
+    --md-default-fg-color: #000000;
+    --md-default-fg-color--light: #333333;
+    --md-default-fg-color--lighter: #555555;
+    --nr-sidebar-bg: #ffffff;
+    --nr-sidebar-fg: #000000;
+    --nr-sidebar-spacer: #cccccc;
+    --nr-icons: #555555;
+    --nr-icons-hover: #000000;
+    --nr-links: #000000;
+    --md-code-bg-color: #f4f4f4;
+    --md-code-fg-color: #000000;
+    --md-code-border-color: #999999;
+    --accent-flag: #000000;
+    --accent-block: #000000;
+    --accent-allow: #000000;
+  }
+
+  /* Body — drop the cream tint, force black ink on white paper. */
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt;
+    line-height: 1.45;
+  }
+
+  /* Content column — use the full paper width. */
+  .md-content,
+  .md-content__inner,
+  article.md-content__inner {
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Hide neo-brutalist shadows — they print as grey blobs that waste
+     ink and look messy. Keep the 2px ink borders for table cells /
+     code blocks where they aid legibility. */
+  .md-typeset pre,
+  .md-typeset .admonition,
+  .nr-shot,
+  .nr-feature,
+  .nr-print-btn {
+    box-shadow: none !important;
+  }
+
+  /* Headings — clear page breaks before each top-level section so
+     chapters start on a fresh page. Avoid splitting a heading away
+     from its first paragraph. */
+  h1 {
+    page-break-before: always;
+    page-break-after: avoid;
+  }
+  /* Skip the page break for the very first H1 — the doc starts there. */
+  .md-typeset > h1:first-child {
+    page-break-before: avoid;
+  }
+  h2, h3, h4 {
+    page-break-after: avoid;
+  }
+
+  /* Tables — keep them together when possible, repeat the header row
+     on each printed page so the column names survive a row split. */
+  table {
+    page-break-inside: avoid;
+  }
+  thead {
+    display: table-header-group;
+  }
+  tr {
+    page-break-inside: avoid;
+  }
+
+  /* Code blocks — let long ones scroll horizontally on screen but
+     wrap / break across pages on paper. */
+  pre, code {
+    page-break-inside: avoid;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* Links — print the URL after the link text in parentheses so
+     offline readers can find the destination. Skip for in-page
+     anchors (the `#` URL would be noise). */
+  a[href^="http"]:not([href*="#"])::after,
+  a[href^="https"]:not([href*="#"])::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    color: #555555;
+  }
+  /* Suppress URLs for site-internal links — they add noise without
+     value on a single-page print document. */
+  a[href^="/"]::after,
+  a[href^="./"]::after,
+  a[href^="../"]::after,
+  a[href^="#"]::after {
+    content: "";
+  }
+
+  /* Hide the print button itself on paper — the user has already
+     pressed print by the time the output is generated. */
+  .nr-print-btn {
+    display: none !important;
+  }
 }
