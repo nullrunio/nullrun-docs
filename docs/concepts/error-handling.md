@@ -18,15 +18,12 @@ the work — you pick how much of each layer to use.
 
 ## Where errors appear in the dashboard
 
-Every error the SDK raises lands in **Governance → Decision History**
-and **Governance → Audit log**:
-
-- **Decision History** — the most recent N decisions per workflow,
-  with the reason (`BUDGET_HARD_BLOCKED`, `TOOL_BLOCKED`,
-  `RATE_LIMIT_EXCEEDED`, etc.). Useful for "what just happened?"
-- **Audit log** — every decision ever, hash-chained and
-  filterable by workflow, time range, decision type, tool name.
-  Useful for compliance review and incident forensics.
+Every error the SDK raises lands in **Governance → Audit log** —
+every decision ever recorded, hash-chained and filterable by
+workflow, time range, decision type, and tool name. The reason
+column shows `BUDGET_HARD_BLOCKED`, `TOOL_BLOCKED`,
+`RATE_LIMIT_EXCEEDED`, etc. Useful both for "what just happened?"
+and for compliance review / incident forensics.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/audit-log-light.png"

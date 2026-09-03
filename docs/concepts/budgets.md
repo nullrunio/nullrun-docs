@@ -124,8 +124,8 @@ Reasonable starting budgets:
 | Customer-facing AI feature | $100 (10000 cents) per period, plus an alert at 80% |
 
 The dashboard warns you when spend crosses 80% of the cap and again
-at 100%. Configure alert destinations under **Settings →
-Notifications**.
+at 100%. Configure alert destinations under **Notifications** in
+the sidebar (Channels + Alert rules + Event subscriptions matrix).
 
 ## What happens when you change the budget mid-period
 

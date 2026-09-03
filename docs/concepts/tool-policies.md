@@ -147,8 +147,8 @@ a call you think should be allowed:
 1. Open the workflow in the dashboard.
 2. Click **Effective policy**. The merged set shows every ToolBlock
    pattern that could match.
-3. Click **Decision History** and filter by `decision = block` and
-   the tool name. The audit log shows which pattern matched.
+3. Open the **Audit log** and filter by `decision = block` and
+   the tool name. The log shows which pattern matched.
 4. If a pattern is too broad (`*` matches everything), narrow it
    in the policy editor.
 5. If the pattern is wrong entirely, deactivate the policy and

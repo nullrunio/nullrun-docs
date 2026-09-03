@@ -12,7 +12,8 @@ when you need them.
 ## 1. Sign up and create an API key
 
 1. Go to [nullrun.io](https://nullrun.io) and sign in.
-2. Open **API keys** → **Create key**.
+2. In the sidebar, under **Access**, open **API keys**, then click
+   **New API key** in the top right.
 3. Pick a name (e.g. `"my-first-agent"`) and the workflow you want the
    key bound to. Each key is **workflow-scoped** — it represents one
    agent run, not one workspace.
@@ -107,7 +108,7 @@ for the detail.
 python my_agent.py
 ```
 
-Then open the dashboard → **Workflows** → your workflow → **Decisions**.
+Then open the dashboard → **Workflows** → your workflow → **Executions**.
 You'll see every `/gate` call (one per `@protect`-wrapped invocation),
 the policy verdict (`allow` / `block` / `rate_limit`), and the cost.
 

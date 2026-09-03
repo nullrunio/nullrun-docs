@@ -5,7 +5,7 @@ description: Group agent calls into a named workflow, propagate parent_trace_id,
 
 A **workflow** is one agent you run. In the dashboard it shows up
 under **Workflows** in the left sidebar. Each workflow has its own
-budget, its own list of API keys, its own decision history.
+budget and its own list of API keys.
 
 ## What you see in the dashboard
 
@@ -18,26 +18,33 @@ row shows:
 - How many API keys are bound to it
 - When it last saw traffic
 
-Click a workflow to open its detail page. The detail page has five
+Click a workflow to open its detail page. The detail page has six
 tabs:
 
 | Tab | What it shows |
 |---|---|
-| **Decisions** | Every gate call your agent made — allowed, blocked, rate-limited. The raw list the gate uses to decide what your agent can do. |
-| **Spend** | Cost broken down by day, by model, by tool. Time-to-exhaustion estimate at the current rate. |
-| **Keys** | The API keys bound to this workflow. The raw key value is shown only once at creation. |
+| **Overview** | Name, status (Active / Paused / Killed), current spend vs. the installed budget cap, applied policies, and the **Pause** / **Resume** / **Kill** / **Delete** controls. This is where you change the budget cap. |
+| **Policies** | The policies scoped to this workflow. Rate limit, budget limit, and tool block entries — same primitives as the org-level Policies page, filtered to this workflow. |
+| **Executions** | Every gate call your agent made — allowed, blocked, rate-limited. The raw list the gate uses to decide what your agent can do. |
 | **Traces** | Hierarchical view of one agent run — each LLM call, each tool call, with timing and cost. |
-| **Settings** | Budget cap, kill/pause, soft-mode toggle, plan-feature gates. |
+| **API keys** | The API keys bound to this workflow. Use **Generate API key** in the top-right to mint one; the raw key value is shown only once at creation. |
+| **Coverage** | MCP servers and tools observed on this workflow in the last 30 days, with the "discovered but not registered" panel for un-enrolled servers. |
 
 ## How to create one
 
 1. In the dashboard sidebar, click **Workflows**.
 2. Click **New workflow** in the top right.
 3. Give it a name (e.g. `"production-support-bot"`). The name shows
-   up everywhere — keep it short.
-4. Set a starting budget. You can change it any time. The default is
-   zero, which blocks every call until you raise it.
-5. Click **Create**.
+   up everywhere — keep it short. Names are 1–255 characters:
+   letters, digits, space, and `_ . , - & ( )` are allowed.
+4. Optionally set an **External ID** — alphanumeric with `-` and
+   `_`, up to 64 characters — for integrations that need to look up
+   the workflow from your own systems (e.g. a GitHub repo name or a
+   customer account id).
+5. Click **Create**. The budget cap is configured on the
+   **Overview** tab after creation via a budget-limit policy or the
+   installed budget control — there is no starting budget on the
+   dialog itself.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/workflows-list-light.png"
@@ -65,7 +72,7 @@ tabs:
 
 You'll land on the new workflow's detail page. From there:
 
-- **Mint an API key** under the **Keys** tab. The key value
+- **Mint an API key** under the **API keys** tab. The key value
   (`nr_live_...`) is shown **once** — copy it into your secret
   manager immediately.
 - **Point your SDK at it**: `nullrun.init(api_key=...)` picks up

@@ -36,6 +36,58 @@ when it isn't.
 > Critical paths refuse to run when the gateway is unreachable;
 > secondary signals may let calls through.
 
+## What happens when the NullRun service is unavailable
+
+NullRun's service is the gateway that evaluates every `/check` and
+`/track` call. When it's down, behaviour is intentionally asymmetric:
+**enforcement paths fail-CLOSED** (the safest choice — never let a
+tool run that should have been blocked), while **secondary signals**
+(per-key rate limits, cost-event outbox writes, dashboard reads) may
+fail-OPEN or be queued, because blocking on them would lose data
+without protecting the budget.
+
+This table describes every surface that can be affected. If a row
+isn't here, the surface behaves as documented in its own concept
+page.
+
+| Surface | What you observe during an outage | How to handle it |
+| --- | --- | --- |
+| **Active `/check` — budget gate** | Fail-CLOSED. SDK raises `NullRunBackendError`; the next `@protect`-wrapped call is refused. No implicit re-reserve. The reservation TTL eventually releases the cents. | Catch the exception; retry with exponential backoff. Long outages will exceed your tool timeout. The budget counter is never decremented by a call the gate never approved. |
+| **Active `/check` — sensitive-tool gate** | Fail-CLOSED. The sensitive tool body never runs. SDK raises `NullRunBackendError`. | Treat as **indeterminate** — don't retry the side-effect blindly. Surface the error to the user and let a human decide. This is the canonical reason `@sensitive` is the default for irreversible actions. |
+| **Active `/check` — per-key rate limit** | Fail-OPEN (secondary signal). SDK warns and the call proceeds. The budget gate remains the backstop. | No action required. The budget gate still applies on the next call. |
+| **Active `/check` — aggregate (per-org) rate limit** | Fail-CLOSED — 503 `NullRunRateLimitRedisError`. | Back off and retry with jitter. This is a true outage of the aggregator, not a transient blip. |
+| **Active `/track` — cost commit** | Returns 200 with the cost event queued in the SDK's local outbox. The inference already happened; blocking would lose the cost record. | None required. The SDK persists the event locally and the outbox drains when the gateway returns. **No cost record is lost during the outage window.** |
+| **Control plane (WebSocket)** | Connection drops. SDK reconnects with exponential backoff. The local snapshot of workflow status (active / paused / killed) survives. | No operator action — reconnect is automatic. Long outages mean no live kill/pause signals reach the SDK; the next `/check` call picks them up server-side. |
+| **In-flight approval request** | Held server-side; not surfaced to operators until the gateway returns. The SDK continues to wait for an approval decision (subject to your approval timeout). | If your approval timeout is short, expect `NullRunApprovalTimeoutError`. The pending request is preserved server-side and reappears in the approvals inbox once the gateway recovers — operators can still answer it. |
+| **Dashboard UI** | Pages return 503; read paths may serve cached fragments where possible. The top banner shows "NullRun is currently unavailable." | Refresh once `GET /health/ready` returns 200. Read-only views (audit log, dashboards) resume first; writes (kill, approve, edit) resume once the gateway is fully ready. |
+| **HTTP API (programmatic)** | 502 / 503 / 504 on read and write paths. Writes are rejected — the server has no record of success, so there is no implicit retry. | Idempotent reads (`GET`) can be retried freely. Writes (`POST /kill`, `POST /approve`) should not be retried blindly — gate them behind your own idempotency keys if your client retries. |
+| **Cost-event outbox (reconciliation)** | Events queue in Redis; the drain loop resumes when the gateway returns. | None — reconciliation is automatic. The outbox catches up on the next gateway tick. Provisional reservations eventually reconcile to final `cost_events` rows. |
+| **Alerts & notifications** | Rule evaluation pauses (the gateway can't see new events to score). Outbound delivery depends on channel: Slack messages buffer at Slack's edge; email and webhook channels drop. | Check the channel after recovery. Slack messages sent during the outage arrive late but are not lost; webhook deliveries need a replay tool. See [Notifications](concepts/notifications.md). |
+| **Configured workflows, policies, MCP servers, API keys** | Read-only. Nothing can be created, edited, killed, or revoked until the gateway returns. **Already-active rules continue to enforce** on the next gate call — the gate caches the merged Effective Policy. | Plan configuration changes outside the outage window. Operators can still read existing state from cached dashboard fragments. |
+| **`GET /health/live`** | Always 200 if the binary is running — even when downstream deps are down. | Use this for liveness probes. **Do not use it as a "is NullRun usable" signal** — it will lie during a Redis or Postgres outage. |
+| **`GET /health/ready`** | 200 when DB + Redis + policy cache are reachable; 503 otherwise. | Use this for readiness probes and to page on. This is the signal that flips first as the service recovers. |
+| **`GET /api/v1/capabilities`** | 200 with the cached protocol version when the gateway can read from cache; 503 if Redis is unreachable. | Treat 5xx as "stay on the version you already have" — don't auto-upgrade during an outage. The SDK already pins the version it probed at startup. |
+
+### Operator playbook during an outage
+
+1. **Confirm the scope.** Check `GET /health/ready` (or the status
+   page). If `/health/ready` is 503 but `/health/live` is 200, the
+   gateway process is up but Redis or Postgres is unreachable — every
+   enforcement path will fail-CLOSED.
+2. **Watch the recovery cascade.** `/health/ready` flips first, then
+   `/api/v1/capabilities`, then the WebSocket reconnects, then the
+   cost-event outbox finishes draining, then dashboard writes unlock.
+   Each layer takes a few seconds; the whole cascade usually finishes
+   inside a minute.
+3. **Audit the outage window afterwards.** Open the workflow's detail
+   page and filter the audit log to the outage window. Every decision
+   (including the fail-CLOSED ones) is retained — nothing is lost, and
+   the row counts reconcile against the cost-events outbox.
+4. **Don't disable the gate to "fix" the outage.** Setting
+   `NULLRUN_SKIP_BUDGET_CHECK=1` or `NULLRUN_SENSITIVE_FAIL_OPEN=1`
+   bypasses the gate entirely and is unsafe in production. Let the
+   gate fail-CLOSED; catch and retry in your code.
+
 ## Common runtime questions
 
 ### "Why is my call being rejected with `NullRunBlockedException`?"

@@ -150,7 +150,8 @@ the server, evaluated by the gate on every `/gate` call. The
 recommended starter patterns below map to that policy mechanism.
 
 Create a ToolBlock policy in the dashboard under
-**Policies → Tool policies → Create**. The dashboard renders the
+**Policies → New policy** (pick **Tool block** as the type). The
+dashboard renders the
 canonical tool name for every framework integration so you can
 match against the right string:
 

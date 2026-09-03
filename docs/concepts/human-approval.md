@@ -184,8 +184,9 @@ channel configured on your org:
   (`X-NullRun-Signature`, 5-minute clock-skew tolerance, 10-minute
   nonce replay defence).
 
-Disable a channel per-user under **Settings → Notifications**, or
-per-channel under **Settings → Notification channels**.
+Disable a channel per-user or per-channel under
+**Notifications** in the sidebar (the page has Channels, Alert rules,
+and an Event subscriptions matrix).
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/approval-rules-light.png"

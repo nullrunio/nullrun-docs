@@ -33,11 +33,14 @@ application's environment, and the SDK takes care of the rest.
 2. Pick a workflow to bind the key to. The dropdown lists every
    workflow in your org. (Each key is **workflow-scoped** — one key
    represents one agent run, not one workspace.)
-3. Pick the permissions the key needs. The defaults
-   (`gate`, `execute`, `track`) work for most agents.
-4. Optionally set an expiration date. Keys without an expiration
-   are valid until revoked.
-5. Click **Create**.
+3. Pick an **Expires** window: **Never** (default), **24 hours**,
+   **7 days**, **30 days**, or **90 days**. Keys without an
+   expiration are valid until revoked.
+4. Click **Create**.
+
+Scopes (`gate` / `execute` / `track` / `verify`) are auto-assigned
+to every new key and are not user-customizable in the dialog — the
+gateway needs all four to do its job.
 
 The dashboard shows the new key value **once** — a string starting
 with `nr_live_...`. Copy it into your secret manager **immediately**.

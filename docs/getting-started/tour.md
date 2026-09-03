@@ -39,10 +39,14 @@ allows everything except destructive tools.
 
 In the dashboard:
 
-1. Click **Settings → API keys**.
-2. Click **+ New key**.
-3. Name it `tour-agent` (or anything memorable).
-4. Copy the `nr_live_…` public identifier and the HMAC secret.
+1. In the left sidebar, under **Access**, click **API keys**.
+2. Click **New API key** in the top right.
+3. In the dialog, pick the **Workflow** the key belongs to (the
+   tour-agent workflow you just created) and name the key
+   `tour-agent`. Pick an expiration — **Never**, **24 hours**,
+   **7 days**, **30 days**, or **90 days**.
+4. Click **Create**.
+5. Copy the `nr_live_…` public identifier and the HMAC secret.
    The secret is shown **once** — store it in your secrets manager
    immediately.
 
@@ -108,15 +112,17 @@ You will see ~7–10 successful LLM calls, then
 ## Step 4 — Watch the decisions
 
 Open `nullrun.io/control-center/audit` (the dashboard **Audit log**
-page — Decision History is the recent-events view at the top of the
-same page). You will see:
+page, under **Governance** in the sidebar). You will see:
 
-- One row per `@protect` call
-- `decision = allow` for the first ~7–10 rows (filter chip on the
-  top bar selects `Allow` / `Deny` / `Require approval` / etc.)
+- One row per `@protect` call across four columns: **Time**,
+  **Decision**, **Rule**, **Actor**.
+- `decision = allow` for the first ~7–10 rows. The **FilterBar**
+  above the table has period preset chips (1h / 24h / Today /
+  7d / 30d / 90d / All), decision chips, and an event-type selector.
 - `decision = block` on the last row with `error_code = NR-B004`,
-  `wire = BUDGET_HARD_BLOCKED` — click the row to see the budget
-  snapshot at the time of the block
+  `wire = BUDGET_HARD_BLOCKED` — click the row to open the
+  **DetailPanel** and see the budget snapshot at the time of the
+  block.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/audit-log-light.png"
@@ -155,21 +161,21 @@ Run it again. The dashboard shows a `decision = block` row with
 ship with a permissive default policy; if your admin has added a
 stricter default, you may see additional blocks.
 
-To allow `send_email`, open **Policies → Tool patterns** for the
-workflow and either narrow the `send_*` entry or scope it to a
-different workflow.
+To allow `send_email`, open **Policies** in the sidebar, find the
+tool-block rule that matches `send_email`, and either narrow the
+pattern or scope it to a different workflow.
 
 ## Step 6 — Raise the budget and try again
 
 Back in the dashboard:
 
-1. Open **Workflows → tour-agent → Settings**.
-2. Change the budget to `$5.00` (500 cents).
+1. Open the tour-agent workflow and stay on the **Overview** tab.
+2. In the budget card, raise the cap to `$5.00` (500 cents).
 3. Save.
 
 Re-run `tour_agent.py`. The loop now completes all 20 calls. The
-**Spend** tab shows ~$0.40 used (depending on token counts), and
-the progress bar sits at ~8%.
+**Overview** tab's spend bar shows ~$0.40 used (depending on token
+counts), and the progress bar sits at ~8%.
 
 ## What next?
 

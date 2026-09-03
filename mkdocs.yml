@@ -110,17 +110,32 @@ nav:
       - 1.4. Quickstart: getting-started/quickstart.md
       - 1.5. Configuration: getting-started/configuration.md
   - 2. Concepts:
+      # Concepts are ordered by complexity: foundational abstractions
+      # first (what NullRun is + how to talk to it), then the core
+      # dimensions it operates on (cost, safety), then operational
+      # concerns (workflows, observation, settings), then behavioural
+      # concerns (failures, escalation, UI surfaces), then real-time /
+      # advanced integration (push, tool sources, channels, rules), then
+      # organisational and billing concepts at the bottom.
       - 2.1. Circuit breaker: concepts/circuit-breaker.md
-      - 2.2. Budgets: concepts/budgets.md
-      - 2.3. Sensitive tools: concepts/sensitive-tools.md
-      - 2.4. Workflow context: concepts/workflow.md
-      - 2.5. Tracing: concepts/tracing.md
-      - 2.6. Control plane (WebSocket): concepts/control-plane.md
-      - 2.7. API keys: concepts/api-keys.md
-      - 2.8. Policies: concepts/policies.md
-      - 2.9. Tool policies: concepts/tool-policies.md
+      - 2.2. API keys: concepts/api-keys.md
+      - 2.3. Budgets: concepts/budgets.md
+      - 2.4. Sensitive tools: concepts/sensitive-tools.md
+      - 2.5. Workflow context: concepts/workflow.md
+      - 2.6. Tracing: concepts/tracing.md
+      - 2.7. Policies: concepts/policies.md
+      - 2.8. Tool policies: concepts/tool-policies.md
+      - 2.9. Error handling: concepts/error-handling.md
       - 2.10. Human approval: concepts/human-approval.md
-      - 2.11. Error handling: concepts/error-handling.md
+      - 2.11. Approvals (UI surface): concepts/approvals.md
+      - 2.12. Control plane (WebSocket): concepts/control-plane.md
+      - 2.13. MCP servers (Action sources): concepts/mcp-servers.md
+      - 2.14. Notifications: concepts/notifications.md
+      - 2.15. Alerts: concepts/alerts.md
+      - 2.16. Team: concepts/team.md
+      - 2.17. Billing & Plan: concepts/billing.md
+      - 2.18. Organization: concepts/organization.md
+      - 2.19. Profile settings: concepts/profile.md
   - 3. How-to:
       - 3.1. Protect a LangGraph agent: how-to/langgraph.md
       - 3.2. Use with OpenAI Agents: how-to/openai-agents.md

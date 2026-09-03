@@ -96,10 +96,11 @@ canonical name alone decides.
 
 ## Where the sensitive list lives
 
-You write the policy in the dashboard under
-**Policies → Tool policies → Create**. The dashboard shows you the
-canonical tool name for every framework integration. Your policy
-applies to:
+You write the policy in the dashboard under **Policies** (sidebar
+under **Governance**). Click **New policy**, pick **Tool block** as
+the policy type, and the modal shows the **Tool pattern** field
+where you enter the glob(s). The dashboard shows you the canonical
+tool name for every framework integration. Your policy applies to:
 
 - All workflows under the org (default)
 - A specific workflow (scope to `workflow_id`)
@@ -111,13 +112,11 @@ pattern that matches fires.
 
 ## Audit trail
 
-When a sensitive tool is blocked:
-
-- **Decision History** records the block with reason `TOOL_BLOCKED`
-  (SDK `error_code = "NR-T001"`), the pattern that matched, and the
-  workflow + api_key + tool_name.
-- The **audit log** records the decision with hash chaining — see
-  [Audit records](../concepts/error-handling.md#audit-trail).
+When a sensitive tool is blocked, the **audit log** records the
+block with reason `TOOL_BLOCKED` (SDK `error_code = "NR-T001"`),
+the pattern that matched, and the workflow + api_key + tool_name.
+The audit log is hash-chained — see
+[Audit records](../concepts/error-handling.md#audit-trail).
 
 This gives you a complete audit trail of every blocked attempt,
 regardless of whether the block came from your policy or from the
