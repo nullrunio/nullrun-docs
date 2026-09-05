@@ -39,9 +39,9 @@
 
    Typography
    ----------
-   Inter (body, .font-sans) — loaded by overrides/main.html woff2 subsets
-   Space Grotesk (display, .font-display) — for hero / h1 / large section
-                                             titles (opt-in via class)
+   Inter (body + display, .font-sans / .font-display) — loaded by
+                                                         overrides/main.html
+                                                         woff2 subsets.
    IBM Plex Mono (UI labels / code) — for inline code, code blocks,
                                        section chips, kbd.
 
@@ -127,7 +127,7 @@
   /* Typography */
   --md-text-font: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --md-code-font: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-display: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --md-typeset-font-size: 0.9375rem;
   --md-typeset-line-height: 1.55;
   --md-typeset-h1-font-size: 2.25rem;
@@ -394,60 +394,70 @@ svg {
   stroke-width: 2;
 }
 
-/* Material's `.md-search__icon[for="__search"]` is the single visible
-   search trigger in the menu-bar. Material positions it `absolute`
-   inside the search form (which is hidden until the dialog opens).
-   In the menu-bar context we treat it as a sibling icon-button:
-   - `position: static` lets the flex layout in
-     `.nr-menubar__left-buttons` position it.
-   - The 32×32 box matches `.nr-icon-button`.
-   - `cursor: pointer` so it reads as a click target like the others.
-   - The hover treatment matches `.nr-icon-button:hover`.
-   - The second SVG inside (Material's "back arrow") is hidden via
-     `:first-child` so only the magnifier shows — the back arrow is
-     meant for the dialog's "close search" state, which we let
-     Material's own CSS handle when the dialog is open. */
-.md-search__icon.md-icon {
-  position: static;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  margin: 0;
-  border: none;
-  background: none;
-  color: var(--nr-icons);
-  cursor: pointer;
-  border-radius: 0;
-  transition: color 120ms ease, background-color 120ms ease;
+/* Search trigger (`.md-search__icon.md-icon[for="__search"]`) is hidden
+   per user request 2026-09-03 — the menu-bar magnifier has been
+   removed from the design. Search itself stays functional: Material's
+   `__search` checkbox + dialog overlay continue to render when search
+   is opened, and the `/` keyboard shortcut (Material default) still
+   toggles the dialog. The other `.md-search__icon.md-icon` instances
+   (the share / reset buttons inside the open dialog) are unaffected
+   — they're scoped by parent `.md-search__options` /
+   `.md-search__form` and won't match a bare `:not(...)` of the
+   menu-bar trigger (which is unique as a direct child of the form
+   here). The first `.md-search__icon.md-icon` is the one inside
+   `.md-search__form` directly — its siblings are wrapped in
+   `.md-search__options`. */
+.md-search__form > .md-search__icon.md-icon { display: none; }
+
+/* Search input placeholder — Material's stock rules resolve it to
+   `var(--md-primary-bg-color--light)`. With our dark palette
+   (`data-md-color-primary="white"` + `data-md-color-scheme="slate"`),
+   that variable evaluates to `hsla(0,0%,0%,0.54)` — black at 54% alpha
+   — which renders as dark-on-dark and is unreadable on the search
+   dialog surface (user feedback 2026-09-03: "слово Search на темной
+   теме — черного цвета"). Force a theme-aware muted foreground on
+   the placeholder in both themes; in dark theme that's the same
+   `--md-default-fg-color--light` we use for secondary text everywhere
+   else (lifted neutral #999999). The `!important` is required to
+   out-rank Material's stock `.md-search__input::placeholder` rule
+   (same class+pseudo specificity, but their declaration order is
+   later in the cascade). We intentionally do NOT touch the
+   `[data-md-toggle=search]:checked~.md-header .md-search__input::placeholder
+   {color:#0000}` rule — Material still hides the placeholder once
+   the user starts typing, which is the desired UX. */
+.md-search__input::placeholder {
+  color: var(--md-default-fg-color--light) !important;
+  opacity: 1;
 }
-.md-search__icon.md-icon:hover {
-  color: var(--nr-icons-hover);
-  background-color: var(--nr-sidebar-spacer);
-}
-.md-search__icon.md-icon svg {
-  width: 18px;
-  height: 18px;
-  fill: currentColor;
-}
-/* Hide the back-arrow SVG inside `.md-search__icon` — Material ships
-   two icons inside the same label (magnifier + back-arrow). The
-   magnifier is the first child, the back-arrow is the second. We only
-   want the magnifier visible in the menu-bar trigger. */
-.md-search__icon.md-icon svg + svg { display: none; }
-/* When the search dialog is open (`:focus-within` on the search
-   component), hide the magnifier trigger so only the dialog shows —
-   this mirrors Material's stock behaviour where the icon disappears
-   while search is active. The dialog itself stays visible via
-   Material's `:checked` selector on `__search`. */
-.md-search:focus-within .md-search__icon.md-icon { display: none; }
 
 /* ────────────────────────────────────────────────────────────────────────────
    5. THEME POPUP
    ──────────────────────────────────────────────────────────────────────────── */
 .nr-theme { position: relative; display: inline-flex; }
+/* Bridge the 4px gap between the icon button and the popup so the
+   popup stays visible while the cursor moves from the icon down to a
+   menu item. Without this bridge, the cursor passes through the gap
+   (the popup is `position: absolute; top: calc(100% + 4px)` and
+   therefore not in normal flow), leaves `.nr-theme`, and the popup
+   closes mid-flight — user feedback 2026-09-03: "как только я хочу
+   выбрать тему - список пропадает. Работает только если кликнуть на
+   иконку темы". `:focus-within` keeps the popup open after a click
+   (button retains focus while the cursor moves), but plain hover is
+   broken without this bridge. The pseudo-element is a descendant of
+   `.nr-theme`, so hovering it keeps `.nr-theme:hover` true and the
+   popup visible. Pseudo-elements default to `pointer-events: auto`,
+   so the bridge is hittable. The bridge is `display: none` while the
+   popup is closed so it doesn't add stray hit area to the icon. */
+.nr-theme:hover::after,
+.nr-theme:focus-within::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  pointer-events: auto;
+}
 .nr-theme-list {
   position: absolute;
   top: calc(100% + 4px);
@@ -903,7 +913,7 @@ article.md-content__inner,
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   8. HERO (home page) — Space Grotesk display, brutalist CTA plates
+   8. HERO (home page) — Inter display, brutalist CTA plates
    ──────────────────────────────────────────────────────────────────────────── */
 .nr-hero {
   padding: 48px 0 32px;

@@ -16,6 +16,13 @@
 //      `nr-collapsible` class we add in JS (Material's stock behaviour
 //      is unchanged — we just rotate the caret visually).
 //
+//   4. Search dialog — Material's overlay only closes the dialog on
+//      a click over the overlay surface. We extend that to "any click
+//      outside `.md-search__inner`" so a click on the page body (or
+//      any non-dialog content) also closes the dialog. The menu-bar
+//      magnifier trigger is hidden in CSS; search remains openable via
+//      the `/` keyboard shortcut.
+//
 // The menu-bar title h1 is intentionally hidden — the menu-bar is just
 // an icon strip; section context lives in the left sidebar. The
 // title-sync hook from earlier revisions has been removed (dead code).
@@ -135,7 +142,40 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     });
 })();
 
-/* ── 4. Print page body class ─────────────────────────────────────────
+/* ── 4. Search dialog — click-outside to close ─────────────────────
+   Material's overlay (`.md-search__overlay` is a `<label for="__search">`
+   bound to the hidden checkbox) closes the dialog when clicked, but
+   only over the overlay area. If the user focuses the search input
+   and then clicks somewhere outside BOTH the dialog and the overlay
+   (e.g. on the body content), the dialog stays open. User feedback
+   2026-09-03: "когда я нажимаю на поле поиска потом клик на страницу
+   — ничего не делает, поиск не убирается". Close the dialog on any
+   click whose target isn't inside `.md-search__inner` — toggle the
+   `__search` checkbox the same way Material's overlay does. We also
+   reset focus off the input so the next `/` shortcut reopens cleanly. */
+(function initSearchClickOutside() {
+    const checkbox = document.getElementById("__search");
+    if (!checkbox) return;
+
+    function close() {
+        if (!checkbox.checked) return;
+        checkbox.checked = false;
+        // Material listens for `change` on this checkbox to flip its
+        // own aria / class state, so dispatching it keeps Material's
+        // internal JS in sync (mirrors what the overlay <label> does).
+        checkbox.dispatchEvent(new Event("change"));
+    }
+
+    document.addEventListener("click", (ev) => {
+        if (!checkbox.checked) return;
+        const inner = document.querySelector(".md-search__inner");
+        if (inner && inner.contains(ev.target)) return;
+        // Click landed outside the dialog body → close.
+        close();
+    });
+})();
+
+/* ── 5. Print page body class ─────────────────────────────────────────
    `/print/` is a single-page printable edition. We add a body class
    when the URL matches so CSS can:
      - hide the right-side TOC (the page is one long document; a
