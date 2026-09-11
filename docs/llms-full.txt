@@ -108,8 +108,8 @@ flowchart LR
       <div class="nr-feature__body">
         A WebSocket control plane pushes <code>killed</code> /
         <code>paused</code> to every connected SDK. <code>WorkflowKilledInterrupt</code>
-        is a <code>BaseException</code> so it reaches the top of
-        the agent loop, not a swallowed <code>except Exception</code>.
+        reaches the top of the agent loop, not a swallowed
+        <code>except Exception</code>.
       </div>
     </div>
     <div class="nr-feature">
@@ -859,7 +859,7 @@ next call rejects.
 |---|---|---|
 | **Budget exceeded** (Hard mode) | Every call returns `block`; SDK raises `NullRunBudgetError` with `error_code = "NR-B004"` | Audit log, then the spend bar hits 100% |
 | **Tool blocked** by policy | `block`; SDK raises `NullRunToolBlockedError` with `error_code = "NR-T001"` | Audit log |
-| **Operator kill** | `WorkflowKilledInterrupt` raised mid-call | Workflow status flips to **Killed** |
+| **Operator kill** | `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) raised mid-call | Workflow status flips to **Killed** |
 
 Rate limiting (429) and budget soft-mode blocks are returned by the
 same gate but with different codes. SDK surfaces them as `error_code = "NR-R001"` and `error_code = "NR-B004"`. See [Budgets](budgets.md#soft-mode) and [Policies](policies.md).
@@ -873,21 +873,23 @@ The third needs you to click **Kill** in the dashboard or call
 When the breaker trips, the SDK raises an exception. The exact
 exception depends on what tripped it:
 
-| Trip cause | Exception | `BaseException`? |
+| Trip cause | Exception | Class |
 |---|---|---|
-| Budget exceeded | `NullRunBudgetError` (`error_code = "NR-B004"`) | No |
-| Tool blocked | `NullRunBlockedException` (`error_code = "NR-T001"`) | No |
-| Operator kill | `WorkflowKilledInterrupt` | **Yes** |
+| Budget exceeded | `NullRunBudgetError` (`error_code = "NR-B004"`) | `NullRunError` (Exception) |
+| Tool blocked | `NullRunBlockedException` (`error_code = "NR-T001"`) | `NullRunError` (Exception) |
+| Operator kill | `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) | `NullRunError` (Exception) |
 
-The kill signal is a `BaseException`, not an `Exception`, so it
-propagates through `try/except Exception:` blocks. See
-[Error handling → Kill signal](../concepts/error-handling.md#kill-signal-special-case)
-for the full contract.
+The kill signal inherits from `NullRunError`, so `try/except Exception:`
+catches it like every other SDK error. To handle kill specifically
+— checkpoint state, notify a supervisor, exit cleanly — catch
+`NullRunWorkflowKilledError` (preferred) or `WorkflowKilledInterrupt`
+explicitly. See [Error handling → Kill signal](../concepts/error-handling.md#kill-signal)
+for the recommended handler shape.
 
 If you use the zero-boilerplate helpers from the SDK, you don't have
 to write any of this — `@guarded` catches the standard exceptions
-and prints the catalog wording, `WorkflowKilledInterrupt` still
-propagates.
+(including the kill signal), prints the catalog wording, and exits 1.
+To handle kill distinctly, use the un-`@guarded` `protect()` form.
 
 ## When the gateway is unreachable
 
@@ -1180,10 +1182,22 @@ them.
 
 ## What a sensitive tool is, in policy terms
 
-There is no SDK-side built-in sensitive tool list. The shipped
-behaviour is: every enforcement decision is server-side, evaluated by
-the gate on every `/gate` call. You express "sensitive" with a
-`ToolBlock` policy that matches the tool's canonical name.
+There is no built-in tool catalogue shipped by the SDK — every
+enforcement decision is evaluated by the gate on every `/gate` call,
+so you can't accidentally miss a tool you didn't register locally.
+You express "sensitive" with one of two complementary mechanisms:
+
+- **`@sensitive` (SDK-side)** — marks a function so its kwargs flow
+  into the `BusinessImpact` predicate bag used by approval rules
+  (typed `money_amount` / `tool_parameters`). Use this when you want
+  a typed predicate — e.g. "refunds over $500 need approval".
+- **`ToolBlock` (server-side)** — a policy rule evaluated by the
+  gate. The gate fails-CLOSED if it cannot reach Redis or the policy
+  cache to evaluate. Use this for hard rules — "never call `bash`".
+
+For the typed predicate wiring, see
+[Decorators & extractors → `money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact)
+and [`tool_params(...)`](../reference/decorators.md#tool_params-free-form-argument-bag).
 
 Recommended starter patterns (see
 [Tool catalog → Recommended ToolBlock starter list](../reference/llm-tool-catalog.md#recommended-toolblock-starter-list)
@@ -1279,6 +1293,10 @@ is bound to the exact action payload the SDK sent on `/gate`. See
 
 ## See also
 
+- [Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-the-per-tool-policy-marker)
+  — the two `@sensitive` forms (bare + factory), the
+  `money_outflow(...)` / `tool_params(...)` impact extractors, and
+  the `_nullrun_extractor` contract that ties them to `/execute`
 - [Tool policies](tool-policies.md) — the actual rule structure
 - [Tool catalog](../reference/llm-tool-catalog.md) — recommended
   patterns with risk ratings
@@ -1566,10 +1584,19 @@ links to the policy that matched and shows the rule.
 
 ## How long traces are kept
 
-By default, the dashboard keeps traces for **30 days**. On paid
-plans you can extend to 90 days. After the retention window expires,
-the trace is removed from the dashboard; the aggregated cost
-information stays (it's summarised per workflow per period).
+Trace retention follows your plan's `history_days` window:
+
+| Plan | Trace retention |
+|---|---|
+| Lite | 3 days |
+| Starter | 7 days |
+| Growth | 30 days |
+| Scale | 90 days |
+| Enterprise | unlimited |
+
+After the retention window expires, the trace is removed from the
+dashboard; the aggregated cost information stays (it's summarised
+per workflow per period).
 
 If you need longer retention for compliance, you can export traces
 from the dashboard as JSON via the **Export** button on the
@@ -1663,17 +1690,17 @@ From the workflow detail page (or the top-level **Workflows** list):
 
 | Action | Effect on the agent |
 |---|---|
-| **Pause** | Every call starts raising `WorkflowPausedException` (an `Exception`). Resume to undo. |
+| **Pause** | Every call starts raising `WorkflowPausedException` (a `NullRunError` subclass). Resume to undo. |
 | **Resume** | Unpause — calls resume normally. |
-| **Kill** | Every call raises `WorkflowKilledInterrupt` (a `BaseException`). The agent loop dies. |
+| **Kill** | Every call raises `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`). The agent loop dies. |
 
 For the agent, the difference between Pause and Kill:
 
-- **Pause** — recoverable. The exception is a regular `Exception`,
-  the agent can catch it, do clean-up, and either retry or wait.
-- **Kill** — terminal. The exception is a `BaseException`, the
-  agent cannot catch it in `except Exception:` blocks (which is the
-  point — you don't want a runaway loop swallowing the kill).
+- **Pause** — recoverable. The agent can catch `WorkflowPausedException`,
+  do clean-up, and either retry or wait.
+- **Kill** — terminal. The exception inherits from `NullRunError` and
+  is caught by `except Exception:` like every other SDK error — handle
+  it explicitly if you need to checkpoint state before the process exits.
 
 The agent doesn't have to wait for the next `@protect` call to learn.
 If it's mid-LLM-call when you click Kill, the SDK raises the
@@ -1693,20 +1720,13 @@ per second until the WebSocket comes back. From the agent's
 perspective, the control plane still applies — kill/pause still
 arrive on the next gate or yield boundary.
 
-In environments where the WebSocket is firewalled, you can force the
-SDK into polling mode by constructing the runtime directly:
-
-```python
-from nullrun import NullRunRuntime
-
-runtime = NullRunRuntime(api_key="...", polling=True)
-```
-
-`polling=True` is an internal knob intended for tests, CI, and
-integration setups that explicitly need HTTP polling. The default
-in production traffic is the WS transport — auto-negotiated by the
-SDK, no opt-in required. There is no env var for it because it is
-a deploy-time decision, not something you want to flip per-request.
+The control-plane transport is auto-negotiated by the SDK — WS push
+in production traffic with HTTP-polling fallback when the WS
+connection drops repeatedly. You don't need to opt in or pass any
+flag to `init()`; the SDK handles both transports internally.
+For most agents this is invisible: `init()` opens the WS, and the
+gateway's Pause / Kill / `approval_resolved` signals arrive in
+real time without any further setup.
 
 ## What your agent sees {#how-the-sdk-reacts}
 
@@ -1722,18 +1742,20 @@ def my_agent_step(prompt):
 
 try:
     my_agent_step("do something")
-except WorkflowKilledInterrupt:
-    # Operator killed the workflow. This is BaseException — propagate it.
+except NullRunWorkflowKilledError:
+    # Operator killed the workflow. Re-raise, or checkpoint then re-raise.
     raise
 except WorkflowPausedException:
     # Operator paused the workflow. Wait or exit cleanly.
     raise
 ```
 
-`WorkflowKilledInterrupt` is a `BaseException`, so `@guarded` lets
-it propagate (it only catches `NullRunError` subclasses). See
-[Error handling → Kill signal](../concepts/error-handling.md#kill-signal-special-case)
-for the full contract.
+Both signals inherit from `NullRunError`, so `@guarded` catches both
+(prints catalog wording, exits 1). To handle kill distinctly —
+checkpoint state, notify a supervisor, then exit — wrap the
+un-`@guarded` call in your own try/except. See
+[Error handling → Kill signal](../concepts/error-handling.md#kill-signal)
+for the recommended handler shape.
 
 For Pause, you have more flexibility. Most production agents catch
 `WorkflowPausedException`, save their state to durable storage,
@@ -1789,13 +1811,13 @@ in the audit log.
 ### Kill an agent that won't stop
 
 1. **Workflows** → workflow row → **Kill**.
-2. The agent receives `WorkflowKilledInterrupt` on the next yield
-   point inside its loop. The signal is a `BaseException` — see
-   [Error handling](../concepts/error-handling.md#kill-signal-special-case).
-3. If the agent's loop catches `Exception` (but not `BaseException`),
-   the kill propagates through. If the agent catches `BaseException`
-   explicitly, make sure it re-raises `WorkflowKilledInterrupt` —
-   the kill contract is "operator's word is final".
+2. The agent receives `WorkflowKilledInterrupt` (or its typed alias
+   `NullRunWorkflowKilledError`) on the next yield point inside its
+   loop. See [Error handling](../concepts/error-handling.md#kill-signal).
+3. The signal inherits from `NullRunError`, so a bare `except Exception:`
+   arm catches it. If you want a clean shutdown on kill, catch the
+   typed exception **explicitly** and re-raise it — the kill contract
+   is "operator's word is final".
 
 ### Verify the signal arrived
 
@@ -2523,10 +2545,10 @@ The complete flow, end-to-end:
    outcome.
 
 If the WS push is silent for `approval_timeout_seconds`, the SDK
-**fails CLOSED**: `WorkflowKilledInterrupt` is raised and the agent
-dies. A silent network must not silently approve a privileged
-action. There is no `/status` HTTP-poll fallback for approvals —
-deliberate, the operator's word is final.
+**fails CLOSED**: `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`)
+is raised and the agent dies. A silent network must not silently
+approve a privileged action. There is no `/status` HTTP-poll
+fallback for approvals — deliberate, the operator's word is final.
 
 ## What you see in the dashboard
 
@@ -2570,20 +2592,19 @@ Two buttons:
   `action_digest` against the live payload and refuses on mismatch
   (returns `DigestMismatch`).
 - **Deny** — the gate rejects, the agent sees `WorkflowKilledInterrupt`
-  (a `BaseException`). The agent can catch it and clean up; most
-  agents don't.
+  (alias `NullRunWorkflowKilledError`). The agent can catch it and
+  clean up; most agents don't.
 
 If you don't click either within the approval's `expires_at` window,
 the request expires. The SDK raises `WorkflowKilledInterrupt`
-after `approval_timeout_seconds` (server-clamped `[1, 3600]` s).
-The agent can retry or give up.
+(alias `NullRunWorkflowKilledError`) after `approval_timeout_seconds`
+(server-clamped `[1, 3600]` s). The agent can retry or give up.
 
 ## Notification channels
 
 When an approval is created, the gateway notifies every active
 channel configured on your org:
 
-- **Email** — sent via our SMTP provider.
 - **Slack** — uses your org's installed Slack OAuth.
 - **Webhook** — generic HTTPS POST with HMAC-SHA256 signature
   (`X-NullRun-Signature`, 5-minute clock-skew tolerance, 10-minute
@@ -2660,6 +2681,20 @@ both for compliance and for incident review. The action digest is the
 immutable anchor that proves the operator approved the exact payload
 the SDK sent on `/gate` (not "any refund" — the exact amount and
 arguments).
+
+## SDK-side extraction
+
+The `action_digest` is **produced** by the SDK at extraction time.
+For the Python SDK, this happens inside `@sensitive` when you
+attach an `impact=` extractor — see
+[Decorators & extractors → `money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact)
+and [Decorators & extractors → `tool_params(...)`](../reference/decorators.md#tool_params-free-form-argument-bag).
+
+The extracted `BusinessImpact` is canonicalised (keys sorted
+recursively, compact JSON, `nullrun/v1/business_impact:` prefix)
+and SHA-256-hashed; the digest flows onto the wire on both
+`/gate` and `/execute`. A drift between SDK and backend is a P0
+security regression covered by the SDK's source-pin tests.
 
 ## See also
 
@@ -2868,7 +2903,7 @@ the work — you pick how much of each layer to use.
     |---|---|---|
     | Your code | `except NullRunDecision` | Expected policy outcomes (budget, tool block, pause) |
     | Your code | `except NullRunInfrastructureError` | Transport / 5xx / auth / config failures |
-    | Your code | `except WorkflowKilledInterrupt` | Operator kill — `BaseException`, not `Exception` |
+    | Your code | `except NullRunWorkflowKilledError` (or `WorkflowKilledInterrupt`) | Operator kill — terminal; caught by `except Exception:`, handle explicitly if you need to checkpoint before exit |
     | Your monitoring | `@nullrun.on_error` hook | Every `NullRunError`, fired before propagation |
     | Your end user | `@guarded` / `format_user_message` | Friendly text from the catalog |
 
@@ -3001,9 +3036,10 @@ def _to_log(err, ctx):
     log.warning("NullRun error", extra={"code": err.error_code})
 ```
 
-The hook fires for every `NullRunError` subclass. It does **not**
-fire for `WorkflowKilledInterrupt` (a `BaseException` — kill is a
-signal, not an error).
+The hook fires for every `NullRunError` subclass — **including the
+kill signal** (`WorkflowKilledInterrupt` and its typed alias
+`NullRunWorkflowKilledError`). If you want to skip kill inside the
+hook, filter on `error_code` (`"NR-W002"`).
 
 ## Layer 3 — `@guarded` and `format_user_message`
 
@@ -3037,9 +3073,13 @@ $ echo $?
 1
 ```
 
-`@guarded` catches every `NullRunError`, prints the catalog wording
-to stderr, and exits with code 1. `WorkflowKilledInterrupt` still
-propagates — kill is final, even with `@guarded`.
+`@guarded` catches every `NullRunError` — which now includes the
+kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`
+both inherit from `NullRunError`) — prints the catalog wording to
+stderr, and exits with code 1. To handle kill distinctly (for
+example, checkpoint state before exit), use the un-`@guarded`
+`protect()` form and add your own `except NullRunWorkflowKilledError:`
+arm.
 
 `@guarded` is for scripts and one-shots. For long-running services
 you want explicit handling — see [Server frameworks](#server-frameworks)
@@ -3117,37 +3157,43 @@ trace-span boundary so plaintext does not reach the structured log
 store. Uppercase `KEY=VALUE` pairs are rewritten to `KEY=[REDACTED]`
 before bytes reach stdout.
 
-## Kill signal — special case
+## Kill signal
 
-`WorkflowKilledInterrupt` is a `BaseException`, not an `Exception`.
-This is deliberate — kill signals must propagate even if your code
-catches everything:
+The operator kill signal arrives as `WorkflowKilledInterrupt` or its
+typed alias `NullRunWorkflowKilledError` (recommended). Both inherit
+from `NullRunError`, so a bare `except Exception:` arm catches the
+kill alongside every other SDK error:
 
 ```python
 try:
     my_agent(prompt)
 except Exception:
-    # Operator clicked Kill. Don't swallow this.
-    pass
-# WorkflowKilledInterrupt is NOT caught here.
+    log.error("agent failed", exc_info=True)
+# WorkflowKilledInterrupt IS caught here.
 ```
 
-If you want a clean shutdown on kill, catch `WorkflowKilledInterrupt`
-**explicitly before** any `except Exception`:
+If you want kill-specific handling — checkpointing state, notifying
+a supervisor, exiting with a clean reason — catch the typed alias
+**explicitly** and re-raise it after handling (the kill contract is
+"operator's word is final"):
 
 ```python
+from nullrun import NullRunWorkflowKilledError
+
 try:
     my_agent(prompt)
-except WorkflowKilledInterrupt:
-    persist_state()  # save checkpoint
-    raise           # re-raise — kill must reach the top
-except Exception:
+except NullRunWorkflowKilledError:
+    persist_state()
+    raise
+except NullRunError:
     log.error("agent failed", exc_info=True)
 ```
 
-`@guarded` follows this rule — it catches `NullRunError`
-(`Exception` subclasses) and lets `BaseException` (kill, pause,
-KeyboardInterrupt) propagate.
+`@guarded` catches kill via the standard `NullRunError` arm — it
+prints the catalog wording and exits 1. To keep the process alive
+on kill (checkpoint, notify a supervisor, then exit), use the
+un-`@guarded` `protect()` form with your own
+`except NullRunWorkflowKilledError:` arm above.
 
 ## See also
 
@@ -4344,17 +4390,16 @@ def chat(message: str) -> dict:
 
 ## What `install()` registers
 
-`install(app)` wires three handlers — two via FastAPI's exception
-handler chain, one as an ASGI middleware. The split exists because
-Starlette refuses `BaseException` subclasses in
-`add_exception_handler` (so careless `except Exception:` handlers in
-agent code can't swallow operator kills).
+`install(app)` wires the SDK exceptions to FastAPI's handler
+chain: every `NullRunError` subclass — including `WorkflowKilledInterrupt`
+/ `NullRunWorkflowKilledError` — is routed to the appropriate
+`app.add_exception_handler` based on its category.
 
 | Exception | Mechanism | HTTP | Body |
 | --- | --- | --- | --- |
 | `NullRunError` (budget, tool block, rate limit, soft block, etc.) | `app.add_exception_handler` | per `error_code` | `user_message`, `category: "decision"`, `retryable` |
 | Infrastructure errors (transport, 5xx, auth, config) | `app.add_exception_handler` | `503` | `user_message`, `category: "infrastructure"`, `retryable` |
-| `WorkflowKilledInterrupt` (BaseException) | `NullRunMiddleware` (ASGI) | `503` | `user_message`, `category: "killed"` |
+| `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) | `app.add_exception_handler` | `503` | `user_message`, `category: "killed"` |
 
 `Retry-After` is set on the response whenever the exception carries a
 `retry_after` (gateway 429) or `resume_after` (workflow pause)
@@ -4432,8 +4477,10 @@ def chat(message: str) -> dict:
         )
 ```
 
-`WorkflowKilledInterrupt` (a `BaseException`) bypasses both handlers
-and reaches the ASGI middleware in `install(app)`.
+`WorkflowKilledInterrupt` is caught by the `NullRunError` handler
+chain and surfaced as a `503` with `category: "killed"`. Catch it
+explicitly in your endpoint if you need to checkpoint before the
+response is returned.
 
 ## Response body shape
 
@@ -4965,7 +5012,7 @@ for the wire-level details.
 |---|---|---|
 | Missing `with workflow(...)` around the orchestrator | Each sub-agent gets its own ad-hoc workflow_id, no shared budget pool across the tree | Wrap the whole tree in one workflow block |
 | Each sub-agent has its own key | Sub-agents share nothing — kill signal only reaches the one bound to the killed workflow | Use one key for the orchestrator and let sub-agents inherit |
-| Catching `Exception` instead of `BaseException` around the orchestration loop | Kill signal swallowed, agents keep running | Catch `WorkflowKilledInterrupt` explicitly first |
+| Catching only `Exception` around the orchestration loop with no kill handler | Kill still propagates but with no cleanup hook | Catch `NullRunWorkflowKilledError` explicitly first if you need to checkpoint sub-agent state |
 
 ## See also
 
@@ -5055,9 +5102,12 @@ If the chain dies (idle TTL expired, max duration exceeded, or
 
 ## Kill signal mid-stream
 
-An operator hit on **Kill** raises `WorkflowKilledInterrupt` at the
-next `yield` boundary. It is a `BaseException` — catch it before any
-`except Exception` block, otherwise you'll swallow the kill.
+An operator hit on **Kill** raises `WorkflowKilledInterrupt` (alias
+`NullRunWorkflowKilledError`) at the next `yield` boundary. It is a
+`NullRunError` subclass — caught by `except Exception:` like every
+other SDK error. If you want kill-specific handling (close the
+stream, flush state), catch the typed alias explicitly first and
+re-raise after.
 
 ### Cancellation latency
 
@@ -5128,7 +5178,7 @@ next `/gate` may reject the next call based on stale spend.
 |---|---|---|
 | Heartbeat every N chunks | Chain dies silently during slow streams | Heartbeat on a wall-clock timer (30s default) |
 | `await stream.close()` after kill | Half-written chunks can leak to the caller | Wrap the stream in `try/finally`, always close |
-| Catching `Exception` instead of `BaseException` around the loop | Kill signal is swallowed, agent keeps running | Catch `WorkflowKilledInterrupt` explicitly first |
+| Catching only `Exception` around the loop with no kill handler | Kill still propagates but with no cleanup hook | Catch `NullRunWorkflowKilledError` explicitly first to close the stream |
 | Forgetting `track_llm()` after a manual stream | Dashboard shows zero cost, budget never decremented | Always report final usage, even via estimation |
 
 ## See also
@@ -5450,14 +5500,14 @@ from nullrun import init, init_or_die, protect, workflow, span, agent, chain, tr
 | `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Like `init` but exits cleanly with `exit_code` (default 1) if no API key is configured. See the table above. | ✅ |
 | `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. Always pair with `@guarded` for the zero-boilerplate exit-on-block pattern. | ✅ |
 | `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check before the body runs. If the gate is unreachable, the call is rejected. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
-| `@guarded` | Decorator that wraps a function so any `NullRunError` raised inside is converted to `format_user_message(exc)` on stderr and `sys.exit(1)`. `WorkflowKilledInterrupt` (BaseException) propagates unchanged. | ✅ |
+| `@guarded` | Decorator that wraps a function so any `NullRunError` raised inside is converted to `format_user_message(exc)` on stderr and `sys.exit(1)`. The kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) is also a `NullRunError` subclass, so `@guarded` catches it too. Use the un-`@guarded` `protect()` form if you need to handle kill distinctly. | ✅ |
 | `with nullrun.handle(*, exit_code=1):` | Context manager form of `@guarded` — apply to a region of code rather than a single function. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
 | `chain(chain_id: str, op: str = "start")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
 | `span(name=None)` | Context manager for nested trace spans. | (lazy) |
 | `agent(name=None)` | Context manager for agent identity. | (lazy) |
 | `set_call_context(model=None, tools=None)` | Per-call context the SDK forwards to `/gate` so the backend's budget + tool-block enforcement sees real values. | (lazy) |
-| `on_error(hook)` | Register a global error hook. Fires for every `NullRunError` subclass BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Does NOT fire for `WorkflowKilledInterrupt` (BaseException — kill is a non-recoverable signal). Returns an idempotent unregister callable. | ✅ |
+| `on_error(hook)` | Register a global error hook. Fires for every `NullRunError` subclass — including the kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) — BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Filter inside the hook by `error_code` (`"NR-W002"`) if you need to skip kill. Returns an idempotent unregister callable. | ✅ |
 | `track_llm(input_tokens, output_tokens=0, **kwargs)` | Manual escape hatch for non-HTTP LLM calls. Returns the backend's decision dict. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. `**kwargs` are forwarded to the transport layer (e.g. `model`, `latency_ms`, `metadata`). | ✅ |
 | `track_tool(tool_name, duration_ms=None, **kwargs)` | Manual tool-call tracking. `**kwargs` are forwarded to the transport layer (e.g. `is_retry`, `metadata`). | ✅ |
 | `track_event(event_type, **kwargs)` | Catch-all for custom events. | ✅ |
@@ -5575,8 +5625,9 @@ hierarchy diagram.
 | `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
 | `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
 | `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunError`. Carries `.workflow_id`, `.reason`, `.resume_after`. |
-| `WorkflowKilledException` | Killed via control plane (parent) | `BaseException` subclass (NOT `Exception`). **Deprecated** — emits `DeprecationWarning` on construction. Use `WorkflowKilledInterrupt` directly. |
-| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `BaseException` (NOT `Exception`) per the kill contract — catch before `except Exception`. |
+| `WorkflowKilledException` | Killed via control plane (legacy parent) | `BaseException` subclass. **Deprecated** — emits `DeprecationWarning` on construction. Use `NullRunWorkflowKilledError` directly. |
+| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `NullRunError` (was `BaseException` before SDK 0.16.x — now caught by `except Exception:` like every other SDK error). |
+| `NullRunWorkflowKilledError` | Kill arrived mid-call (typed alias) | Preferred subclass of `WorkflowKilledInterrupt`. Same wire semantics; use this for typed `except` arms. |
 
 
 ## Catch-all pattern
@@ -5595,7 +5646,7 @@ init(api_key="nr_live_...")
 try:
     step()
 except WorkflowKilledInterrupt:
-    raise                    # BaseException — catch before any except Exception
+    raise                    # always re-raise — kill must reach the top
 except NullRunBlockedException:
     ...                      # budget / tool block / workflow inactive / chain
 except RateLimitError as exc:
@@ -5679,6 +5730,10 @@ function never raises and never returns an empty string.
 
 ## See also
 
+- [Decorators & extractors](decorators.md) — deep-dive on `@protect`,
+  `@sensitive`, `@guarded`, `money_outflow`, `tool_params`,
+  `set_call_context`, and the workflow / span / chain context
+  managers
 - [Errors](errors.md)
 - [Errors → Decision vs. infrastructure](errors.md#decision-vs-infrastructure)
 - [Use with FastAPI](../how-to/fastapi.md)
@@ -6129,7 +6184,10 @@ NullRunError                          (Exception)
 │   ├── NullRunBlockedException       (policy / budget / loop / sensitive block)
 │   │   ├── NullRunBudgetError        (budget exhausted — NR-B004)
 │   │   └── NullRunToolBlockedError   (tool in block list — NR-T001)
-│   └── WorkflowPausedException       (paused via control plane)
+│   ├── WorkflowPausedException       (paused via control plane)
+│   └── NullRunWorkflowKilledError    (kill via control plane — NR-W002;
+│                                       preferred typed alias of
+│                                       `WorkflowKilledInterrupt`)
 └── NullRunInfrastructureError        (marker — system failures)
     ├── NullRunConfigError            (misconfiguration, e.g. missing api_key)
     ├── NullRunAuthenticationError   (401 / 403)
@@ -6137,11 +6195,6 @@ NullRunError                          (Exception)
     └── NullRunTransportError         (transport failures)
         ├── NullRunBackendError       (5xx — retryable)
         └── RateLimitError            (429 — carries .retry_after, .upgrade_url)
-
-BaseException
-└── WorkflowKilledException           (parent)
-    └── WorkflowKilledInterrupt       (kill via control plane — BaseException,
-                                       not Exception; per the kill contract)
 ```
 
 `NullRunDecision` and `NullRunInfrastructureError` are **marker
@@ -6158,8 +6211,10 @@ tool-scoped), and `.details` (free-form). There is **no** `.message`
 attribute — use `str(exc)`.
 
 
-`WorkflowKilledInterrupt` does not subclass `Exception` — catch it
-explicitly and before any `except Exception`.
+`NullRunWorkflowKilledError` (and its parent `WorkflowKilledInterrupt`)
+inherit from `NullRunError`, so a bare `except Exception:` catches
+the kill signal. For kill-specific handling — checkpointing state,
+notifying a supervisor, etc. — catch the typed exception explicitly.
 
 ## The default path: zero lines of error handling
 
@@ -6173,11 +6228,13 @@ required.
 | `@guarded` | Any `NullRunError` raised inside the wrapped function | Standard agent loop |
 | `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) |
 
-All three propagate `WorkflowKilledInterrupt` (`BaseException`)
-unchanged and let non-`NullRunError` exceptions surface as honest
-tracebacks. For the full design rationale and the boundary between
-"what NullRun tells the developer" and "what the developer tells
-their end users", see [Concepts → Error handling](../concepts/error-handling.md).
+All three propagate non-`NullRunError` exceptions (anything that
+isn't an SDK error) as honest tracebacks. `NullRunError` subclasses
+— including the kill signal `NullRunWorkflowKilledError` — are
+caught and converted to catalog wording. For the full design
+rationale and the boundary between "what NullRun tells the
+developer" and "what the developer tells their end users", see
+[Concepts → Error handling](../concepts/error-handling.md).
 
 ## Decision vs. infrastructure
 
@@ -6292,14 +6349,17 @@ and end-user-facing wording lives in
 | `NR-T001` | Tool in block list | 403 | `NullRunToolBlockedError` |
 | `NR-CH001` | Chain context invalid (CHAIN_MAX_DURATION_EXCEEDED) | 402 | `NullRunChainError` |
 | `NR-W001` | Workflow does not exist or is not visible to this API key | 404 | `NullRunError` |
+| `NR-W002` | Operator kill signal (via dashboard **Kill** button or WS push) | n/a (raised) | `NullRunWorkflowKilledError` (alias `WorkflowKilledInterrupt`) |
 | `NR-W004` | Workflow soft-deleted, killed, or paused | 403/503 | `WorkflowPausedException` / kill signal |
 | `NR-A003` | API key rejected | 401 | `NullRunAuthError` |
+| `NR-A004` | Approval response missing — gate returned `require_approval` but no row found on `/execute` | 403 | `NullRunApprovalResponseMissingError` |
 | `NR-A010` | Approval exists, status `PENDING` — operator has not decided yet | 403 | `NullRunApprovalNotYetApprovedError` |
 | `NR-A011` | Operator explicitly denied the approval | 403 | `NullRunApprovalDeniedError` |
 | `NR-A012` | Approval expired (`expires_at` in the past) | 403 | `NullRunApprovalExpiredError` |
 | `NR-A013` | Business-impact digest drifted since approval — re-approval required | 403 | `NullRunApprovalDigestMismatchError` |
 | `NR-A014` | Capability digest drifted since approval — re-approval required | 403 | `NullRunApprovalToolDigestMismatchError` |
 | `NR-A015` | Grant already consumed (replay rejected) | 403 | `NullRunApprovalReplayRejectedError` |
+| `NR-A016` | Approval database unavailable — transient 5xx on the approval row lookup | 503 | `NullRunApprovalDbUnavailableError` (fail-CLOSED — retry with backoff) |
 | `NR-X001` | Generic policy block — no dedicated subclass | varies | `NullRunBlockedException` (default) |
 
 Approval grant-consume codes (NR-A010..NR-A015) are most often seen
@@ -6836,7 +6896,7 @@ when it isn't.
 | Gateway unreachable, budget gate | **Fail-CLOSED** — 402 | `NullRunBackendError` |
 | Gateway unreachable, per-key rate limit | **Fail-OPEN** (secondary signal; budget gate is the backstop) | `NullRunBackendError` (warn-logged) |
 | Gateway unreachable, aggregate rate limit | **Fail-CLOSED** — 503 | `NullRunRateLimitRedisError` |
-| Workflow killed via dashboard | Raise at next `/gate` call (or at WS push receipt) | `WorkflowKilledInterrupt` (`BaseException`) |
+| Workflow killed via dashboard | Raise at next `/gate` call (or at WS push receipt) | `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) |
 | Workflow paused via dashboard | Raise at next `/gate` call | `WorkflowPausedException` |
 | Missing `api_key` on `init()` | Raise at first SDK call | `NullRunAuthenticationError` |
 | HMAC signature missing / stale | Reject the request (401) | `NullRunAuthenticationError` |
@@ -6848,6 +6908,58 @@ when it isn't.
 
 > Critical paths refuse to run when the gateway is unreachable;
 > secondary signals may let calls through.
+
+## What happens when the NullRun service is unavailable
+
+NullRun's service is the gateway that evaluates every `/check` and
+`/track` call. When it's down, behaviour is intentionally asymmetric:
+**enforcement paths fail-CLOSED** (the safest choice — never let a
+tool run that should have been blocked), while **secondary signals**
+(per-key rate limits, cost-event outbox writes, dashboard reads) may
+fail-OPEN or be queued, because blocking on them would lose data
+without protecting the budget.
+
+This table describes every surface that can be affected. If a row
+isn't here, the surface behaves as documented in its own concept
+page.
+
+| Surface | What you observe during an outage | How to handle it |
+| --- | --- | --- |
+| **Active `/check` — budget gate** | Fail-CLOSED. SDK raises `NullRunBackendError`; the next `@protect`-wrapped call is refused. No implicit re-reserve. The reservation TTL eventually releases the cents. | Catch the exception; retry with exponential backoff. Long outages will exceed your tool timeout. The budget counter is never decremented by a call the gate never approved. |
+| **Active `/check` — sensitive-tool gate** | Fail-CLOSED. The sensitive tool body never runs. SDK raises `NullRunBackendError`. | Treat as **indeterminate** — don't retry the side-effect blindly. Surface the error to the user and let a human decide. This is the canonical reason `@sensitive` is the default for irreversible actions. |
+| **Active `/check` — per-key rate limit** | Fail-OPEN (secondary signal). SDK warns and the call proceeds. The budget gate remains the backstop. | No action required. The budget gate still applies on the next call. |
+| **Active `/check` — aggregate (per-org) rate limit** | Fail-CLOSED — 503 `NullRunRateLimitRedisError`. | Back off and retry with jitter. This is a true outage of the aggregator, not a transient blip. |
+| **Active `/track` — cost commit** | Returns 200 with the cost event queued in the SDK's local outbox. The inference already happened; blocking would lose the cost record. | None required. The SDK persists the event locally and the outbox drains when the gateway returns. **No cost record is lost during the outage window.** |
+| **Control plane (WebSocket)** | Connection drops. SDK reconnects with exponential backoff. The local snapshot of workflow status (active / paused / killed) survives. | No operator action — reconnect is automatic. Long outages mean no live kill/pause signals reach the SDK; the next `/check` call picks them up server-side. |
+| **In-flight approval request** | Held server-side; not surfaced to operators until the gateway returns. The SDK continues to wait for an approval decision (subject to your approval timeout). | If your approval timeout is short, expect `NullRunApprovalTimeoutError`. The pending request is preserved server-side and reappears in the approvals inbox once the gateway recovers — operators can still answer it. |
+| **Dashboard UI** | Pages return 503; read paths may serve cached fragments where possible. The top banner shows "NullRun is currently unavailable." | Refresh once `GET /health/ready` returns 200. Read-only views (audit log, dashboards) resume first; writes (kill, approve, edit) resume once the gateway is fully ready. |
+| **HTTP API (programmatic)** | 502 / 503 / 504 on read and write paths. Writes are rejected — the server has no record of success, so there is no implicit retry. | Idempotent reads (`GET`) can be retried freely. Writes (`POST /kill`, `POST /approve`) should not be retried blindly — gate them behind your own idempotency keys if your client retries. |
+| **Cost-event outbox (reconciliation)** | Events queue in Redis; the drain loop resumes when the gateway returns. | None — reconciliation is automatic. The outbox catches up on the next gateway tick. Provisional reservations eventually reconcile to final `cost_events` rows. |
+| **Alerts & notifications** | Rule evaluation pauses (the gateway can't see new events to score). Outbound delivery depends on channel: Slack messages buffer at Slack's edge; email and webhook channels drop. | Check the channel after recovery. Slack messages sent during the outage arrive late but are not lost; webhook deliveries need a replay tool. See [Notifications](concepts/notifications.md). |
+| **Configured workflows, policies, MCP servers, API keys** | Read-only. Nothing can be created, edited, killed, or revoked until the gateway returns. **Already-active rules continue to enforce** on the next gate call — the gate caches the merged Effective Policy. | Plan configuration changes outside the outage window. Operators can still read existing state from cached dashboard fragments. |
+| **`GET /health/live`** | Always 200 if the binary is running — even when downstream deps are down. | Use this for liveness probes. **Do not use it as a "is NullRun usable" signal** — it will lie during a Redis or Postgres outage. |
+| **`GET /health/ready`** | 200 when DB + Redis + policy cache are reachable; 503 otherwise. | Use this for readiness probes and to page on. This is the signal that flips first as the service recovers. |
+| **`GET /api/v1/capabilities`** | 200 with the cached protocol version when the gateway can read from cache; 503 if Redis is unreachable. | Treat 5xx as "stay on the version you already have" — don't auto-upgrade during an outage. The SDK already pins the version it probed at startup. |
+
+### Operator playbook during an outage
+
+1. **Confirm the scope.** Check `GET /health/ready` (or the status
+   page). If `/health/ready` is 503 but `/health/live` is 200, the
+   gateway process is up but Redis or Postgres is unreachable — every
+   enforcement path will fail-CLOSED.
+2. **Watch the recovery cascade.** `/health/ready` flips first, then
+   `/api/v1/capabilities`, then the WebSocket reconnects, then the
+   cost-event outbox finishes draining, then dashboard writes unlock.
+   Each layer takes a few seconds; the whole cascade usually finishes
+   inside a minute.
+3. **Audit the outage window afterwards.** Open the workflow's detail
+   page and filter the audit log to the outage window. Every decision
+   (including the fail-CLOSED ones) is retained — nothing is lost, and
+   the row counts reconcile against the cost-events outbox.
+4. **Don't disable the gate to "fix" the outage.** Setting
+   `NULLRUN_SKIP_BUDGET_CHECK=1` or `NULLRUN_SENSITIVE_FAIL_OPEN=1`
+   bypasses the gate entirely and is unsafe in production. Let the
+   gate fail-CLOSED; catch and retry in your code.
 
 ## Common runtime questions
 

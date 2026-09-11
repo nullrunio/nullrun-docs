@@ -68,7 +68,7 @@ the kill/pause signal translation differs.
 
 | # | Gate | Failure mode | Sync behaviour | Async behaviour |
 |---|---|---|---|---|
-| 1 | `check_control_plane(workflow_id)` — KILL/PAUSE from the dashboard | **fail-CLOSED** (kill is terminal) | Raise `NullRunBlockedException(NR-W002)` / `(NR-W003)` | Re-raise the underlying `WorkflowKilledInterrupt` (BaseException) unchanged |
+| 1 | `check_control_plane(workflow_id)` — KILL/PAUSE from the dashboard | **fail-CLOSED** (kill is terminal) | Raise `NullRunBlockedException(NR-W002)` / `(NR-W003)` | Re-raise the underlying `NullRunWorkflowKilledError` unchanged |
 | 2 | `check_workflow_budget()` — `/gate` pre-flight reservation | **fail-OPEN** on transport error (a transient backend outage must not freeze the user's agent) | `NullRunBudgetError(NR-B004)` on real block; transport error logs and proceeds | identical |
 | 3 | `_emit_span_start(...)` — observability `span_start` event | **never blocks** — exceptions swallowed at DEBUG | identical | identical |
 | 4 | `_enforce_sensitive_tool(...)` — `/execute` per-tool policy if `fn.__name__` is in the sensitive set | **fail-CLOSED** on transport error (a denied `charge_card` that runs when the policy engine is down is worse than a denied `charge_card` during an outage). Opt out via `NULLRUN_SENSITIVE_FAIL_OPEN=1`. | `NullRunBlockedException` on real block; on `NullRunTransportError` re-raises with source-specific `error_code` (NR-B001/NR-B002/NR-A003/NR-B005) | identical |
@@ -92,8 +92,8 @@ during `@protect`'s own scaffolding is rewrapped into a single
 `NullRunBlockedException` the user can catch uniformly. The async
 wrapper passes `unify_block=False` — async frameworks
 (`asyncio.CancelledError`, signal handlers) rely on the original
-`BaseException` subtype to interrupt cleanly. Re-raising
-`WorkflowKilledInterrupt` as-is is required, not a bug.
+typed exception to interrupt cleanly. Re-raising
+`NullRunWorkflowKilledError` as-is is required, not a bug.
 
 ### Span hierarchy (built automatically)
 
@@ -263,8 +263,8 @@ printed to **stderr**, and the process exits with code `1`.
 
 Exceptions that propagate unchanged:
 
-- `WorkflowKilledInterrupt` (BaseException) — kill signals must reach
-  the top of the agent loop, not be swallowed into a graceful exit.
+- `NullRunWorkflowKilledError` (kill signal) — kill must reach the
+  top of the agent loop, not be swallowed into a graceful exit.
   Re-raised explicitly inside the `except NullRunError` branch.
 - `KeyboardInterrupt` / `SystemExit` — same reason; they don't reach
   the `except NullRunError` branch anyway.

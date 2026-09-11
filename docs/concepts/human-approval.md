@@ -118,10 +118,10 @@ The complete flow, end-to-end:
    outcome.
 
 If the WS push is silent for `approval_timeout_seconds`, the SDK
-**fails CLOSED**: `WorkflowKilledInterrupt` is raised and the agent
-dies. A silent network must not silently approve a privileged
-action. There is no `/status` HTTP-poll fallback for approvals —
-deliberate, the operator's word is final.
+**fails CLOSED**: `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`)
+is raised and the agent dies. A silent network must not silently
+approve a privileged action. There is no `/status` HTTP-poll
+fallback for approvals — deliberate, the operator's word is final.
 
 ## What you see in the dashboard
 
@@ -165,20 +165,19 @@ Two buttons:
   `action_digest` against the live payload and refuses on mismatch
   (returns `DigestMismatch`).
 - **Deny** — the gate rejects, the agent sees `WorkflowKilledInterrupt`
-  (a `BaseException`). The agent can catch it and clean up; most
-  agents don't.
+  (alias `NullRunWorkflowKilledError`). The agent can catch it and
+  clean up; most agents don't.
 
 If you don't click either within the approval's `expires_at` window,
 the request expires. The SDK raises `WorkflowKilledInterrupt`
-after `approval_timeout_seconds` (server-clamped `[1, 3600]` s).
-The agent can retry or give up.
+(alias `NullRunWorkflowKilledError`) after `approval_timeout_seconds`
+(server-clamped `[1, 3600]` s). The agent can retry or give up.
 
 ## Notification channels
 
 When an approval is created, the gateway notifies every active
 channel configured on your org:
 
-- **Email** — sent via our SMTP provider.
 - **Slack** — uses your org's installed Slack OAuth.
 - **Webhook** — generic HTTPS POST with HMAC-SHA256 signature
   (`X-NullRun-Signature`, 5-minute clock-skew tolerance, 10-minute

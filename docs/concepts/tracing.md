@@ -107,10 +107,19 @@ links to the policy that matched and shows the rule.
 
 ## How long traces are kept
 
-By default, the dashboard keeps traces for **30 days**. On paid
-plans you can extend to 90 days. After the retention window expires,
-the trace is removed from the dashboard; the aggregated cost
-information stays (it's summarised per workflow per period).
+Trace retention follows your plan's `history_days` window:
+
+| Plan | Trace retention |
+|---|---|
+| Lite | 3 days |
+| Starter | 7 days |
+| Growth | 30 days |
+| Scale | 90 days |
+| Enterprise | unlimited |
+
+After the retention window expires, the trace is removed from the
+dashboard; the aggregated cost information stays (it's summarised
+per workflow per period).
 
 If you need longer retention for compliance, you can export traces
 from the dashboard as JSON via the **Export** button on the

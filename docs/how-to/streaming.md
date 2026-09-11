@@ -73,9 +73,12 @@ If the chain dies (idle TTL expired, max duration exceeded, or
 
 ## Kill signal mid-stream
 
-An operator hit on **Kill** raises `WorkflowKilledInterrupt` at the
-next `yield` boundary. It is a `BaseException` — catch it before any
-`except Exception` block, otherwise you'll swallow the kill.
+An operator hit on **Kill** raises `WorkflowKilledInterrupt` (alias
+`NullRunWorkflowKilledError`) at the next `yield` boundary. It is a
+`NullRunError` subclass — caught by `except Exception:` like every
+other SDK error. If you want kill-specific handling (close the
+stream, flush state), catch the typed alias explicitly first and
+re-raise after.
 
 ### Cancellation latency
 
@@ -146,7 +149,7 @@ next `/gate` may reject the next call based on stale spend.
 |---|---|---|
 | Heartbeat every N chunks | Chain dies silently during slow streams | Heartbeat on a wall-clock timer (30s default) |
 | `await stream.close()` after kill | Half-written chunks can leak to the caller | Wrap the stream in `try/finally`, always close |
-| Catching `Exception` instead of `BaseException` around the loop | Kill signal is swallowed, agent keeps running | Catch `WorkflowKilledInterrupt` explicitly first |
+| Catching only `Exception` around the loop with no kill handler | Kill still propagates but with no cleanup hook | Catch `NullRunWorkflowKilledError` explicitly first to close the stream |
 | Forgetting `track_llm()` after a manual stream | Dashboard shows zero cost, budget never decremented | Always report final usage, even via estimation |
 
 ## See also

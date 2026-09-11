@@ -39,14 +39,14 @@ from nullrun import init, init_or_die, protect, workflow, span, agent, chain, tr
 | `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Like `init` but exits cleanly with `exit_code` (default 1) if no API key is configured. See the table above. | ✅ |
 | `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. Always pair with `@guarded` for the zero-boilerplate exit-on-block pattern. | ✅ |
 | `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check before the body runs. If the gate is unreachable, the call is rejected. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
-| `@guarded` | Decorator that wraps a function so any `NullRunError` raised inside is converted to `format_user_message(exc)` on stderr and `sys.exit(1)`. `WorkflowKilledInterrupt` (BaseException) propagates unchanged. | ✅ |
+| `@guarded` | Decorator that wraps a function so any `NullRunError` raised inside is converted to `format_user_message(exc)` on stderr and `sys.exit(1)`. The kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) is also a `NullRunError` subclass, so `@guarded` catches it too. Use the un-`@guarded` `protect()` form if you need to handle kill distinctly. | ✅ |
 | `with nullrun.handle(*, exit_code=1):` | Context manager form of `@guarded` — apply to a region of code rather than a single function. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
 | `chain(chain_id: str, op: str = "start")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
 | `span(name=None)` | Context manager for nested trace spans. | (lazy) |
 | `agent(name=None)` | Context manager for agent identity. | (lazy) |
 | `set_call_context(model=None, tools=None)` | Per-call context the SDK forwards to `/gate` so the backend's budget + tool-block enforcement sees real values. | (lazy) |
-| `on_error(hook)` | Register a global error hook. Fires for every `NullRunError` subclass BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Does NOT fire for `WorkflowKilledInterrupt` (BaseException — kill is a non-recoverable signal). Returns an idempotent unregister callable. | ✅ |
+| `on_error(hook)` | Register a global error hook. Fires for every `NullRunError` subclass — including the kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) — BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Filter inside the hook by `error_code` (`"NR-W002"`) if you need to skip kill. Returns an idempotent unregister callable. | ✅ |
 | `track_llm(input_tokens, output_tokens=0, **kwargs)` | Manual escape hatch for non-HTTP LLM calls. Returns the backend's decision dict. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. `**kwargs` are forwarded to the transport layer (e.g. `model`, `latency_ms`, `metadata`). | ✅ |
 | `track_tool(tool_name, duration_ms=None, **kwargs)` | Manual tool-call tracking. `**kwargs` are forwarded to the transport layer (e.g. `is_retry`, `metadata`). | ✅ |
 | `track_event(event_type, **kwargs)` | Catch-all for custom events. | ✅ |
@@ -164,8 +164,9 @@ hierarchy diagram.
 | `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
 | `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
 | `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunError`. Carries `.workflow_id`, `.reason`, `.resume_after`. |
-| `WorkflowKilledException` | Killed via control plane (parent) | `BaseException` subclass (NOT `Exception`). **Deprecated** — emits `DeprecationWarning` on construction. Use `WorkflowKilledInterrupt` directly. |
-| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `BaseException` (NOT `Exception`) per the kill contract — catch before `except Exception`. |
+| `WorkflowKilledException` | Killed via control plane (legacy parent) | `BaseException` subclass. **Deprecated** — emits `DeprecationWarning` on construction. Use `NullRunWorkflowKilledError` directly. |
+| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `NullRunError` (was `BaseException` before SDK 0.16.x — now caught by `except Exception:` like every other SDK error). |
+| `NullRunWorkflowKilledError` | Kill arrived mid-call (typed alias) | Preferred subclass of `WorkflowKilledInterrupt`. Same wire semantics; use this for typed `except` arms. |
 
 
 ## Catch-all pattern
@@ -184,7 +185,7 @@ init(api_key="nr_live_...")
 try:
     step()
 except WorkflowKilledInterrupt:
-    raise                    # BaseException — catch before any except Exception
+    raise                    # always re-raise — kill must reach the top
 except NullRunBlockedException:
     ...                      # budget / tool block / workflow inactive / chain
 except RateLimitError as exc:

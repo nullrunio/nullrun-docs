@@ -16,17 +16,17 @@ From the workflow detail page (or the top-level **Workflows** list):
 
 | Action | Effect on the agent |
 |---|---|
-| **Pause** | Every call starts raising `WorkflowPausedException` (an `Exception`). Resume to undo. |
+| **Pause** | Every call starts raising `WorkflowPausedException` (a `NullRunError` subclass). Resume to undo. |
 | **Resume** | Unpause — calls resume normally. |
-| **Kill** | Every call raises `WorkflowKilledInterrupt` (a `BaseException`). The agent loop dies. |
+| **Kill** | Every call raises `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`). The agent loop dies. |
 
 For the agent, the difference between Pause and Kill:
 
-- **Pause** — recoverable. The exception is a regular `Exception`,
-  the agent can catch it, do clean-up, and either retry or wait.
-- **Kill** — terminal. The exception is a `BaseException`, the
-  agent cannot catch it in `except Exception:` blocks (which is the
-  point — you don't want a runaway loop swallowing the kill).
+- **Pause** — recoverable. The agent can catch `WorkflowPausedException`,
+  do clean-up, and either retry or wait.
+- **Kill** — terminal. The exception inherits from `NullRunError` and
+  is caught by `except Exception:` like every other SDK error — handle
+  it explicitly if you need to checkpoint state before the process exits.
 
 The agent doesn't have to wait for the next `@protect` call to learn.
 If it's mid-LLM-call when you click Kill, the SDK raises the
@@ -46,20 +46,13 @@ per second until the WebSocket comes back. From the agent's
 perspective, the control plane still applies — kill/pause still
 arrive on the next gate or yield boundary.
 
-In environments where the WebSocket is firewalled, you can force the
-SDK into polling mode by constructing the runtime directly:
-
-```python
-from nullrun import NullRunRuntime
-
-runtime = NullRunRuntime(api_key="...", polling=True)
-```
-
-`polling=True` is an internal knob intended for tests, CI, and
-integration setups that explicitly need HTTP polling. The default
-in production traffic is the WS transport — auto-negotiated by the
-SDK, no opt-in required. There is no env var for it because it is
-a deploy-time decision, not something you want to flip per-request.
+The control-plane transport is auto-negotiated by the SDK — WS push
+in production traffic with HTTP-polling fallback when the WS
+connection drops repeatedly. You don't need to opt in or pass any
+flag to `init()`; the SDK handles both transports internally.
+For most agents this is invisible: `init()` opens the WS, and the
+gateway's Pause / Kill / `approval_resolved` signals arrive in
+real time without any further setup.
 
 ## What your agent sees {#how-the-sdk-reacts}
 
@@ -75,18 +68,20 @@ def my_agent_step(prompt):
 
 try:
     my_agent_step("do something")
-except WorkflowKilledInterrupt:
-    # Operator killed the workflow. This is BaseException — propagate it.
+except NullRunWorkflowKilledError:
+    # Operator killed the workflow. Re-raise, or checkpoint then re-raise.
     raise
 except WorkflowPausedException:
     # Operator paused the workflow. Wait or exit cleanly.
     raise
 ```
 
-`WorkflowKilledInterrupt` is a `BaseException`, so `@guarded` lets
-it propagate (it only catches `NullRunError` subclasses). See
-[Error handling → Kill signal](../concepts/error-handling.md#kill-signal-special-case)
-for the full contract.
+Both signals inherit from `NullRunError`, so `@guarded` catches both
+(prints catalog wording, exits 1). To handle kill distinctly —
+checkpoint state, notify a supervisor, then exit — wrap the
+un-`@guarded` call in your own try/except. See
+[Error handling → Kill signal](../concepts/error-handling.md#kill-signal)
+for the recommended handler shape.
 
 For Pause, you have more flexibility. Most production agents catch
 `WorkflowPausedException`, save their state to durable storage,
@@ -142,13 +137,13 @@ in the audit log.
 ### Kill an agent that won't stop
 
 1. **Workflows** → workflow row → **Kill**.
-2. The agent receives `WorkflowKilledInterrupt` on the next yield
-   point inside its loop. The signal is a `BaseException` — see
-   [Error handling](../concepts/error-handling.md#kill-signal-special-case).
-3. If the agent's loop catches `Exception` (but not `BaseException`),
-   the kill propagates through. If the agent catches `BaseException`
-   explicitly, make sure it re-raises `WorkflowKilledInterrupt` —
-   the kill contract is "operator's word is final".
+2. The agent receives `WorkflowKilledInterrupt` (or its typed alias
+   `NullRunWorkflowKilledError`) on the next yield point inside its
+   loop. See [Error handling](../concepts/error-handling.md#kill-signal).
+3. The signal inherits from `NullRunError`, so a bare `except Exception:`
+   arm catches it. If you want a clean shutdown on kill, catch the
+   typed exception **explicitly** and re-raise it — the kill contract
+   is "operator's word is final".
 
 ### Verify the signal arrived
 

@@ -27,7 +27,7 @@ next call rejects.
 |---|---|---|
 | **Budget exceeded** (Hard mode) | Every call returns `block`; SDK raises `NullRunBudgetError` with `error_code = "NR-B004"` | Audit log, then the spend bar hits 100% |
 | **Tool blocked** by policy | `block`; SDK raises `NullRunToolBlockedError` with `error_code = "NR-T001"` | Audit log |
-| **Operator kill** | `WorkflowKilledInterrupt` raised mid-call | Workflow status flips to **Killed** |
+| **Operator kill** | `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) raised mid-call | Workflow status flips to **Killed** |
 
 Rate limiting (429) and budget soft-mode blocks are returned by the
 same gate but with different codes. SDK surfaces them as `error_code = "NR-R001"` and `error_code = "NR-B004"`. See [Budgets](budgets.md#soft-mode) and [Policies](policies.md).
@@ -41,21 +41,23 @@ The third needs you to click **Kill** in the dashboard or call
 When the breaker trips, the SDK raises an exception. The exact
 exception depends on what tripped it:
 
-| Trip cause | Exception | `BaseException`? |
+| Trip cause | Exception | Class |
 |---|---|---|
-| Budget exceeded | `NullRunBudgetError` (`error_code = "NR-B004"`) | No |
-| Tool blocked | `NullRunBlockedException` (`error_code = "NR-T001"`) | No |
-| Operator kill | `WorkflowKilledInterrupt` | **Yes** |
+| Budget exceeded | `NullRunBudgetError` (`error_code = "NR-B004"`) | `NullRunError` (Exception) |
+| Tool blocked | `NullRunBlockedException` (`error_code = "NR-T001"`) | `NullRunError` (Exception) |
+| Operator kill | `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) | `NullRunError` (Exception) |
 
-The kill signal is a `BaseException`, not an `Exception`, so it
-propagates through `try/except Exception:` blocks. See
-[Error handling → Kill signal](../concepts/error-handling.md#kill-signal-special-case)
-for the full contract.
+The kill signal inherits from `NullRunError`, so `try/except Exception:`
+catches it like every other SDK error. To handle kill specifically
+— checkpoint state, notify a supervisor, exit cleanly — catch
+`NullRunWorkflowKilledError` (preferred) or `WorkflowKilledInterrupt`
+explicitly. See [Error handling → Kill signal](../concepts/error-handling.md#kill-signal)
+for the recommended handler shape.
 
 If you use the zero-boilerplate helpers from the SDK, you don't have
 to write any of this — `@guarded` catches the standard exceptions
-and prints the catalog wording, `WorkflowKilledInterrupt` still
-propagates.
+(including the kill signal), prints the catalog wording, and exits 1.
+To handle kill distinctly, use the un-`@guarded` `protect()` form.
 
 ## When the gateway is unreachable
 

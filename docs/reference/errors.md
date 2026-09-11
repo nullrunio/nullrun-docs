@@ -65,7 +65,10 @@ NullRunError                          (Exception)
 │   ├── NullRunBlockedException       (policy / budget / loop / sensitive block)
 │   │   ├── NullRunBudgetError        (budget exhausted — NR-B004)
 │   │   └── NullRunToolBlockedError   (tool in block list — NR-T001)
-│   └── WorkflowPausedException       (paused via control plane)
+│   ├── WorkflowPausedException       (paused via control plane)
+│   └── NullRunWorkflowKilledError    (kill via control plane — NR-W002;
+│                                       preferred typed alias of
+│                                       `WorkflowKilledInterrupt`)
 └── NullRunInfrastructureError        (marker — system failures)
     ├── NullRunConfigError            (misconfiguration, e.g. missing api_key)
     ├── NullRunAuthenticationError   (401 / 403)
@@ -73,11 +76,6 @@ NullRunError                          (Exception)
     └── NullRunTransportError         (transport failures)
         ├── NullRunBackendError       (5xx — retryable)
         └── RateLimitError            (429 — carries .retry_after, .upgrade_url)
-
-BaseException
-└── WorkflowKilledException           (parent)
-    └── WorkflowKilledInterrupt       (kill via control plane — BaseException,
-                                       not Exception; per the kill contract)
 ```
 
 `NullRunDecision` and `NullRunInfrastructureError` are **marker
@@ -94,8 +92,10 @@ tool-scoped), and `.details` (free-form). There is **no** `.message`
 attribute — use `str(exc)`.
 
 
-`WorkflowKilledInterrupt` does not subclass `Exception` — catch it
-explicitly and before any `except Exception`.
+`NullRunWorkflowKilledError` (and its parent `WorkflowKilledInterrupt`)
+inherit from `NullRunError`, so a bare `except Exception:` catches
+the kill signal. For kill-specific handling — checkpointing state,
+notifying a supervisor, etc. — catch the typed exception explicitly.
 
 ## The default path: zero lines of error handling
 
@@ -109,11 +109,13 @@ required.
 | `@guarded` | Any `NullRunError` raised inside the wrapped function | Standard agent loop |
 | `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) |
 
-All three propagate `WorkflowKilledInterrupt` (`BaseException`)
-unchanged and let non-`NullRunError` exceptions surface as honest
-tracebacks. For the full design rationale and the boundary between
-"what NullRun tells the developer" and "what the developer tells
-their end users", see [Concepts → Error handling](../concepts/error-handling.md).
+All three propagate non-`NullRunError` exceptions (anything that
+isn't an SDK error) as honest tracebacks. `NullRunError` subclasses
+— including the kill signal `NullRunWorkflowKilledError` — are
+caught and converted to catalog wording. For the full design
+rationale and the boundary between "what NullRun tells the
+developer" and "what the developer tells their end users", see
+[Concepts → Error handling](../concepts/error-handling.md).
 
 ## Decision vs. infrastructure
 
@@ -228,14 +230,17 @@ and end-user-facing wording lives in
 | `NR-T001` | Tool in block list | 403 | `NullRunToolBlockedError` |
 | `NR-CH001` | Chain context invalid (CHAIN_MAX_DURATION_EXCEEDED) | 402 | `NullRunChainError` |
 | `NR-W001` | Workflow does not exist or is not visible to this API key | 404 | `NullRunError` |
+| `NR-W002` | Operator kill signal (via dashboard **Kill** button or WS push) | n/a (raised) | `NullRunWorkflowKilledError` (alias `WorkflowKilledInterrupt`) |
 | `NR-W004` | Workflow soft-deleted, killed, or paused | 403/503 | `WorkflowPausedException` / kill signal |
 | `NR-A003` | API key rejected | 401 | `NullRunAuthError` |
+| `NR-A004` | Approval response missing — gate returned `require_approval` but no row found on `/execute` | 403 | `NullRunApprovalResponseMissingError` |
 | `NR-A010` | Approval exists, status `PENDING` — operator has not decided yet | 403 | `NullRunApprovalNotYetApprovedError` |
 | `NR-A011` | Operator explicitly denied the approval | 403 | `NullRunApprovalDeniedError` |
 | `NR-A012` | Approval expired (`expires_at` in the past) | 403 | `NullRunApprovalExpiredError` |
 | `NR-A013` | Business-impact digest drifted since approval — re-approval required | 403 | `NullRunApprovalDigestMismatchError` |
 | `NR-A014` | Capability digest drifted since approval — re-approval required | 403 | `NullRunApprovalToolDigestMismatchError` |
 | `NR-A015` | Grant already consumed (replay rejected) | 403 | `NullRunApprovalReplayRejectedError` |
+| `NR-A016` | Approval database unavailable — transient 5xx on the approval row lookup | 503 | `NullRunApprovalDbUnavailableError` (fail-CLOSED — retry with backoff) |
 | `NR-X001` | Generic policy block — no dedicated subclass | varies | `NullRunBlockedException` (default) |
 
 Approval grant-consume codes (NR-A010..NR-A015) are most often seen

@@ -93,8 +93,8 @@ flowchart LR
       <div class="nr-feature__body">
         A WebSocket control plane pushes <code>killed</code> /
         <code>paused</code> to every connected SDK. <code>WorkflowKilledInterrupt</code>
-        is a <code>BaseException</code> so it reaches the top of
-        the agent loop, not a swallowed <code>except Exception</code>.
+        reaches the top of the agent loop, not a swallowed
+        <code>except Exception</code>.
       </div>
     </div>
     <div class="nr-feature">

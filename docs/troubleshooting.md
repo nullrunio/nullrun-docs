@@ -23,7 +23,7 @@ when it isn't.
 | Gateway unreachable, budget gate | **Fail-CLOSED** — 402 | `NullRunBackendError` |
 | Gateway unreachable, per-key rate limit | **Fail-OPEN** (secondary signal; budget gate is the backstop) | `NullRunBackendError` (warn-logged) |
 | Gateway unreachable, aggregate rate limit | **Fail-CLOSED** — 503 | `NullRunRateLimitRedisError` |
-| Workflow killed via dashboard | Raise at next `/gate` call (or at WS push receipt) | `WorkflowKilledInterrupt` (`BaseException`) |
+| Workflow killed via dashboard | Raise at next `/gate` call (or at WS push receipt) | `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) |
 | Workflow paused via dashboard | Raise at next `/gate` call | `WorkflowPausedException` |
 | Missing `api_key` on `init()` | Raise at first SDK call | `NullRunAuthenticationError` |
 | HMAC signature missing / stale | Reject the request (401) | `NullRunAuthenticationError` |

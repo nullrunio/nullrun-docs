@@ -35,17 +35,16 @@ def chat(message: str) -> dict:
 
 ## What `install()` registers
 
-`install(app)` wires three handlers — two via FastAPI's exception
-handler chain, one as an ASGI middleware. The split exists because
-Starlette refuses `BaseException` subclasses in
-`add_exception_handler` (so careless `except Exception:` handlers in
-agent code can't swallow operator kills).
+`install(app)` wires the SDK exceptions to FastAPI's handler
+chain: every `NullRunError` subclass — including `WorkflowKilledInterrupt`
+/ `NullRunWorkflowKilledError` — is routed to the appropriate
+`app.add_exception_handler` based on its category.
 
 | Exception | Mechanism | HTTP | Body |
 | --- | --- | --- | --- |
 | `NullRunError` (budget, tool block, rate limit, soft block, etc.) | `app.add_exception_handler` | per `error_code` | `user_message`, `category: "decision"`, `retryable` |
 | Infrastructure errors (transport, 5xx, auth, config) | `app.add_exception_handler` | `503` | `user_message`, `category: "infrastructure"`, `retryable` |
-| `WorkflowKilledInterrupt` (BaseException) | `NullRunMiddleware` (ASGI) | `503` | `user_message`, `category: "killed"` |
+| `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) | `app.add_exception_handler` | `503` | `user_message`, `category: "killed"` |
 
 `Retry-After` is set on the response whenever the exception carries a
 `retry_after` (gateway 429) or `resume_after` (workflow pause)
@@ -123,8 +122,10 @@ def chat(message: str) -> dict:
         )
 ```
 
-`WorkflowKilledInterrupt` (a `BaseException`) bypasses both handlers
-and reaches the ASGI middleware in `install(app)`.
+`WorkflowKilledInterrupt` is caught by the `NullRunError` handler
+chain and surfaced as a `503` with `category: "killed"`. Catch it
+explicitly in your endpoint if you need to checkpoint before the
+response is returned.
 
 ## Response body shape
 

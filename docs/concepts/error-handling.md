@@ -12,7 +12,7 @@ the work — you pick how much of each layer to use.
     |---|---|---|
     | Your code | `except NullRunDecision` | Expected policy outcomes (budget, tool block, pause) |
     | Your code | `except NullRunInfrastructureError` | Transport / 5xx / auth / config failures |
-    | Your code | `except WorkflowKilledInterrupt` | Operator kill — `BaseException`, not `Exception` |
+    | Your code | `except NullRunWorkflowKilledError` (or `WorkflowKilledInterrupt`) | Operator kill — terminal; caught by `except Exception:`, handle explicitly if you need to checkpoint before exit |
     | Your monitoring | `@nullrun.on_error` hook | Every `NullRunError`, fired before propagation |
     | Your end user | `@guarded` / `format_user_message` | Friendly text from the catalog |
 
@@ -145,9 +145,10 @@ def _to_log(err, ctx):
     log.warning("NullRun error", extra={"code": err.error_code})
 ```
 
-The hook fires for every `NullRunError` subclass. It does **not**
-fire for `WorkflowKilledInterrupt` (a `BaseException` — kill is a
-signal, not an error).
+The hook fires for every `NullRunError` subclass — **including the
+kill signal** (`WorkflowKilledInterrupt` and its typed alias
+`NullRunWorkflowKilledError`). If you want to skip kill inside the
+hook, filter on `error_code` (`"NR-W002"`).
 
 ## Layer 3 — `@guarded` and `format_user_message`
 
@@ -181,9 +182,13 @@ $ echo $?
 1
 ```
 
-`@guarded` catches every `NullRunError`, prints the catalog wording
-to stderr, and exits with code 1. `WorkflowKilledInterrupt` still
-propagates — kill is final, even with `@guarded`.
+`@guarded` catches every `NullRunError` — which now includes the
+kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`
+both inherit from `NullRunError`) — prints the catalog wording to
+stderr, and exits with code 1. To handle kill distinctly (for
+example, checkpoint state before exit), use the un-`@guarded`
+`protect()` form and add your own `except NullRunWorkflowKilledError:`
+arm.
 
 `@guarded` is for scripts and one-shots. For long-running services
 you want explicit handling — see [Server frameworks](#server-frameworks)
@@ -261,37 +266,43 @@ trace-span boundary so plaintext does not reach the structured log
 store. Uppercase `KEY=VALUE` pairs are rewritten to `KEY=[REDACTED]`
 before bytes reach stdout.
 
-## Kill signal — special case
+## Kill signal
 
-`WorkflowKilledInterrupt` is a `BaseException`, not an `Exception`.
-This is deliberate — kill signals must propagate even if your code
-catches everything:
+The operator kill signal arrives as `WorkflowKilledInterrupt` or its
+typed alias `NullRunWorkflowKilledError` (recommended). Both inherit
+from `NullRunError`, so a bare `except Exception:` arm catches the
+kill alongside every other SDK error:
 
 ```python
 try:
     my_agent(prompt)
 except Exception:
-    # Operator clicked Kill. Don't swallow this.
-    pass
-# WorkflowKilledInterrupt is NOT caught here.
+    log.error("agent failed", exc_info=True)
+# WorkflowKilledInterrupt IS caught here.
 ```
 
-If you want a clean shutdown on kill, catch `WorkflowKilledInterrupt`
-**explicitly before** any `except Exception`:
+If you want kill-specific handling — checkpointing state, notifying
+a supervisor, exiting with a clean reason — catch the typed alias
+**explicitly** and re-raise it after handling (the kill contract is
+"operator's word is final"):
 
 ```python
+from nullrun import NullRunWorkflowKilledError
+
 try:
     my_agent(prompt)
-except WorkflowKilledInterrupt:
-    persist_state()  # save checkpoint
-    raise           # re-raise — kill must reach the top
-except Exception:
+except NullRunWorkflowKilledError:
+    persist_state()
+    raise
+except NullRunError:
     log.error("agent failed", exc_info=True)
 ```
 
-`@guarded` follows this rule — it catches `NullRunError`
-(`Exception` subclasses) and lets `BaseException` (kill, pause,
-KeyboardInterrupt) propagate.
+`@guarded` catches kill via the standard `NullRunError` arm — it
+prints the catalog wording and exits 1. To keep the process alive
+on kill (checkpoint, notify a supervisor, then exit), use the
+un-`@guarded` `protect()` form with your own
+`except NullRunWorkflowKilledError:` arm above.
 
 ## See also
 

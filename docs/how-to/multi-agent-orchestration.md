@@ -111,7 +111,7 @@ for the wire-level details.
 |---|---|---|
 | Missing `with workflow(...)` around the orchestrator | Each sub-agent gets its own ad-hoc workflow_id, no shared budget pool across the tree | Wrap the whole tree in one workflow block |
 | Each sub-agent has its own key | Sub-agents share nothing — kill signal only reaches the one bound to the killed workflow | Use one key for the orchestrator and let sub-agents inherit |
-| Catching `Exception` instead of `BaseException` around the orchestration loop | Kill signal swallowed, agents keep running | Catch `WorkflowKilledInterrupt` explicitly first |
+| Catching only `Exception` around the orchestration loop with no kill handler | Kill still propagates but with no cleanup hook | Catch `NullRunWorkflowKilledError` explicitly first if you need to checkpoint sub-agent state |
 
 ## See also
 

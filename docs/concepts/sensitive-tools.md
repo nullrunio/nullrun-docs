@@ -32,10 +32,22 @@ them.
 
 ## What a sensitive tool is, in policy terms
 
-There is no SDK-side built-in sensitive tool list. The shipped
-behaviour is: every enforcement decision is server-side, evaluated by
-the gate on every `/gate` call. You express "sensitive" with a
-`ToolBlock` policy that matches the tool's canonical name.
+There is no built-in tool catalogue shipped by the SDK — every
+enforcement decision is evaluated by the gate on every `/gate` call,
+so you can't accidentally miss a tool you didn't register locally.
+You express "sensitive" with one of two complementary mechanisms:
+
+- **`@sensitive` (SDK-side)** — marks a function so its kwargs flow
+  into the `BusinessImpact` predicate bag used by approval rules
+  (typed `money_amount` / `tool_parameters`). Use this when you want
+  a typed predicate — e.g. "refunds over $500 need approval".
+- **`ToolBlock` (server-side)** — a policy rule evaluated by the
+  gate. The gate fails-CLOSED if it cannot reach Redis or the policy
+  cache to evaluate. Use this for hard rules — "never call `bash`".
+
+For the typed predicate wiring, see
+[Decorators & extractors → `money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact)
+and [`tool_params(...)`](../reference/decorators.md#tool_params-free-form-argument-bag).
 
 Recommended starter patterns (see
 [Tool catalog → Recommended ToolBlock starter list](../reference/llm-tool-catalog.md#recommended-toolblock-starter-list)
