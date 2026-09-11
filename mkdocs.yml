@@ -150,9 +150,10 @@ nav:
       - 3.11. CI / CD integration: how-to/ci-cd.md
   - 4. Reference:
       - 4.1. SDK API: reference/sdk-api.md
-      - 4.2. HTTP API: reference/http-api.md
-      - 4.3. Error codes: reference/errors.md
-      - 4.4. Tool catalog: reference/llm-tool-catalog.md
+      - 4.2. Decorators & extractors: reference/decorators.md
+      - 4.3. HTTP API: reference/http-api.md
+      - 4.4. Error codes: reference/errors.md
+      - 4.5. Tool catalog: reference/llm-tool-catalog.md
   - 5. Compliance:
       - 5.1. Overview: compliance/index.md
       - 5.2. Geographic restrictions: compliance/geo-restrictions.md

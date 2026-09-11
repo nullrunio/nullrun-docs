@@ -256,6 +256,20 @@ immutable anchor that proves the operator approved the exact payload
 the SDK sent on `/gate` (not "any refund" — the exact amount and
 arguments).
 
+## SDK-side extraction
+
+The `action_digest` is **produced** by the SDK at extraction time.
+For the Python SDK, this happens inside `@sensitive` when you
+attach an `impact=` extractor — see
+[Decorators & extractors → `money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact)
+and [Decorators & extractors → `tool_params(...)`](../reference/decorators.md#tool_params-free-form-argument-bag).
+
+The extracted `BusinessImpact` is canonicalised (keys sorted
+recursively, compact JSON, `nullrun/v1/business_impact:` prefix)
+and SHA-256-hashed; the digest flows onto the wire on both
+`/gate` and `/execute`. A drift between SDK and backend is a P0
+security regression covered by the SDK's source-pin tests.
+
 ## See also
 
 - [Tool policies](tool-policies.md) — `ToolBlock` rules (no

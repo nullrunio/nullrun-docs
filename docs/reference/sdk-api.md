@@ -268,6 +268,10 @@ function never raises and never returns an empty string.
 
 ## See also
 
+- [Decorators & extractors](decorators.md) — deep-dive on `@protect`,
+  `@sensitive`, `@guarded`, `money_outflow`, `tool_params`,
+  `set_call_context`, and the workflow / span / chain context
+  managers
 - [Errors](errors.md)
 - [Errors → Decision vs. infrastructure](errors.md#decision-vs-infrastructure)
 - [Use with FastAPI](../how-to/fastapi.md)

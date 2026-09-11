@@ -131,6 +131,10 @@ is bound to the exact action payload the SDK sent on `/gate`. See
 
 ## See also
 
+- [Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-the-per-tool-policy-marker)
+  — the two `@sensitive` forms (bare + factory), the
+  `money_outflow(...)` / `tool_params(...)` impact extractors, and
+  the `_nullrun_extractor` contract that ties them to `/execute`
 - [Tool policies](tool-policies.md) — the actual rule structure
 - [Tool catalog](../reference/llm-tool-catalog.md) — recommended
   patterns with risk ratings
