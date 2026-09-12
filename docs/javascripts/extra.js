@@ -126,18 +126,33 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     if (saved === "hidden" || saved === "visible") apply(saved);
 
     btn.addEventListener("click", () => {
-        const willHide = !document.body.classList.contains("nr-sidebar-hidden");
-        apply(willHide ? "hidden" : "visible");
-        // On mobile (≤76em), the drawer UX takes over from the
-        // desktop "collapse" behaviour. `nr-sidebar-open` drives the
-        // backdrop + slide-in animation + body scroll lock via the
-        // mobile section of extra.css. On desktop we leave the open
-        // class absent so neither the backdrop nor the open-state CSS
-        // match — the existing collapse rules at extra.css:296 win.
-        if (window.matchMedia("(max-width: 76em)").matches) {
-            document.body.classList.toggle("nr-sidebar-open", !willHide);
+        const isMobile = window.matchMedia("(max-width: 76em)").matches;
+        if (isMobile) {
+            // Mobile: drive the drawer via `nr-sidebar-open`. The CSS
+            // hides the sidebar by default (transform -100%) and only
+            // the open class brings it back into view — so toggling
+            // `nr-sidebar-hidden` here would actually keep the drawer
+            // closed (the global rule at extra.css:306 sets the
+            // sidebar to translateX(-100%) when that class is on
+            // body). We still flip `nr-sidebar-hidden` in lockstep so
+            // a window resize to ≥76em honours the user's intent: if
+            // they closed the drawer on mobile, the sidebar stays
+            // collapsed on desktop instead of springing back open.
+            const willOpen = !document.body.classList.contains("nr-sidebar-open");
+            document.body.classList.toggle("nr-sidebar-open", willOpen);
+            document.body.classList.toggle("nr-sidebar-hidden", !willOpen);
+        } else {
+            // Desktop: same logic as before the mobile work landed —
+            // collapse / expand via the `nr-sidebar-hidden` toggle.
+            const willHide = !document.body.classList.contains("nr-sidebar-hidden");
+            apply(willHide ? "hidden" : "visible");
         }
-        try { localStorage.setItem(KEY, willHide ? "hidden" : "visible"); } catch (e) { /* ignore */ }
+        try {
+            const stored = isMobile
+                ? (document.body.classList.contains("nr-sidebar-open") ? "visible" : "hidden")
+                : (document.body.classList.contains("nr-sidebar-hidden") ? "hidden" : "visible");
+            localStorage.setItem(KEY, stored);
+        } catch (e) { /* ignore */ }
     });
 })();
 

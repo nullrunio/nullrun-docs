@@ -262,35 +262,14 @@ html { scroll-behavior: smooth; }
    header (menu-bar) is independently constrained to the same content
    area via `margin-left: 340px; width: calc(100% - 340px)` (see §4). */
 .md-footer { display: none; }
-@media screen and (max-width: 76em) {
-  .md-sidebar--primary {
-    transform: translateX(-100%);
-    /* Cap sidebar width at 85vw so it doesn't overflow narrow phones
-       (340px would be ~95% of a 360px viewport). At ≥400px the
-       `min()` resolves to the desktop 340px cap. */
-    width: min(340px, 85vw);
-    transition: transform 220ms ease-out;
-  }
-  /* On narrow viewports the sidebar is hidden by transform, so the
-     menu-bar (and its inner) span the full viewport width, and
-     .md-main__inner drops the 340px sidebar offset (no sidebar in
-     flow → content occupies full viewport). */
-  .md-header,
-  .nr-menubar {
-    margin-left: 0;
-    width: 100%;
-    max-width: 100%;
-  }
-  .nr-menubar__inner { margin-left: 0; }
-  .md-main__inner {
-    margin-left: 0 !important;
-    max-width: 100vw !important;
-  }
-  /* Restore default sidebar width on the menu-bar / content offset
-     rules so they don't re-introduce the desktop 340px shift once
-     the drawer slides back in. */
-  body.nr-sidebar-hidden .md-sidebar--primary { transform: translateX(0); }
-}
+/* NOTE: the @media (max-width: 76em) override block that USED to live
+   here was moved into section 16 at the end of the file. The desktop
+   rules that come after this point (`.md-header { margin-left: 340px }`,
+   `.md-main__inner { margin-left: 340px !important }`, etc.) carry the
+   same specificity as the mobile overrides, so source order decides —
+   and the desktop rules sit AFTER the old mobile block, so they won.
+   Consolidation in section 16 puts the mobile rules at the bottom of
+   the cascade, after every desktop rule, so they actually win. */
 
 /* ── Sidebar hidden via header hamburger ────────────────────────────
    The user clicks the `nr-sidebar-toggle` button (overrides/partials/
@@ -1403,6 +1382,39 @@ body.nr-print-page .md-content {
    ============================================================================ */
 
 @media screen and (max-width: 76em) {
+  /* ── Layout shift — drop the desktop 340px sidebar reservation from
+     the menu-bar and main content so the mobile drawer can overlay the
+     page instead of fighting for the right column. These need to sit
+     AFTER the desktop rules at lines 321/341/553 (which carry the same
+     specificity and would otherwise win by source order), so they live
+     here in section 16 at the end of the cascade. ── */
+  .md-header,
+  .nr-menubar {
+    margin-left: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+  .nr-menubar__inner {
+    margin-left: 0;
+    padding: 0 12px;
+  }
+  .md-main__inner {
+    margin-left: 0 !important;
+    max-width: 100vw !important;
+  }
+
+  /* Sidebar — hidden by default on mobile (slides off-screen to the
+     left). Width capped at 85vw so it doesn't overflow a narrow phone
+     (340px would be ~95% of a 360px viewport). `nr-sidebar-open` (set
+     by extra.js when the user taps the hamburger) brings it back into
+     view; `nr-sidebar-hidden` keeps it off-screen — the global rule at
+     line 306 already handles the closed state, no override needed. */
+  .md-sidebar--primary {
+    transform: translateX(-100%);
+    width: min(340px, 85vw);
+    transition: transform 220ms ease-out;
+  }
+
   /* Backdrop — dims content while the drawer is open. Created lazily
      by extra.js initMobileSidebarUX (see extra.js:208+). Alpha animates
      on the body class `nr-sidebar-open` (added/removed by the same
@@ -1479,12 +1491,14 @@ body.nr-print-page .md-content {
   .md-typeset h1 { font-size: 1.85rem; }
   .md-typeset h2 { font-size: 1.45rem; }
 
-  /* Hero — reduce vertical padding and grid gap. Title/subtitle font
-     sizes inherit the clamp() in .nr-hero__title (already fluid). */
+  /* Hero — reduce vertical padding and grid gap, and clamp the title
+     down from the desktop 2–3rem fluid range so a 768px viewport
+     doesn't show a 38px hero title that dominates the page. */
   .nr-hero {
     padding: 28px 0 24px;
     gap: 16px;
   }
+  .nr-hero__title { font-size: clamp(1.65rem, 5vw, 2.25rem); }
 }
 
 @media screen and (max-width: 30em) {
