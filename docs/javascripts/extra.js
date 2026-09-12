@@ -128,6 +128,15 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     btn.addEventListener("click", () => {
         const willHide = !document.body.classList.contains("nr-sidebar-hidden");
         apply(willHide ? "hidden" : "visible");
+        // On mobile (≤76em), the drawer UX takes over from the
+        // desktop "collapse" behaviour. `nr-sidebar-open` drives the
+        // backdrop + slide-in animation + body scroll lock via the
+        // mobile section of extra.css. On desktop we leave the open
+        // class absent so neither the backdrop nor the open-state CSS
+        // match — the existing collapse rules at extra.css:296 win.
+        if (window.matchMedia("(max-width: 76em)").matches) {
+            document.body.classList.toggle("nr-sidebar-open", !willHide);
+        }
         try { localStorage.setItem(KEY, willHide ? "hidden" : "visible"); } catch (e) { /* ignore */ }
     });
 })();
@@ -201,6 +210,98 @@ const NR_THEME_KEY = "nullrun-docs-theme";
         if (url.origin !== window.location.origin) return;
         // Defer until after the SPA swap so the new pathname is set.
         setTimeout(apply, 0);
+    });
+})();
+
+/* ── 6. Mobile sidebar drawer UX (2026-09-12) ────────────────────────
+   On viewports ≤76em, the sidebar collapses to a drawer that slides
+   in from the left when the user taps the hamburger. The matching
+   CSS lives in extra.css §16 (backdrop, slide-in animation, body
+   scroll lock) — this module owns the runtime:
+
+     - Lazily creates a backdrop <div> on first open and appends to
+       <body>. Reused across opens, removed from layout only when the
+       drawer closes (pointer-events go to none so it doesn't block
+       page clicks while hidden).
+     - Closes the drawer on backdrop click.
+     - Closes on Escape key (a11y expectation for modal-ish UI).
+     - Closes after the user taps any link inside the drawer — defer
+       one tick so Material's SPA swap can register the navigation
+       before we tear down.
+     - Drops the open state if the viewport grows past 76em (e.g.
+       device rotation) so the drawer doesn't get stuck in a
+       transform limbo when the desktop layout takes over.
+
+   `initSidebarHide` (above) owns the toggle button + localStorage
+   persistence; this module only owns the drawer lifecycle that lives
+   on top of it. The two cooperate via the `nr-sidebar-open` body
+   class — set by the toggle on mobile, observed + reacted to here. */
+(function initMobileSidebarUX() {
+    const MQ = window.matchMedia("(max-width: 76em)");
+
+    function ensureBackdrop() {
+        let el = document.querySelector(".nr-sidebar-backdrop");
+        if (!el) {
+            el = document.createElement("div");
+            el.className = "nr-sidebar-backdrop";
+            el.setAttribute("aria-hidden", "true");
+            document.body.appendChild(el);
+            // Click on backdrop → close drawer (mirrors closing the
+            // menu by tapping the hamburger again, but reachable from
+            // the dimmed area outside the drawer itself).
+            el.addEventListener("click", () => {
+                document.body.classList.remove("nr-sidebar-open");
+                document.body.classList.add("nr-sidebar-hidden");
+                try {
+                    localStorage.setItem("nullrun-docs-sidebar", "hidden");
+                } catch (e) { /* ignore */ }
+            });
+        }
+        return el;
+    }
+
+    // React to body-class changes driven by initSidebarHide. We don't
+    // bind to the toggle button directly — that would couple the two
+    // modules and break if either changes its handler.
+    new MutationObserver(() => {
+        const isOpen = document.body.classList.contains("nr-sidebar-open");
+        if (isOpen) ensureBackdrop();
+    }).observe(document.body, {
+        attributes: true,
+        attributeFilter: ["class"],
+    });
+
+    // Escape closes the drawer (a11y convention for any overlay-like
+    // UI; doesn't fire on desktop because nr-sidebar-open is only set
+    // on mobile).
+    document.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Escape") return;
+        if (!document.body.classList.contains("nr-sidebar-open")) return;
+        document.body.classList.remove("nr-sidebar-open");
+        document.body.classList.add("nr-sidebar-hidden");
+    });
+
+    // After tapping a link inside the drawer, close it so the user
+    // sees the new page without the drawer covering it. Defer one
+    // tick so Material's navigation.tracking handler can run first
+    // and start the page swap before we tear down.
+    document.addEventListener("click", (ev) => {
+        if (!document.body.classList.contains("nr-sidebar-open")) return;
+        const link = ev.target.closest("a[href]");
+        if (!link) return;
+        if (!link.closest(".md-sidebar--primary")) return;
+        setTimeout(() => {
+            document.body.classList.remove("nr-sidebar-open");
+            document.body.classList.add("nr-sidebar-hidden");
+        }, 0);
+    });
+
+    // When the viewport grows past 76em (landscape rotation, window
+    // resize on a hybrid device), drop the open state so the sidebar
+    // renders inline via the desktop layout instead of staying in the
+    // mobile drawer position.
+    MQ.addEventListener("change", (e) => {
+        if (!e.matches) document.body.classList.remove("nr-sidebar-open");
     });
 })();
 

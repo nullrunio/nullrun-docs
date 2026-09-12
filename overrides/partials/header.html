@@ -76,12 +76,12 @@
 
     </div>
 
-    {# ── Page title — intentionally empty. The menu-bar is just an
-       icon strip; the section name lives in the left sidebar. The
-       <h1> is preserved (hidden via CSS) so the layout doesn't
-       collapse, and so screen readers / page-title still get a
-       consistent landmark. #}
-    <h1 class="nr-menubar__title" aria-hidden="true"></h1>
+    {# ── Page title — hidden on desktop (the section name lives in
+       the left sidebar), revealed on mobile ≤76em via extra.css §16
+       so users on narrow viewports see which page they're on even
+       with the sidebar collapsed. Truncates with ellipsis on long
+       titles (the /print/ title is the worst case at 41 chars). #}
+    <h1 class="nr-menubar__title">{{ page.title }}</h1>
 
     {# ── Right buttons: print, github ───────────────────────────────── #}
     <div class="nr-menubar__right-buttons">

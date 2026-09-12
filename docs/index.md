@@ -11,7 +11,7 @@ home: true
   <div>
     <h1 class="nr-hero__title">Runtime decision layer for tool-using AI agents</h1>
     <p class="nr-hero__subtitle">Before your agent executes a supported tool or model call, the SDK asks the gate.
-      <br/><code>allow</code>, <code>block</code>, or
+      <code>allow</code>, <code>block</code>, or
       <code>require_approval</code> — backed by tool patterns, budgets, rate limits, and human approvals.
     </p>
     <div class="nr-hero__cta">

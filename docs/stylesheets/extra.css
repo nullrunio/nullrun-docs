@@ -262,8 +262,15 @@ html { scroll-behavior: smooth; }
    header (menu-bar) is independently constrained to the same content
    area via `margin-left: 340px; width: calc(100% - 340px)` (see §4). */
 .md-footer { display: none; }
-@media (max-width: 76em) {
-  .md-sidebar--primary { transform: translateX(-100%); }
+@media screen and (max-width: 76em) {
+  .md-sidebar--primary {
+    transform: translateX(-100%);
+    /* Cap sidebar width at 85vw so it doesn't overflow narrow phones
+       (340px would be ~95% of a 360px viewport). At ≥400px the
+       `min()` resolves to the desktop 340px cap. */
+    width: min(340px, 85vw);
+    transition: transform 220ms ease-out;
+  }
   /* On narrow viewports the sidebar is hidden by transform, so the
      menu-bar (and its inner) span the full viewport width, and
      .md-main__inner drops the 340px sidebar offset (no sidebar in
@@ -279,6 +286,9 @@ html { scroll-behavior: smooth; }
     margin-left: 0 !important;
     max-width: 100vw !important;
   }
+  /* Restore default sidebar width on the menu-bar / content offset
+     rules so they don't re-introduce the desktop 340px shift once
+     the drawer slides back in. */
   body.nr-sidebar-hidden .md-sidebar--primary { transform: translateX(0); }
 }
 
@@ -1063,9 +1073,14 @@ article.md-content__inner,
 .md-top {
   margin-left: calc(50% + 170px);
 }
-@media (max-width: 76em) {
+@media screen and (max-width: 76em) {
+  /* On narrow viewports the back-to-top button docks to bottom-right
+     (Material's stock position) instead of horizontally centering
+     over the content — feels less detached on touch devices. */
   .md-top {
-    margin-left: 50%;
+    margin-left: 0;
+    right: 16px;
+    bottom: 16px;
   }
 }
 
@@ -1356,5 +1371,227 @@ body.nr-print-page .md-content {
      pressed print by the time the output is generated. */
   .nr-print-btn {
     display: none !important;
+  }
+}
+
+/* ============================================================================
+   16. MOBILE — phone / tablet overrides (2026-09-12)
+   ----------------------------------------------------------------------------
+   Three breakpoints sit between Material's stock 76em (1216px) and the
+   phone floor at 320px. All rules use `@media screen and (max-width: …)`
+   (NOT bare `@media (max-width: …)`) — same specificity as `@media print`
+   (line 1215) but later in the cascade so they wouldn't override paper
+   output anyway; the explicit `screen` filter is the contract.
+
+   Layering:
+     • 76em — tablet / small-desktop boundary. Sidebar becomes a drawer,
+               TOC collapses, content gets side padding.
+     • 48em — tablet-portrait / large-phone. Typography tightens one
+               notch, hero padding reduces.
+     • 30em — phone. Aggressive: smaller base font, stacked CTAs,
+               full-width hero buttons, tighter table cells, inline-
+               code / URL wrap, menubar title reveals, print-page
+               padding drops.
+
+   Neo-brutalist constraints preserved at every breakpoint:
+     • 2px ink borders (no border-radius)
+     • offset shadows (smaller on phone to save visual real-estate)
+     • square corners (--md-border-radius: 0)
+     • solid hex surfaces — exception: backdrop scrim uses rgba ink at
+       60% alpha (transient modal scrim, same exception pattern as the
+       pre-existing ::selection rgba at line 227).
+   ============================================================================ */
+
+@media screen and (max-width: 76em) {
+  /* Backdrop — dims content while the drawer is open. Created lazily
+     by extra.js initMobileSidebarUX (see extra.js:208+). Alpha animates
+     on the body class `nr-sidebar-open` (added/removed by the same
+     module) — keeping pointer-events toggled off when hidden so the
+     transparent layer doesn't intercept clicks meant for the page. */
+  .nr-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    background-color: rgba(26, 26, 26, 0);    /* ink, alpha 0 — animate via class */
+    pointer-events: none;
+    transition: background-color 180ms ease;
+  }
+  body.nr-sidebar-open .nr-sidebar-backdrop {
+    background-color: rgba(26, 26, 26, 0.6); /* ink at 60% — dim, not blackout */
+    pointer-events: auto;
+  }
+  /* Dark theme: use black instead of ink (ink == paper in dark scheme). */
+  [data-md-color-scheme="slate"] .nr-sidebar-backdrop {
+    background-color: rgba(0, 0, 0, 0);
+  }
+  [data-md-color-scheme="slate"] body.nr-sidebar-open .nr-sidebar-backdrop {
+    background-color: rgba(0, 0, 0, 0.7);
+  }
+  /* When the drawer is open, slide the sidebar back into view and
+     lock body scroll so the content underneath can't scroll while the
+     drawer is over it. */
+  body.nr-sidebar-open .md-sidebar--primary { transform: translateX(0); }
+  body.nr-sidebar-open { overflow: hidden; }
+
+  /* Content — side padding (zero horizontal at line 757 leaves content
+     touching the viewport edge at narrow widths). */
+  .md-content {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  /* Tables — convert to a horizontally-scrollable block. Cells keep
+     their normal wrap behaviour; long single-token cells (e.g. the
+     27 ISO codes concatenated in compliance/geo-restrictions.md:59)
+     scroll horizontally inside the table instead of overflowing the
+     viewport. No JS card-transform — the 5-column tables (e.g. how-to/
+     llm-frameworks.md:22-36 coverage matrix) become worse as stacked
+     cards than as scrollable rows. */
+  .md-typeset table:not([class]) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Menubar title — populate via `{{ page.title }}` in overrides/
+     partials/header.html:84. Reveal at ≤76em as a left-anchored label
+     so the user sees which section they're in (sidebar is hidden by
+     default on mobile). Truncates with ellipsis on long titles. */
+  .nr-menubar__title {
+    display: block;
+    flex: 1 1 auto;
+    margin: 0;
+    padding: 0 8px;
+    font-family: var(--md-text-font);
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--md-default-fg-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: left;
+  }
+}
+
+@media screen and (max-width: 48em) {
+  /* Typography — first notch down (h1 2.25rem → 1.85rem). */
+  .md-typeset h1 { font-size: 1.85rem; }
+  .md-typeset h2 { font-size: 1.45rem; }
+
+  /* Hero — reduce vertical padding and grid gap. Title/subtitle font
+     sizes inherit the clamp() in .nr-hero__title (already fluid). */
+  .nr-hero {
+    padding: 28px 0 24px;
+    gap: 16px;
+  }
+}
+
+@media screen and (max-width: 30em) {
+  /* Typography — phone floor. Body shrinks to 14px so prose doesn't
+     dwarf the viewport; headings drop another notch. Base values at
+     lines 133–136 stay untouched (they feed @media print + .nr-hero
+     clamp). */
+  body { font-size: 0.875rem; }
+  .md-typeset h1 { font-size: 1.5rem; }
+  .md-typeset h2 { font-size: 1.25rem; }
+  .md-typeset h3 { font-size: 1.05rem; }
+  .md-typeset h4 { font-size: 0.95rem; }
+
+  /* Content padding — drop to 16px so 320px viewports keep a usable
+     content area (288px inside). */
+  .md-content {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  /* Tables — tighter cell padding + smaller font so 4-5 column tables
+     stay legible while still fitting ~2 short cells per row visible
+     before horizontal scroll. */
+  .md-typeset table:not([class]) th,
+  .md-typeset table:not([class]) td {
+    padding: 6px 8px;
+    font-size: 0.85em;
+  }
+
+  /* Inline code + anchors — break long identifiers and URLs at any
+     character so they don't overflow the viewport. Doesn't apply
+     inside <pre> (white-space: pre wins; pre already has
+     overflow-x: auto at line 843). `overflow-wrap: anywhere` is
+     CSS Text Module Level 3, supported on all evergreen browsers. */
+  .md-typeset code,
+  .md-typeset a {
+    overflow-wrap: anywhere;
+  }
+
+  /* Admonitions — smaller padding to match the new font scale. */
+  .md-typeset .admonition { padding: 12px 14px; }
+
+  /* Code blocks — tighter padding + smaller font so the brutalist
+     4px offset shadow doesn't eat into the 288px content area. */
+  .md-typeset pre {
+    padding: 12px 14px;
+    font-size: 0.82em;
+  }
+
+  /* Hero — phone-scale padding + title/subtitle font. CTAs stack
+     vertically (one per row, full-width, centred) so 3 buttons don't
+     fight for space at 320px. */
+  .nr-hero {
+    padding: 16px 0;
+    gap: 12px;
+  }
+  .nr-hero__title { font-size: clamp(1.5rem, 7vw, 2rem); }
+  .nr-hero__subtitle { font-size: 1rem; }
+  .nr-hero__cta { flex-direction: column; }
+  .nr-hero__cta a {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Feature cards — slightly tighter padding so 6 cards on / fit
+     cleanly without nested horizontal scroll. */
+  .nr-feature { padding: 14px; }
+  .nr-feature__title { font-size: 1rem; }
+  .nr-feature__body { font-size: 0.88rem; }
+
+  /* Print page — drop the desktop 32px/40px padding to 20px/16px
+     so the on-screen /print/ view at 320px keeps a usable content
+     area. The @media print block above (line 1288) still forces
+     padding: 0 on paper. Scoped to screen so the print cascade
+     wins where it should. */
+  body.nr-print-page .md-content {
+    padding: 20px 16px !important;
+  }
+}
+
+/* Mermaid — wrapper + SVG rules apply at every viewport (the diagrams
+   themselves don't need a separate mobile-only override; the wrapper
+   rule does the heavy lifting regardless of breakpoint). The wrapper
+   gets the same neo-brutalist frame as code blocks / screenshots —
+   2px ink border + 4px offset shadow + cream surface — so diagrams
+   feel native to the docs chrome rather than looking like an embed. */
+.mermaid {
+  display: block;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  background: var(--md-default-bg-color--light);
+  border: 2px solid var(--md-default-fg-color);
+  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+  padding: 16px;
+  margin: 1em 0;
+}
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+@media screen and (max-width: 30em) {
+  /* Phone: drop shadow offset to 2px so the 4px shadow doesn't eat
+     into the 288px content area; tighter padding. */
+  .mermaid {
+    padding: 10px;
+    box-shadow: 2px 2px 0 0 var(--md-default-fg-color);
   }
 }
