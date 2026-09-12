@@ -1053,13 +1053,27 @@ article.md-content__inner,
   margin-left: calc(50% + 170px);
 }
 @media screen and (max-width: 76em) {
-  /* On narrow viewports the back-to-top button docks to bottom-right
-     (Material's stock position) instead of horizontally centering
-     over the content — feels less detached on touch devices. */
+  /* On narrow viewports, drop Material's `margin-left: 50%` centring
+     and dock the button to the right edge. We do NOT set `bottom`
+     here — Material's JS tracks scroll position via inline `top`
+     (~3.2rem below the menu-bar). Setting `bottom` alongside that
+     `top` stretches the button to fill the gap between them
+     (~486px tall on phone, ~942px on tablet), which is the bug the
+     user reported on 2026-09-12 ("кнопка Back to Top огромного
+     размера"). The `transform: translate(-50%)` Material uses to
+     centre horizontally also has to go — otherwise the button ends
+     up half-off the right edge after the right:16px offset.
+
+     `!important` is needed because Material's `md-top` rules have
+     the same single-class specificity and are loaded BEFORE this
+     media query — without it, Material's `margin-left: 50%` /
+     `transform: translate(-50%)` win by source order and dock the
+     button half-off the right edge of the viewport. */
   .md-top {
-    margin-left: 0;
-    right: 16px;
-    bottom: 16px;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    transform: none !important;
+    right: 16px !important;
   }
 }
 
