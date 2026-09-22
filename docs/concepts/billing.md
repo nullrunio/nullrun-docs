@@ -32,9 +32,9 @@ The hero card surfaces:
 
 - **Plan name + price** (e.g. `Starter · $29/mo · Renews Sep 30`).
 - **Status pill** — `Active` / `Past due` / `Cancelled` / `Expired`
-  (4-state machine; `Trialing` was removed — paid plans go straight
-  to `Active` after Polar checkout; Lite is free forever with no
-  trial).
+  (4-state machine; `Trialing` is not a state — paid plans go
+  straight to `Active` after Polar checkout; Lite is free forever
+  with no trial).
 - **Manage subscription** button (opens the customer portal — see
   the migration note below).
 - **Update payment method** button.
@@ -50,13 +50,12 @@ Below the hero:
   `URL.createObjectURL` and opens it; `window.open` can't attach
   the bearer token.
 
-!!! note "Customer portal retired"
-    The Polar customer portal is no longer a product surface
-    (2026-07-07). Both **Manage subscription** and **Update
-    payment method** controls now render a `mailto:support@nullrun.io`
-    deep-link with a pre-filled subject + body. Auto-checkout on
-    first mount (when `pending_checkout_plan` is set in
-    sessionStorage) is preserved.
+!!! note "Customer portal"
+    NullRun does not operate a self-service customer portal. Both
+    **Manage subscription** and **Update payment method** controls
+    render a `mailto:support@nullrun.io` deep-link with a pre-filled
+    subject + body. Auto-checkout on first mount (when
+    `pending_checkout_plan` is set in sessionStorage) is preserved.
 
 ### Lite orgs
 
@@ -131,11 +130,9 @@ returns the short form to match the frontend
 
 !!! note "Plan IDs on the wire"
     The canonical id for Enterprise is `"enterprise_unlimited"`.
-    The legacy `"enterprise"` string was reclaimed by the database
-    migration that consolidated Scale and Enterprise (the legacy
-    id now carries Scale content). `GET /api/v1/plans` returns the
-    canonical id; the dashboard renders it as the **Enterprise**
-    plan name. If you query the catalog by id, use
+    The id `"enterprise"` carries Scale content. `GET /api/v1/plans`
+    returns the canonical id; the dashboard renders it as the
+    **Enterprise** plan name. If you query the catalog by id, use
     `enterprise_unlimited`.
 
 ## Auto-checkout (post-signup)

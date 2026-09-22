@@ -51,7 +51,7 @@ secret is **not** a constructor argument — it is read from
 > creates the runtime lazily from `NULLRUN_API_KEY`. Call `init()`
 > directly when you want fail-fast on a missing key before the first
 > gate call (CI / smoke tests), or to bind an API key from a non-env
-> source. See [Reference → init / init_or_die](../reference/sdk-api.md#init--init_or_die-optional-early-fail-fast)
+> source. See [Reference → init / init_or_die](../reference/sdk-api.md#init--init_or_die)
 > for the contract.
 
 For env-var setup (`NULLRUN_API_KEY`, `NULLRUN_SECRET_KEY`, and other
@@ -117,9 +117,9 @@ pip install "nullrun[langgraph]"
 pip install "nullrun[crewai]"
 ```
 
-> **Deprecated extras (kept for back-compat, no longer required):**
+> **Extras that are no-ops:**
 > `nullrun[openai]`, `nullrun[anthropic]`, `nullrun[mistral]`,
-> `nullrun[gemini]`, `nullrun[cohere]`, `nullrun[bedrock]`. The SDK
-> never imported those vendor packages for the HTTP-level path; the
-> extras are now no-ops. URL-keyed httpx extractors cover all six
-> without any vendor install.
+> `nullrun[gemini]`, `nullrun[cohere]`, `nullrun[bedrock]` install
+> but do nothing today. The SDK never imports those vendor packages
+> for the HTTP-level path — URL-keyed httpx extractors cover all
+> six without any vendor install.

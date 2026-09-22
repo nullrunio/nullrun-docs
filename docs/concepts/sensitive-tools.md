@@ -66,7 +66,7 @@ You express "sensitive" with one of two complementary mechanisms:
   cache to evaluate. Use this for hard rules — "never call `bash`".
 
 For the typed predicate wiring, see
-[Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-advanced-api-for-typed-impact-digest)
+[Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-typed-impact-digest)
 and [`money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact).
 
 Recommended starter patterns (see

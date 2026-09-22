@@ -84,14 +84,11 @@ information security needs to know:
   `action = session.terminate_all`.
 - **Log out** — single click, signs out the current browser only.
 
-## Display preferences (retired)
+## Display preferences
 
-The currency toggle was retired on 2026-08-11 (Audit P3-6
-closure). Operators read "cost shown in EUR" as "I will be billed
-in EUR", which the wire contract forbids — backend billing is
-always USD-cents, and the section name + the per-card `USD`
-suffix already communicate that. The component is retained for
-any future surface that genuinely needs display conversion.
+The Display preferences section is reserved for per-user view
+options. Backend billing is always USD-cents; every cost surface
+carries a `USD` suffix to make that explicit.
 
 ## Danger zone
 

@@ -40,7 +40,7 @@ if __name__ == "__main__":
 
 > **`@protect` is the entry point.** For early fail-fast (CI / smoke
 > tests) before the first `@protect` call, see [Reference → init /
-> init_or_die](../reference/sdk-api.md#init--init_or_die-optional-early-fail-fast).
+> init_or_die](../reference/sdk-api.md#init--init_or_die).
 
 > The `with workflow("..."):` block binds every `@protect` call inside
 > to a named workflow — required, otherwise the SDK falls back to an

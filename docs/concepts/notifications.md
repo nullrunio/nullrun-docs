@@ -27,9 +27,8 @@ notification enabled.
 The top section is a 2-up grid of channel cards. Each card carries:
 
 - **Icon tile** + **Channel name**.
-- **Masked URL** in mono for webhook channels (Slack channels show
-  the channel name; legacy email channels have been retired —
-  see the migration note below).
+- **Masked URL** in mono for webhook channels; Slack channels show
+  the channel name. See the Email variant note below.
 - **Status dot** — neutral for idle, faint for `last_sent` (so
   the operator can see at a glance whether the channel has fired
   recently).
@@ -53,10 +52,10 @@ Both Slack and generic webhook store on the backend as
 — Slack incoming webhooks accept POST JSON out of the box, so no
 Block Kit transform is needed for MVP.
 
-!!! note "Email variant removed"
-    The Email channel type was removed on 2026-08-17 (P1-43) and
-    is no longer available in the dialog. Legacy rows continue
-    to render in the list but cannot be re-created.
+!!! note "Email variant"
+    The Email channel type is not available in the dialog. The
+    channel list may contain read-only rows from prior installs;
+    new channels use Slack or Webhook.
 
 ### Send test
 

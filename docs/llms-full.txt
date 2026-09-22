@@ -629,7 +629,7 @@ secret is **not** a constructor argument — it is read from
 > creates the runtime lazily from `NULLRUN_API_KEY`. Call `init()`
 > directly when you want fail-fast on a missing key before the first
 > gate call (CI / smoke tests), or to bind an API key from a non-env
-> source. See [Reference → init / init_or_die](../reference/sdk-api.md#init--init_or_die-optional-early-fail-fast)
+> source. See [Reference → init / init_or_die](../reference/sdk-api.md#init--init_or_die)
 > for the contract.
 
 For env-var setup (`NULLRUN_API_KEY`, `NULLRUN_SECRET_KEY`, and other
@@ -695,12 +695,12 @@ pip install "nullrun[langgraph]"
 pip install "nullrun[crewai]"
 ```
 
-> **Deprecated extras (kept for back-compat, no longer required):**
+> **Extras that are no-ops:**
 > `nullrun[openai]`, `nullrun[anthropic]`, `nullrun[mistral]`,
-> `nullrun[gemini]`, `nullrun[cohere]`, `nullrun[bedrock]`. The SDK
-> never imported those vendor packages for the HTTP-level path; the
-> extras are now no-ops. URL-keyed httpx extractors cover all six
-> without any vendor install.
+> `nullrun[gemini]`, `nullrun[cohere]`, `nullrun[bedrock]` install
+> but do nothing today. The SDK never imports those vendor packages
+> for the HTTP-level path — URL-keyed httpx extractors cover all
+> six without any vendor install.
 
 
 ---
@@ -750,7 +750,7 @@ if __name__ == "__main__":
 
 > **`@protect` is the entry point.** For early fail-fast (CI / smoke
 > tests) before the first `@protect` call, see [Reference → init /
-> init_or_die](../reference/sdk-api.md#init--init_or_die-optional-early-fail-fast).
+> init_or_die](../reference/sdk-api.md#init--init_or_die).
 
 > The `with workflow("..."):` block binds every `@protect` call inside
 > to a named workflow — required, otherwise the SDK falls back to an
@@ -1260,7 +1260,7 @@ You express "sensitive" with one of two complementary mechanisms:
   cache to evaluate. Use this for hard rules — "never call `bash`".
 
 For the typed predicate wiring, see
-[Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-advanced-api-for-typed-impact-digest)
+[Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-typed-impact-digest)
 and [`money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact).
 
 Recommended starter patterns (see
@@ -3665,9 +3665,8 @@ notification enabled.
 The top section is a 2-up grid of channel cards. Each card carries:
 
 - **Icon tile** + **Channel name**.
-- **Masked URL** in mono for webhook channels (Slack channels show
-  the channel name; legacy email channels have been retired —
-  see the migration note below).
+- **Masked URL** in mono for webhook channels; Slack channels show
+  the channel name. See the Email variant note below.
 - **Status dot** — neutral for idle, faint for `last_sent` (so
   the operator can see at a glance whether the channel has fired
   recently).
@@ -3691,10 +3690,10 @@ Both Slack and generic webhook store on the backend as
 — Slack incoming webhooks accept POST JSON out of the box, so no
 Block Kit transform is needed for MVP.
 
-!!! note "Email variant removed"
-    The Email channel type was removed on 2026-08-17 (P1-43) and
-    is no longer available in the dialog. Legacy rows continue
-    to render in the list but cannot be re-created.
+!!! note "Email variant"
+    The Email channel type is not available in the dialog. The
+    channel list may contain read-only rows from prior installs;
+    new channels use Slack or Webhook.
 
 ### Send test
 
@@ -3810,9 +3809,9 @@ The hero card surfaces:
 
 - **Plan name + price** (e.g. `Starter · $29/mo · Renews Sep 30`).
 - **Status pill** — `Active` / `Past due` / `Cancelled` / `Expired`
-  (4-state machine; `Trialing` was removed — paid plans go straight
-  to `Active` after Polar checkout; Lite is free forever with no
-  trial).
+  (4-state machine; `Trialing` is not a state — paid plans go
+  straight to `Active` after Polar checkout; Lite is free forever
+  with no trial).
 - **Manage subscription** button (opens the customer portal — see
   the migration note below).
 - **Update payment method** button.
@@ -3828,13 +3827,12 @@ Below the hero:
   `URL.createObjectURL` and opens it; `window.open` can't attach
   the bearer token.
 
-!!! note "Customer portal retired"
-    The Polar customer portal is no longer a product surface
-    (2026-07-07). Both **Manage subscription** and **Update
-    payment method** controls now render a `mailto:support@nullrun.io`
-    deep-link with a pre-filled subject + body. Auto-checkout on
-    first mount (when `pending_checkout_plan` is set in
-    sessionStorage) is preserved.
+!!! note "Customer portal"
+    NullRun does not operate a self-service customer portal. Both
+    **Manage subscription** and **Update payment method** controls
+    render a `mailto:support@nullrun.io` deep-link with a pre-filled
+    subject + body. Auto-checkout on first mount (when
+    `pending_checkout_plan` is set in sessionStorage) is preserved.
 
 ### Lite orgs
 
@@ -3909,11 +3907,9 @@ returns the short form to match the frontend
 
 !!! note "Plan IDs on the wire"
     The canonical id for Enterprise is `"enterprise_unlimited"`.
-    The legacy `"enterprise"` string was reclaimed by the database
-    migration that consolidated Scale and Enterprise (the legacy
-    id now carries Scale content). `GET /api/v1/plans` returns the
-    canonical id; the dashboard renders it as the **Enterprise**
-    plan name. If you query the catalog by id, use
+    The id `"enterprise"` carries Scale content. `GET /api/v1/plans`
+    returns the canonical id; the dashboard renders it as the
+    **Enterprise** plan name. If you query the catalog by id, use
     `enterprise_unlimited`.
 
 ## Auto-checkout (post-signup)
@@ -4267,14 +4263,11 @@ information security needs to know:
   `action = session.terminate_all`.
 - **Log out** — single click, signs out the current browser only.
 
-## Display preferences (retired)
+## Display preferences
 
-The currency toggle was retired on 2026-08-11 (Audit P3-6
-closure). Operators read "cost shown in EUR" as "I will be billed
-in EUR", which the wire contract forbids — backend billing is
-always USD-cents, and the section name + the per-card `USD`
-suffix already communicate that. The component is retained for
-any future surface that genuinely needs display conversion.
+The Display preferences section is reserved for per-user view
+options. Backend billing is always USD-cents; every cost surface
+carries a `USD` suffix to make that explicit.
 
 ## Danger zone
 
