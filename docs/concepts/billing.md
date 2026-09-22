@@ -108,10 +108,11 @@ source of truth, surfaced via `GET /api/v1/plans`):
 | Executions / month | 75 000 | 100 000 | 750 000 | 2 000 000 | unlimited |
 | Requests / second | 5 | 10 | 50 | 300 | 1 000 |
 
-Lite has the `team` and `approvals` features disabled; Starter
-unlocks cloud sync, alerts, and advanced metrics; Growth unlocks
-team, approvals, audit log, replay, custom policies; Scale adds
-SSO and VPC; Enterprise removes every cap.
+Lite has the `team`, `approvals`, and `audit log` features
+disabled; Starter unlocks team workspaces and alerts; Growth
+unlocks approvals, audit log, custom policies, and command
+palette; Scale adds saved-cost-share and unlimited workflows;
+Enterprise removes every cap.
 
 The catalog comes from `GET /api/v1/plans`, which is
 unauthenticated and lives outside the `createApiClient` factory,

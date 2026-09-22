@@ -141,7 +141,6 @@ Common next steps, in rough order of how often they're needed:
 
 - **Multi-process / multi-key** patterns — see
   [Run multiple agents](../how-to/multi-agent.md).
-- **Self-hosted gateway** — see your on-prem deployment runbook.
 - **Streaming responses** — see
   [Stream with chain heartbeat](../how-to/streaming.md).
 
