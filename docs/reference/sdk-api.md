@@ -54,7 +54,7 @@ from nullrun import init, init_or_die, protect, workflow, span, agent, chain, tr
 | `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
 | `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
 | `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads. Safe to register via `atexit`. | ✅ |
-| `status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. Raises `NullRunConfigError` if the runtime hasn't been initialised yet. | ✅ |
+| `status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. Raises `NullRunConfigError` with `error_code="NR-C004"` if the runtime hasn't been initialised yet. | ✅ |
 
 Rows marked **lazy** are exposed under `nullrun.*` via `__getattr__`
 on first access; they do not appear in `dir(nullrun)` until used.
@@ -152,7 +152,7 @@ hierarchy diagram.
 | `NullRunAuthError` | 401 specifically (key rejected) | Subclass of `NullRunAuthenticationError`. Carries `.status_code` (the wire HTTP status). |
 | `NullRunTransportError` | Gateway unreachable | Carries `.source` (e.g. `NETWORK_ERROR` / `GATEWAY_ERROR` / `BREAKER_OPEN` / `AUTH_ERROR`) and `.endpoint`. Retryable. |
 | `NullRunBackendError` | 5xx from the gateway | Subclass of `NullRunTransportError`. Code `NR-B002` family. Retryable. |
-| `RateLimitError` | HTTP 429 | Subclass of `NullRunTransportError`. Carries `.retry_after`, `.upgrade_url`, `.body`. Code `NR-R001`. Retryable. |
+| `RateLimitError` | HTTP 429 (gateway rate-limit response) | Subclass of `NullRunTransportError` → `NullRunInfrastructureError` (infrastructure class — see exception tree above). Carries `.retry_after`, `.upgrade_url`, `.body`. Code `NR-R001`. Retryable. Despite the 4xx status, integration handlers should treat it as infrastructure (FastAPI middleware maps it to 503). |
 | `NullRunRateLimitRedisError` | 503 — Redis reservation failed | Subclass of `NullRunInfrastructureError`. Code `NR-R002`. |
 | `NullRunProtocolError` | Backend returned 400 `PROTOCOL_TOO_OLD` | Carries `.min_required_version`. Upgrade SDK past the min required protocol version. |
 | `NullRunBlockedException` | Generic policy block | Inspect `.workflow_id`, `.reason`, `.action`, `.tool_name`, `.details`. Carries `.status_code` (the wire HTTP status, e.g. 402 budget, 403 cross-org, 422 `CONSUME_OVERBUDGET`, 429 cap-reached). **No** `.message` — use `str(exc)`. |

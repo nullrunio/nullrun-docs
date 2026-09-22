@@ -236,7 +236,6 @@ and end-user-facing wording lives in
 | `NR-B004` | Workflow budget exhausted | 402 | `NullRunBudgetError` |
 | `NR-B006` | Post-approval budget re-check failed on `/execute` (budget counter moved between `/gate` reserve and `/execute`) | 402 | `NullRunBudgetRecheckFailedError` |
 | `NR-O001` | Actual cost > reservation + ε | 422 | `NullRunConsumeOverbudgetError` |
-| `NR-R001` | Per-workflow rate limit | 429 | `RateLimitError` |
 | `NR-T001` | Tool in block list | 403 | `NullRunToolBlockedError` |
 | `NR-CH001` | Chain context invalid (chain_id / parent_execution_id / max_duration exceeded) | 402 | `NullRunChainError` |
 | `NR-EX01` | `/execute` or `/cancel` called without a prior `/gate` that minted this `execution_id` (binding TTL expired or never bound) | 404 | `NullRunExecutionNotFoundError` |
@@ -268,8 +267,10 @@ you don't care about the exact cause.
 | `NR-B002` | Gateway 5xx | 500/503 | `NullRunBackendError` |
 | `NR-B003` | `@sensitive` business_impact extraction failed (tool param shapes unsupported) | 403 | `NullRunBlockedException` (raised from `decorators.py`) |
 | `NR-B005` | Local SDK circuit breaker tripped — short-circuits before the wire call | 503 | `NullRunBackendError` (with `source = BREAKER_OPEN`) |
+| `NR-R001` | Per-workflow rate limit hit (gateway returned 429 with `Retry-After`) | 429 | `RateLimitError` (subclass of `NullRunTransportError` — infrastructure class despite the 429 status) |
 | `NR-R002` | Rate-limit Redis unavailable (aggregate per-org rate-limit fail-CLOSED) | 503 | `NullRunRateLimitRedisError` |
 | `NR-C000` | Misconfiguration (missing api_key, invalid setup) | n/a (raised) | `NullRunConfigError` (default) |
+| `NR-C004` | `nullrun.status()` called before `nullrun.init()` | n/a (raised) | `NullRunConfigError` (raised by `status()` when no runtime is bound) |
 | `NR-A001` | Auth rejected by backend (general) | 401/403 | `NullRunAuthenticationError` (default) |
 | `NR-P001` | Wire-protocol version mismatch | 400 | `NullRunProtocolError` |
 
