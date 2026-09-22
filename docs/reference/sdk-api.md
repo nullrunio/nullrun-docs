@@ -1,6 +1,6 @@
 title: SDK API
 maturity: stable
-description: Reference for every NullRun SDK symbol: init, @protect (canonical entry point), @sensitive(impact=...) (advanced API), workflow, chain, exceptions, manual tracking, and transport hooks. SDK 0.18.1: bare @sensitive is deprecated.
+description: Reference for every NullRun SDK symbol: @protect (canonical entry point), @sensitive(impact=...) for typed impact + digest-bound approval, workflow / chain context managers, exceptions, manual tracking, and transport hooks.
 # SDK API
 
 The Python SDK lives in
@@ -24,13 +24,13 @@ Auto-instrumentation for httpx-based libraries (`openai`,
 from nullrun import init, init_or_die, protect, workflow, span, agent, chain, track_llm, track_tool, track_event
 ```
 
-### `init` / `init_or_die`: optional early fail-fast {#init--init_or_die-optional-early-fail-fast}
+### `init` / `init_or_die` {#init--init_or_die}
 
-> **Optional.** The runtime is created lazily on the first `@protect`
-> call — most apps skip `init()` entirely. These helpers exist for
-> the cases where you need early fail-fast before any `@protect` call
-> runs (CI / smoke tests, pre-flight validation, library authors
-> wiring keys from a non-env source).
+The runtime is created lazily on the first `@protect` call from
+`NULLRUN_API_KEY` — most apps skip `init()` entirely. These helpers
+exist for the cases where you need early fail-fast before any
+`@protect` call runs (CI / smoke tests, pre-flight validation, library
+authors wiring keys from a non-env source).
 
 | Helper | Behaviour | Use when |
 |---|---|---|
@@ -41,11 +41,10 @@ from nullrun import init, init_or_die, protect, workflow, span, agent, chain, tr
 
 || Symbol | Purpose | In `__all__` |
 |---|---|---|---|
-| `init(api_key=None, api_url=None, debug=False)` | **Optional.** Eagerly initialise the runtime — usually skipped because the runtime is created lazily on the first `@protect` call. Use `init()` when you want early fail-fast on a missing key, or to bind a key from a non-env source. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
-| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | **Optional.** Like `init` but exits cleanly with `exit_code` (default 1) if no API key is configured. See the table above. | ✅ |
-| `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** since 0.18.1 — auto-attaches a default `ToolParamsExtractor` so every kwarg reaches the operator on the wire. Pair with `with nullrun.handle():` for the structured 4-line dev report on failure. | ✅ |
-| `@sensitive(impact=...)` | Factory form — the **advanced API** for library authors who need a typed `BusinessImpact` (`money_outflow(...)` for money flows, `tool_params(...)` for an explicit rename map or empty-bag mode) + SHA-256 `action_digest` for digest-bound approval. **Not deprecated** — it remains the right tool when typed impact matters. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
-| `@sensitive` (bare) | **Deprecated** since SDK 0.18.1. Emits `DeprecationWarning` in 0.18.x, removed in 0.19.x. The bare form auto-attaches the same default `ToolParamsExtractor` `@protect` already attaches, so the observable behaviour is identical to `@protect` alone. **Migrate to `@protect` alone.** | ✅ (lazy import, deprecated) |
+| `init(api_key=None, api_url=None, debug=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
+| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Like `init` but exits cleanly with `exit_code` (default 1) if no API key is configured. See the table above. | ✅ |
+| `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — auto-attaches a default `ToolParamsExtractor` so every kwarg reaches the operator on the wire. Pair with `with nullrun.handle():` for the structured 4-line dev report on failure. | ✅ |
+| `@sensitive(impact=...)` | Factory form — stamps a typed `BusinessImpact` extractor (`money_outflow(...)` for money flows, `tool_params(...)` for an explicit rename map or empty-bag mode) + SHA-256 `action_digest` for digest-bound approval. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
 | `@guarded` | Decorator equivalent of `with nullrun.handle():` — wraps a function so any `NullRunError` raised inside is converted to the structured 4-line dev report on stderr and `sys.exit(1)`. Use the un-`@guarded` `protect()` form if you need to handle kill distinctly. | ✅ |
 | `with nullrun.handle(*, exit_code=1):` | Context manager form of `@guarded` — apply to a region of code rather than a single function. **Recommended** for the structured 4-line developer report. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
@@ -171,9 +170,9 @@ hierarchy diagram.
 | `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
 | `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
 | `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunError`. Carries `.workflow_id`, `.reason`, `.resume_after`. |
-| `WorkflowKilledException` | Killed via control plane (legacy parent) | `BaseException` subclass. **Deprecated** — emits `DeprecationWarning` on construction. Use `NullRunWorkflowKilledError` directly. |
-| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `NullRunError` (was `BaseException` before SDK 0.16.x — now caught by `except Exception:` like every other SDK error). |
-| `NullRunWorkflowKilledError` | Kill arrived mid-call (typed alias) | Preferred subclass of `WorkflowKilledInterrupt`. Same wire semantics; use this for typed `except` arms. |
+| `WorkflowKilledException` | Killed via control plane (legacy parent) | `BaseException` subclass. Use `NullRunWorkflowKilledError` directly. |
+| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `NullRunError`. Caught by `except Exception:` like every other SDK error. |
+| `NullRunWorkflowKilledError` | Kill arrived mid-call (typed alias) | Subclass of `WorkflowKilledInterrupt`. Same wire semantics; use this for typed `except` arms. |
 
 
 ## Catch-all pattern
@@ -188,8 +187,7 @@ from nullrun.breaker.exceptions import (
 )
 
 # init() is OPTIONAL — the first protect(...) below creates the
-# runtime lazily from NULLRUN_API_KEY. Use init() here only if you
-# want early fail-fast on a missing key (CI / smoke tests). See
+# runtime lazily from NULLRUN_API_KEY. See
 # init / init_or_die above.
 
 try:
