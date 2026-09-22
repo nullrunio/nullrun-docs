@@ -55,7 +55,7 @@ NullRun has two period sources:
 
 | Plan | Period source | When it resets |
 |---|---|---|
-| **Lite** (free) | Calendar month UTC | 1st of each month at 00:00 UTC |
+| **Lite** (free) | Rolling 1-month window anchored at `organizations.created_at` | One month after signup (e.g. signed up Jun 15 → resets Jul 15, Aug 15, …) |
 | **Paid** (Starter / Growth / Scale) | Your billing cycle (Polar subscription) | Set when you subscribed; on renewal |
 
 The dashboard shows the period start and end dates next to the

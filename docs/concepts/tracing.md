@@ -121,6 +121,12 @@ After the retention window expires, the trace is removed from the
 dashboard; the aggregated cost information stays (it's summarised
 per workflow per period).
 
+The retention window is independent of the trace *generation* caps
+— Lite also throttles to **10 000 tokens/hour** and **75 000
+executions/month** (see [Billing & Plan → Per-tier caps](billing.md#per-tier-caps)),
+so a Lite workflow's traces stop accumulating well before the 3-day
+window applies.
+
 If you need longer retention for compliance, you can export traces
 from the dashboard as JSON via the **Export** button on the
 Executions page. The exported shape matches the wire format.

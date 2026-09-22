@@ -10,7 +10,7 @@ The **Team** page is the org-membership surface. It lists every
 member and every pending invite, surfaces the per-role capability
 matrix, and lets owners + admins invite or remove people. It lives
 at `/control-center/team` in the sidebar under **Access** and is
-gated by the `team` plan feature (Starter and above).
+gated by the `team` plan feature (Growth and above).
 
 ## Roles and what each can do
 

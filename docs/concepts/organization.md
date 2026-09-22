@@ -62,7 +62,7 @@ page stays interactive.
 The page does not host the members table itself — the link in
 the team section takes the operator to the **Team** page
 (`/control-center/team`) under **Access**. Plan-gated to
-Starter+.
+Growth+.
 
 ## Delete organization (irreversible)
 

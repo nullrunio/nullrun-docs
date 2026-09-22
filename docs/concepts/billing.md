@@ -30,8 +30,11 @@ Default landing. The header reads **Billing** with the subtitle
 
 The hero card surfaces:
 
-- **Plan name + price** (e.g. `Starter · $49/mo · Renews Sep 30`).
-- **Status pill** — `Active` / `Trialing` / `Past due`.
+- **Plan name + price** (e.g. `Starter · $29/mo · Renews Sep 30`).
+- **Status pill** — `Active` / `Past due` / `Cancelled` / `Expired`
+  (4-state machine; `Trialing` was removed — paid plans go straight
+  to `Active` after Polar checkout; Lite is free forever with no
+  trial).
 - **Manage subscription** button (opens the customer portal — see
   the migration note below).
 - **Update payment method** button.
@@ -57,9 +60,11 @@ Below the hero:
 
 ### Lite orgs
 
-Lite is the free tier — there is no `billing_subscriptions` row.
-The hero reads `$0/mo · Free tier` and the payment-method /
-invoices sections collapse.
+Lite is the free tier — there is no active `billing_subscriptions`
+row (a row in `Cancelled` or `Expired` status is also treated as
+Lite: no Polar anchor, no live payment method). The hero reads
+`$0/mo · Free tier` and the payment-method / invoices sections
+collapse.
 
 ## The Plan tab
 
@@ -70,11 +75,14 @@ availability."
 The tab surfaces:
 
 - **Quota usage cards** — every plan cap (workflows, policies,
-  api_keys, seats, executions) with `used / limit` and a
-  percentage. The executions card surfaces
-  `executions_period_kind` so the operator knows whether the reset
-  is **calendar_month UTC** (Lite) or the **Polar billing-cycle
-  anchor** (paid plans) or the **lite_rolling_period**.
+  api_keys, seats, executions, tokens/hour, requests/second,
+  approval rules) with `used / limit` and a percentage. The
+  executions card surfaces `executions_period_kind` so the operator
+  knows whether the reset is the **Lite rolling 1-month window**
+  anchored at `organizations.created_at` (Lite) or the **Polar
+  billing-cycle anchor** (paid plans). `calendar_month` only
+  appears as a Postgres-failure fallback when the org-row lookup
+  fails.
 - **At-risk banner** — when `quota.at_risk` is true, the page
   renders a callout with the projected hit date
   (`projected_hit_in_days`) and a CTA to upgrade.
@@ -84,6 +92,27 @@ The tab surfaces:
   and disabled.
 - **Per-tier feature-gate panel** — a tighter view of which
   features are on/off at the current plan, with upgrade CTAs.
+
+### Per-tier caps
+
+Canonical cap values per plan (from the `plans` table — single
+source of truth, surfaced via `GET /api/v1/plans`):
+
+| Cap | Lite | Starter | Growth | Scale | Enterprise |
+|---|---|---|---|---|---|
+| Workflows | 3 | 8 | 50 | 200 | unlimited |
+| API keys | 10 | 15 | 100 | 350 | unlimited |
+| Seats | 1 | 3 | 10 | 75 | unlimited |
+| Policies | 3 | 10 | 25 | 150 | unlimited |
+| Approval rules | 0 | 0 | 20 | unlimited | unlimited |
+| Tokens / hour | 10 000 | 25 000 | 300 000 | unlimited | unlimited |
+| Executions / month | 75 000 | 100 000 | 750 000 | 2 000 000 | unlimited |
+| Requests / second | 5 | 10 | 50 | 300 | 1 000 |
+
+Lite has the `team` and `approvals` features disabled; Starter
+unlocks cloud sync, alerts, and advanced metrics; Growth unlocks
+team, approvals, audit log, replay, custom policies; Scale adds
+SSO and VPC; Enterprise removes every cap.
 
 The catalog comes from `GET /api/v1/plans`, which is
 unauthenticated and lives outside the `createApiClient` factory,
@@ -95,7 +124,19 @@ tabs.
 Above the comparison table, a `BillingPeriodToggle` switches
 between **Monthly** and **Yearly** price columns. The yearly
 column is computed via `computeYearlyPriceCents` so the discount
-matches the public pricing page.
+matches the public pricing page. The wire string for the yearly
+period is `"year"` (not `"yearly"`) — `BillingPeriod::Yearly.as_str()`
+returns the short form to match the frontend
+`BillingData.billing_cycle: "monthly" | "year"` type.
+
+!!! note "Plan IDs on the wire"
+    The canonical id for Enterprise is `"enterprise_unlimited"`.
+    The legacy `"enterprise"` string was reclaimed by the database
+    migration that consolidated Scale and Enterprise (the legacy
+    id now carries Scale content). `GET /api/v1/plans` returns the
+    canonical id; the dashboard renders it as the **Enterprise**
+    plan name. If you query the catalog by id, use
+    `enterprise_unlimited`.
 
 ## Auto-checkout (post-signup)
 

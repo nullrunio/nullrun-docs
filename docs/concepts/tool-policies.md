@@ -136,6 +136,22 @@ The dashboard rejects invalid patterns at save time:
 on **Growth+** plans. Lite and Starter can have `BudgetLimit` and
 `RateLimit` policies, but not ToolBlock.
 
+**Approval rules** (separate from ToolBlock) are gated by the
+`approvals` plan feature. The per-tier cap matches:
+
+| Plan | Approval rules allowed | Why |
+|---|---|---|
+| Lite | 0 | `approvals` feature disabled |
+| Starter | 0 | `approvals` feature disabled (server-side invariant: `approval_rules > 0 ⇒ approvals == true`) |
+| Growth | 20 | `approvals` enabled |
+| Scale | unlimited | `approvals` enabled, no cap |
+| Enterprise | unlimited | `approvals` enabled, no cap |
+
+The gate enforces `approval_rules = 0` server-side on Lite and
+Starter — even if you mint a key on a higher tier and downgrade,
+existing rules are kept (for audit) but no new rule can be created
+until the plan is upgraded back.
+
 On Lite / Starter, the dashboard shows ToolBlock policy creation
 greyed out with an "Upgrade" link.
 

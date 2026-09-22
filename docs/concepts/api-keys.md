@@ -14,6 +14,12 @@ counter at the top of the page (`N / <plan-cap>`) tells you how many
 keys your org has versus your plan's cap. The page shows every key
 with its name, workflow, last-used timestamp, and expiration date.
 
+Per-plan key cap: Lite = 10, Starter = 15, Growth = 100,
+Scale = 350, Enterprise = unlimited (see
+[Billing & Plan → Per-tier caps](billing.md#per-tier-caps)). The
+cap is enforced server-side — the create handler rejects with
+`plan_limit_exceeded` once you hit it.
+
 ## The mental model
 
 Each workflow needs at least one API key to run. The key is what the
