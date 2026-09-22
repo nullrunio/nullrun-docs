@@ -44,7 +44,7 @@ chain: every `NullRunError` subclass — including `WorkflowKilledInterrupt`
 | --- | --- | --- | --- |
 | `NullRunError` (budget, tool block, rate limit, soft block, etc.) | `app.add_exception_handler` | per `error_code` | `user_message`, `category: "decision"`, `retryable` |
 | Infrastructure errors (transport, 5xx, auth, config) | `app.add_exception_handler` | `503` | `user_message`, `category: "infrastructure"`, `retryable` |
-| `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) | `app.add_exception_handler` | `503` | `user_message`, `category: "killed"` |
+| `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) | `NullRunMiddleware` (ASGI) | `503` | `user_message`, `category: "killed"` |
 
 `Retry-After` is set on the response whenever the exception carries a
 `retry_after` (gateway 429) or `resume_after` (workflow pause)
@@ -52,18 +52,26 @@ attribute.
 
 ## HTTP status mapping
 
+The status codes below come from `_DECISION_STATUS` and
+`_DEFAULT_DECISION_STATUS = 429` / `_DEFAULT_INFRASTRUCTURE_STATUS = 503`
+in `nullrun.integrations.fastapi`. SDK exception classes (`exceptions.py`)
+carry an `error_code` attribute; the integration maps it to HTTP at
+install time.
+
 | `error_code` | Category | HTTP | Notes |
 | --- | --- | --- | --- |
-| `NR-B004` | decision | `402` | `retryable: false` — user must upgrade or wait for next cycle. Covers `BUDGET_HARD_BLOCKED`, `BUDGET_SOFT_BLOCKED`, `BUDGET_OVERDRAFT_EXCEEDED`, `BUDGET_ANTI_DOS_RESERVED_CAP`, `BUDGET_PERIOD_NOT_STARTED` |
-| `NR-R001` | decision | `429` | `Retry-After` from `.retry_after` |
-| `RATE_LIMIT_REDIS_UNAVAILABLE` | decision | `503` | Aggregate rate limit fails closed |
+| `NR-B004` | decision | `429` | `retryable: false`. Covers `BUDGET_HARD_BLOCKED`, `BUDGET_SOFT_BLOCKED`, `BUDGET_OVERDRAFT_EXCEEDED`, `BUDGET_ANTI_DOS_RESERVED_CAP`, `BUDGET_PERIOD_NOT_STARTED`. Per `_DECISION_STATUS["NR-B004"]`. |
+| `NR-R001` | infrastructure | `503` | `Retry-After` from `.retry_after`. Class is `RateLimitError(NullRunTransportError)` so it lands on the infrastructure handler despite the `_DECISION_STATUS["NR-R001"]=429` entry being unreachable in practice. |
+| `NR-R002` | infrastructure | `503` | `retryable: true` — Redis unavailable for aggregate rate limit (fail-CLOSED). Class is `NullRunRateLimitRedisError(NullRunInfrastructureError)`. |
 | `NR-T001` | decision | `403` | The action itself is forbidden |
-| `WORKFLOW_INACTIVE` | decision | `403` | Workflow was soft-deleted or killed |
-| `CHAIN_MAX_DURATION_EXCEEDED` | decision | `402` | Chain exceeded `max_chain_duration_seconds` |
-| `BUDGET_REDIS_UNAVAILABLE` | infrastructure | `402` | `retryable: true` — money math fail-CLOSED |
-| `BUDGET_DATA_UNAVAILABLE` | infrastructure | `503` | Approximate-budget lookup: all sources down |
+| `NR-W004` | decision | `429` | Workflow soft-deleted or killed (`NullRunWorkflowInactiveError`). No `_DECISION_STATUS` entry → falls through to `_DEFAULT_DECISION_STATUS=429`. |
+| `NR-W003` | decision | `503` | Workflow paused (`WorkflowPausedException`) — override default to signal server-driven resume |
+| `NR-CH001` | decision | `429` | Chain context invalid (chain_id / parent_execution_id). No `_DECISION_STATUS` entry → default 429. |
+| `NR-X001` | decision | `403` | Generic block (catch-all decision) |
 
-`WorkflowKilledInterrupt` always maps to `503`. See
+`WorkflowKilledInterrupt` always maps to `503` (caught by the ASGI
+middleware, not the exception-handler chain — Starlette refuses
+`BaseException` subclasses in `add_exception_handler`). See
 [Reference → Errors](../reference/errors.md) for the full catalog.
 
 ## Locale resolution
