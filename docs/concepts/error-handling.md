@@ -154,8 +154,7 @@ hook, filter on `error_code` (`"NR-W002"`).
 
 For scripts that just want "run the agent and print a friendly
 message on failure", use the no-boilerplate helpers. The first
-`@protect` call lazily creates the runtime, so there is no
-`init()` / `init_or_die()` line:
+`@protect` call lazily creates the runtime:
 
 ```python
 from nullrun import protect, shutdown
@@ -196,10 +195,10 @@ handle kill distinctly (for example, checkpoint state before exit),
 use the un-`handle()` form and add your own
 `except NullRunWorkflowKilledError:` arm.
 
-`@guarded` (decorator equivalent of `handle()`) is still exported for
-back-compat, but `handle()` is the recommended form: it gives a
-clearer scope, accepts an `exit_code` argument, and the four-line
-report is what it always renders.
+`handle()` is the recommended form: it gives a clearer scope,
+accepts an `exit_code` argument, and the four-line report is what it
+always renders. `@guarded` is the decorator equivalent of the same
+behaviour.
 
 `handle()` / `guarded()` are for scripts and one-shots. For
 long-running services you want explicit handling — see
@@ -228,7 +227,7 @@ sugar on top of the catalog.
 ## Server frameworks
 
 For FastAPI / aiohttp / Flask / Django, you don't want `handle()`
-or `@guarded` (they are CLI helpers that exit the process). Instead,
+(it exits the process). Instead,
 catch the exception in your request handler and return an appropriate
 HTTP status:
 

@@ -6,9 +6,8 @@ description: Every NullRun SDK environment variable, transport option, and fail-
 # Configuration
 
 NullRun reads configuration from environment variables. The runtime
-is created lazily on the first protected execution — there is no
-`init()` step in the user-facing path. Only `NULLRUN_API_KEY` is
-required; everything else has sensible defaults.
+is created lazily on the first protected execution. Only
+`NULLRUN_API_KEY` is required; everything else has sensible defaults.
 
 Variables are read by the Python SDK process on the first `@protect`
 call. The gateway is operated by the NullRun team and exposes no
@@ -44,7 +43,7 @@ Read by the SDK transport when the runtime is created on the first
 | --- | --- | --- |
 | `NULLRUN_SKIP_BUDGET_CHECK=1` | Fully bypasses the gate on every `@protect` call in the process. **For local SDK development and CI only** — do not export in production environments. Production with this flag set silently skips every policy check. | Local SDK experiments, integration tests where you want to verify business logic without gate noise. |
 | `NULLRUN_ALLOW_SKIP_BUDGET_CHECK=1` | Acknowledges the previous flag in CI logs so an audit reviewer can see the bypass was deliberate. Has no effect by itself; safe to set alongside the previous flag in CI. | CI pipelines that intentionally skip the gate. |
-| `NULLRUN_SENSITIVE_FAIL_OPEN=1` | Returns a permissive result instead of failing-CLOSED when a sensitive-tool transport error blocks the gate call. | Legacy environments without a working transport for sensitive-tool lookups — modern installs should leave this unset. |
+| `NULLRUN_SENSITIVE_FAIL_OPEN=1` | Returns a permissive result instead of failing-CLOSED when a sensitive-tool transport error blocks the gate call. | Environments without a working transport for sensitive-tool lookups — modern installs should leave this unset. |
 
 If a CI test "passes only with `NULLRUN_SKIP_BUDGET_CHECK=1`" that's a
 signal the gate is blocking what it should not — fix the gate, not

@@ -98,14 +98,10 @@ attribute — use `str(exc)`.
 
 
 `WorkflowKilledInterrupt` (and its typed subclass `NullRunWorkflowKilledError`)
-both inherit from `NullRunError` (post-2026-09-08 migration — the
-class was formerly a `BaseException` subclass), so a bare
+both inherit from `NullRunError`, so a bare
 `except Exception:` catches the kill signal. For kill-specific
 handling — checkpointing state, notifying a supervisor, etc. —
-catch the typed exception explicitly. The deprecated
-`WorkflowKilledException` parent remains a `BaseException` subclass
-for back-compat but does NOT match the new class — migrate to
-`WorkflowKilledInterrupt` or `NullRunWorkflowKilledError`.
+catch the typed exception explicitly.
 
 ## The default path: zero lines of error handling
 

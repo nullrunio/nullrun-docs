@@ -170,8 +170,9 @@ When you're debugging a production issue, traces answer:
 
 ### "My trace shows nothing"
 
-If `init()` was never called or the API key is missing, the SDK
-runs in error mode and no spans are recorded. Check the SDK logs for
+If the runtime was never created (the first `@protect` call never
+fired) or the API key is missing, the SDK runs in error mode and no
+spans are recorded. Check the SDK logs for
 `NullRunAuthenticationError`.
 
 ### "My trace is incomplete — only some spans show up"

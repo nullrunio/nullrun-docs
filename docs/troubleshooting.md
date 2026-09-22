@@ -34,13 +34,11 @@ when it isn't.
 | Protocol version too old | 400 | `NullRunProtocolError` |
 
 !!! note "Endpoint naming"
-    The canonical enforcement endpoint is **`POST /api/v1/gate`** (returns
-    a server-minted `execution_id` on `allow` decisions). The
-    legacy **`POST /api/v1/check`** was removed on **2026-06-28** —
-    it now returns `410 Gone` with `replacement: /api/v1/gate`
-    (`backend/src/proxy/http/gate/check.rs:39-72`). All SDKs ≥ T4
-    call `/gate` directly. T4-pre SDKs must upgrade to restore
-    dry-run admission functionality.
+    The canonical enforcement endpoint is **`POST /api/v1/gate`**
+    (returns a server-minted `execution_id` on `allow` decisions).
+    The legacy **`POST /api/v1/check`** returns `410 Gone` with
+    `replacement: /api/v1/gate`. All current SDKs call `/gate`
+    directly.
 
 > Critical paths refuse to run when the gateway is unreachable;
 > secondary signals may let calls through.

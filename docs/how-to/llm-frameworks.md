@@ -6,9 +6,9 @@ description: Coverage matrix for OpenAI, Anthropic, Mistral, Gemini, Cohere, Bed
 # LLM frameworks
 
 The SDK's auto-instrumentation runs **lazily on the first `@protect`
-call**, not at import or `init()` time. The lazy trigger creates the
-runtime and walks `sys.modules` looking for known framework packages,
-applying each detected patch in a single process-wide idempotent step.
+call**. The lazy trigger creates the runtime and walks `sys.modules`
+looking for known framework packages, applying each detected patch
+in a single process-wide idempotent step.
 
 In every case, the LLM call gets `track_llm` events automatically —
 **no `@protect` required for cost tracking**. `@protect` is the

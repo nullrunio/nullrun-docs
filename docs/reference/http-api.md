@@ -41,11 +41,11 @@ All SDK-traffic endpoints (`/track`, `/track/batch`, `/gate`,
 
 The SDK computes and signs every request automatically once
 `NULLRUN_API_KEY` and `NULLRUN_SECRET_KEY` are set. The gateway
-default for `NULLRUN_HMAC_REQUIRED` is `false` for backward
-compatibility — operators must set it explicitly to `true` in
-production. When `NULLRUN_HMAC_REQUIRED=true`, unsigned SDK requests
-are rejected with 401 and the SDK-auth middleware emits a per-request
-WARN so the gap is visible in logs.
+default for `NULLRUN_HMAC_REQUIRED` is `false` — operators must set
+it explicitly to `true` in production. When
+`NULLRUN_HMAC_REQUIRED=true`, unsigned SDK requests are rejected
+with 401 and the SDK-auth middleware emits a per-request WARN so
+the gap is visible in logs.
 
 > SDK requests to `/api/v1/orgs/{org_id}/*` are also checked for
 > org-mismatch: the org claimed in the URL must match the org the
@@ -78,8 +78,8 @@ documents every field.
 
 | Method | Path | Status |
 | --- | --- | --- |
-| `POST` | `/api/v1/check` | Deprecated — returns `410 Gone` with `replacement: /api/v1/gate`. Use `/gate` for new integrations. |
-| `POST` | `/api/v1/execute` | Live — per-tool invocation with gate pre-flight and budget reservation (thin adapter in front of the unified gate engine). |
+| `POST` | `/api/v1/check` | Returns `410 Gone` with `replacement: /api/v1/gate`. Use `/gate` for new integrations. |
+| `POST` | `/api/v1/execute` | Per-tool invocation with gate pre-flight and budget reservation (thin adapter in front of the unified gate engine). |
 
 ## Auth
 

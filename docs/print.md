@@ -68,9 +68,8 @@ Sign in at [nullrun.io](https://nullrun.io), open **API keys**, and create a key
 
 ```python title="app.py"
 from openai import OpenAI
-from nullrun import init_or_die, guarded, protect, workflow, shutdown
+from nullrun import guarded, protect, workflow, shutdown
 
-init_or_die(api_key="nr_live_...")        # exits cleanly if api_key missing
 client = OpenAI()
 
 with workflow("my-first-agent"):       # scopes the gate to a workflow
@@ -119,7 +118,7 @@ Verify:
 python -c "from nullrun import protect; print('ok')"
 ```
 
-> **No local mode.** If `init()` is called without an API key, the SDK raises `NullRunAuthenticationError` at first use. There is no offline / local-only fallback.
+> If `init()` is called without an API key, the SDK raises `NullRunAuthenticationError` at first use.
 
 ### API key
 
@@ -140,7 +139,7 @@ The public `init()` surface takes `api_key` (and optionally `api_url`, `debug`).
 
 ### Auto-instrumentation
 
-`nullrun.init()` patches the underlying HTTP transport (`httpx`) and the agent framework modules it can detect in `sys.modules`:
+The SDK patches the underlying HTTP transport (`httpx`) and the agent framework modules it can detect in `sys.modules` on the first `@protect` call:
 
 | Detected | Coverage |
 | --- | --- |
@@ -158,9 +157,8 @@ Wrap any function with **`@nullrun.protect`** to track its cost, tools, and beha
 
 ```python title="app.py"
 from openai import OpenAI
-from nullrun import init_or_die, guarded, protect, workflow, shutdown
+from nullrun import guarded, protect, workflow, shutdown
 
-init_or_die(api_key="nr_live_...")
 client = OpenAI()
 
 with workflow("my-first-agent"):
@@ -375,14 +373,14 @@ except NullRunBlockedException as e:
 
 ### Layer 2 — `on_error` hook
 
-Pass a callable to `init()` to centralize error handling:
+Register a callable to centralize error handling:
 
 ```python
 def my_error_handler(exc: NullRunError) -> None:
     log.error("nullrun: %s (%s)", exc, exc.error_code)
     notify_oncall(exc)
 
-nullrun.init(api_key="nr_live_...", on_error=my_error_handler)
+nullrun.on_error(my_error_handler)
 ```
 
 The hook fires for every SDK-raised exception before it bubbles up.
@@ -595,9 +593,8 @@ NullRunError                          (Exception)
         ├── NullRunBackendError       (5xx — retryable)
         └── RateLimitError            (429 — carries .retry_after, .upgrade_url)
 
-BaseException
-└── WorkflowKilledException           (parent)
-    └── WorkflowKilledInterrupt       (kill via control plane — BaseException)
+WorkflowKilledInterrupt               (kill via control plane)
+└── NullRunWorkflowKilledError        (typed public name)
 ```
 
 ## 4.2 HTTP API
@@ -671,7 +668,7 @@ The Python SDK exposes the following public surface:
 
 | Name | Purpose |
 | --- | --- |
-| `init(api_key, api_url=None, debug=False, on_error=None)` | Bootstrap the SDK. Idempotent. |
+| `init(api_key, api_url=None, debug=False)` | Bootstrap the SDK. Idempotent. |
 | `init_or_die(api_key, ...)` | Same as `init()`, but `sys.exit(1)` if the key is missing or invalid. |
 | `shutdown()` | Flush pending telemetry, close HTTP pool. Idempotent. |
 | `workflow(name)` | Context manager. Binds every `@protect` call inside to `name`. |
@@ -696,7 +693,6 @@ from nullrun import (
     NullRunTransportError,
     NullRunBackendError,
     RateLimitError,
-    WorkflowKilledException,
     WorkflowKilledInterrupt,
 )
 ```

@@ -1,6 +1,6 @@
 title: Sensitive tools
 maturity: stable
-description: The `@protect` decorator auto-attaches a default tool_params extractor so every protected tool is eligible for ToolParameters Approval Rules. The `@sensitive(impact=...)` factory form is the advanced API for typed BusinessImpact + digest-bound approval. Bare `@sensitive` is deprecated in SDK 0.18.1.
+description: The `@protect` decorator auto-attaches a default tool_params extractor so every protected tool is eligible for ToolParameters Approval Rules. The `@sensitive(impact=...)` factory form stamps a typed BusinessImpact + digest-bound approval.
 # Sensitive tools
 
 A **sensitive tool** is one that should never run without a human
@@ -14,24 +14,22 @@ context. This page covers the *recommended* patterns and how to wire
 them.
 
 !!! info "The canonical entry point is `@protect`"
-    Since SDK 0.18.1, every protected tool is automatically eligible
-    for ToolParameters Approval Rules — `@protect` stamps a default
+    Every protected tool is automatically eligible for ToolParameters
+    Approval Rules — `@protect` stamps a default
     `ToolParamsExtractor(include_all=True)` so the kwargs of every
     call reach the gate without any second decorator. The
-    `@sensitive(impact=...)` factory form is the **advanced API** for
-    typed impact + digest-bound approval flow (library authors). The
-    **bare `@sensitive` form is deprecated** — see
-    [Decorators & extractors → Deprecated form: bare `@sensitive`](../reference/decorators.md#deprecated-form-bare-sensitive).
+    `@sensitive(impact=...)` factory form stamps a typed
+    `BusinessImpact` + digest-bound approval flow.
 
 !!! info "`@sensitive(impact=...)` vs `ToolBlock`"
     Two distinct mechanisms, often confused:
 
-    - **`@sensitive(impact=...)` (SDK-side, advanced API)** — a
-      factory decorator that stamps a typed `BusinessImpact`
-      extractor on the function. Used with **approval rules** that
-      evaluate a typed predicate (`money_amount` / `tool_parameters`)
-      + the SHA-256 `action_digest` for tamper-proof approval.
-      Affects the SDK only; the gate still has the final say.
+    - **`@sensitive(impact=...)` (SDK-side)** — a factory decorator
+      that stamps a typed `BusinessImpact` extractor on the
+      function. Used with **approval rules** that evaluate a typed
+      predicate (`money_amount` / `tool_parameters`) + the SHA-256
+      `action_digest` for tamper-proof approval. Affects the SDK
+      only; the gate still has the final say.
     - **`ToolBlock` (server-side)** — a policy rule evaluated by
       the gate on every `/gate` call. The gate fails-CLOSED if it
       cannot reach Redis or the policy cache to evaluate. This is
@@ -56,8 +54,8 @@ You express "sensitive" with one of two complementary mechanisms:
   argument renaming, every kwarg flows through). Use this when you
   want a free-form predicate — e.g. "the `uid` parameter must equal
   `42`".
-- **`@protect @sensitive(impact=...)` (SDK-side, advanced)** —
-  stamps a typed `BusinessImpact` extractor (`money_outflow(...)` or
+- **`@protect @sensitive(impact=...)` (SDK-side)** — stamps a
+  typed `BusinessImpact` extractor (`money_outflow(...)` or
   `tool_params({...})`) so the gate evaluates a typed predicate
   (`money_amount` / `tool_parameters`) and the SHA-256
   `action_digest` for digest-bound approval flow. Use this when you
@@ -165,12 +163,10 @@ is bound to the exact action payload the SDK sent on `/gate`. See
 
 ## See also
 
-- [Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-advanced-api-for-typed-impact-digest)
-  — the `@sensitive(impact=...)` factory form (advanced API), the
+- [Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-typed-impact-digest)
+  — the `@sensitive(impact=...)` factory form, the
   `money_outflow(...)` / `tool_params(...)` impact extractors, and
   the `_nullrun_extractor` contract that ties them to `/execute`.
-  Also covers [Deprecated form: bare `@sensitive`](../reference/decorators.md#deprecated-form-bare-sensitive)
-  and the migration to `@protect`-only.
 - [Tool policies](tool-policies.md) — the actual rule structure
 - [Tool catalog](../reference/llm-tool-catalog.md) — recommended
   patterns with risk ratings

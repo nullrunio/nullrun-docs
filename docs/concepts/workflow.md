@@ -75,8 +75,8 @@ You'll land on the new workflow's detail page. From there:
 - **Mint an API key** under the **API keys** tab. The key value
   (`nr_live_...`) is shown **once** — copy it into your secret
   manager immediately.
-- **Point your SDK at it**: `nullrun.init(api_key=...)` picks up
-  the key; the workflow binding happens server-side.
+- **Point your SDK at it**: export `NULLRUN_API_KEY` and the workflow
+  binding happens server-side.
 
 ## How to control one
 

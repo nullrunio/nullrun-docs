@@ -17,7 +17,7 @@ pip install "nullrun[crewai]"
 The current patch subscribes to the crewai `EventBus` and translates
 each lifecycle event into a `runtime.track_event` call. The runtime
 and the crewai EventBus hook are attached lazily on the first
-`@protect` call — no `init()` needed:
+`@protect` call:
 
 ```python title="crewai_crew.py"
 import nullrun

@@ -6,7 +6,7 @@ description: Auto-instrument a LangGraph agent with @protect, or wrap nodes manu
 # Protect a LangGraph agent
 
 The SDK auto-patches LangGraph on the **first `@protect` call** —
-no `init()`, no manual wrapper needed for the common case.
+no manual wrapper needed for the common case.
 
 ```bash title="shell"
 pip install "nullrun[langgraph]" langgraph langchain-openai
@@ -19,7 +19,7 @@ from langgraph.graph import END, MessagesState, StateGraph
 from nullrun import protect
 
 # The runtime + LangGraph Pregel hook are attached lazily on
-# the first @protect call. No init() / init_or_die() required.
+# the first @protect call.
 llm = ChatOpenAI(model="gpt-4o-mini")
 
 @protect
@@ -41,14 +41,7 @@ Every LLM call inside the graph is now cost-attributed and gated by
 your workspace policy. The same auto-instrumentation path works for
 any LangChain `Runnable` and most LangGraph node types.
 
-## Manual wrapper (advanced / deprecated)
-
-> **Deprecated.** `nullrun.toolbox.langgraph.wrapper()` was the manual
-> attach path in pre-0.18 SDKs. The auto-instrumentation above is now
-> the canonical route and covers every common case. `wrapper()` is
-> kept as an escape hatch for tests with custom runtimes, `Pregel`
-> imported before the first `@protect` call, or manual callback
-> control. It will be removed in a future minor version.
+## Manual wrapper
 
 If you need to attach the callback manually — e.g. inside a library
 that re-compiles graphs after the runtime was created — the explicit

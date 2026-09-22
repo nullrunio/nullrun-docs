@@ -7,8 +7,8 @@ description: Per-model input and output pricing for every LLM NullRun understand
 
 A reference list of the tool names LLM agents commonly expose, tagged
 with a default risk rating you can use as a starting point when you
-configure approval-rule patterns. SDK 0.18.1+ — `@protect` is the
-canonical entry point; every protected tool auto-attaches a default
+configure approval-rule patterns. `@protect` is the canonical entry
+point; every protected tool auto-attaches a default
 `ToolParamsExtractor` for ToolParameters rules.
 
 The catalog covers three sources that NullRun sees in production:

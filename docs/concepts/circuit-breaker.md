@@ -114,8 +114,7 @@ next reset.
 ### "I want to test my agent without the breaker tripping"
 
 Use a **separate workflow** with its own (low or zero) budget. Don't
-disable the gate — bypassing it is a dev/test opt-out that the SDK
-flags with a `RuntimeWarning`.
+disable the gate — bypassing it is a dev/test opt-out.
 
 ## See also
 

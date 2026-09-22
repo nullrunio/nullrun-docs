@@ -15,7 +15,7 @@ pip install "nullrun[agents]" openai-agents
 Wrap the `Runner.run_sync` call (or any sync / async runner) with
 `@protect`. The runtime + `openai-agents` `RunHooks` /
 `RunStreamedHooks` patch are attached lazily on the first `@protect`
-call — no `init()` needed:
+call:
 
 ```python title="openai_agents_protect.py"
 from agents import Agent, Runner

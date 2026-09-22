@@ -24,8 +24,8 @@ from langchain_openai import ChatOpenAI
 import nullrun
 from nullrun import protect, workflow, shutdown
 
-# No init_or_die() — the first @protect call lazily creates the runtime
-# from NULLRUN_API_KEY and patches the LangGraph Pregel hook.
+# The first @protect call lazily creates the runtime from
+# NULLRUN_API_KEY and patches the LangGraph Pregel hook.
 llm = ChatOpenAI(model="gpt-4o-mini")
 
 

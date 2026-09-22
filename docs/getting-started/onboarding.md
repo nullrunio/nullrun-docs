@@ -42,8 +42,6 @@ Agents, LlamaIndex, CrewAI, and AutoGen. **No vendor extra is required**
 all of the LLM providers above. See [Install](install.md#optional-extras)
 for the full list of extras and when you would still need one.
 
-For this walk-through `pip install nullrun` is enough.
-
 ## 3. Wire NullRun into your code
 
 Pick the pattern that matches what you have today:
@@ -57,9 +55,9 @@ from nullrun import protect, shutdown
 client = OpenAI()
 
 # @protect gates every call through NullRun before it runs.
-# No init() / init_or_die() call needed — the runtime is created
-# lazily on the first protected execution from NULLRUN_API_KEY,
-# the HTTP instrumentation is installed, and tracking starts.
+# The runtime is created lazily on the first protected execution
+# from NULLRUN_API_KEY, the HTTP instrumentation is installed,
+# and tracking starts.
 @protect
 def answer(prompt: str) -> str:
     response = client.chat.completions.create(
@@ -91,8 +89,7 @@ auto-instrumentation.
 Auto-instrumentation does the same thing — see
 [Use with LangGraph](../how-to/langgraph.md) or any of the other
 [framework how-tos](../how-to/llm-frameworks.md).
-The framework hook subscribes itself on the first `@protect` call; you
-do not need to add an init line.
+The framework hook subscribes itself on the first `@protect` call.
 
 ## 4. Set a budget
 

@@ -100,16 +100,9 @@ gateway verifies every request came from a holder of the secret.
 In production deployments, HMAC is required. Without it, every SDK
 request returns 401.
 
-You can pass the API key directly to `init()`:
-
-```python
-import nullrun
-from nullrun import init
-
-init(api_key="nr_live_xxx...")
-```
-
-Or set it via environment variable before the SDK starts:
+The runtime is created lazily on the first `@protect` call from
+`NULLRUN_API_KEY`. Set `NULLRUN_API_KEY` (and `NULLRUN_SECRET_KEY`
+for HMAC) in the environment before the first protected call runs:
 
 ```bash title="env"
 export NULLRUN_API_KEY=nr_live_xxx...
@@ -117,8 +110,7 @@ python my_agent.py
 ```
 
 The HMAC secret is read from `NULLRUN_SECRET_KEY` in the
-environment. It cannot be passed to `init()` — you set it once per
-process.
+environment. It is set once per process.
 
 ## Scopes
 

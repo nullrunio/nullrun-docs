@@ -7,10 +7,8 @@ description: Run multiple agents in one workflow, propagate parent_trace_id, and
 
 The SDK's runtime is a process-scoped singleton — transport pool,
 WebSocket subscription, and event batch buffer — created lazily on
-the first `@protect` call. If you call `nullrun.init()` twice in the
-same process, behaviour depends on the runtime implementation; the
-supported pattern is one runtime per process and one process per
-workflow key.
+the first `@protect` call. The supported pattern is one runtime per
+process and one process per workflow key.
 
 For everything beyond a single one-shot script, run **one process per
 key**. This page shows the three patterns that cover real workloads.
@@ -105,12 +103,9 @@ in a pool.
 
 ## What doesn't work
 
-Calling `nullrun.init()` more than once in the same process to swap
-keys is not a supported pattern. The runtime singleton is
-process-scoped, and mixing multiple keys in one process leads to
-interleaved events on the wrong workflow. The supported alternative
-is one process per key (Pattern 1) or one subprocess per request
-(Pattern 3).
+Mixing multiple keys in one process leads to interleaved events on
+the wrong workflow. The supported alternative is one process per key
+(Pattern 1) or one subprocess per request (Pattern 3).
 
 ## What if I want a single dashboard view across all my processes?
 
@@ -121,9 +116,8 @@ key), all their `/gate` and `/track` calls land on the same workflow
 record in the backend.
 
 The case where this **doesn't** hold is the "many workflows, one
-process" anti-pattern above: each `init()` call swaps the active key
-but the prior workflow's events have already gone to the prior key's
-workflow.
+process" anti-pattern above: prior workflow's events have already
+gone to the prior key's workflow.
 
 ## See also
 

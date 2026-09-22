@@ -96,8 +96,7 @@ if __name__ == "__main__":
 ```
 
 No `init()` call is needed — the first `@protect` call creates the
-runtime from `NULLRUN_API_KEY` and patches the auto-instrumentation
-hooks.
+runtime from `NULLRUN_API_KEY`.
 
 Run it:
 

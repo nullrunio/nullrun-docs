@@ -16,7 +16,7 @@ import nullrun
 from openai import AsyncOpenAI
 from nullrun import protect
 
-# No init() — the first @protect call creates the runtime lazily.
+# The first @protect call creates the runtime lazily.
 client = AsyncOpenAI()
 
 
