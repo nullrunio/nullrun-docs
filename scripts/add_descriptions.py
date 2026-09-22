@@ -37,7 +37,7 @@ DESCRIPTIONS = {
 
     "concepts/circuit-breaker.md": "How NullRun's circuit breaker trips on a budget overrun, recovers after a cooldown, and propagates a kill signal across in-flight calls.",
     "concepts/budgets.md": "Hard and soft budget enforcement, billing-period rollover, and the reserve / consume invariant that protects against implicit re-reservation.",
-    "concepts/sensitive-tools.md": "Mark a tool @sensitive to make it fail-CLOSED on transport errors, with no opt-out — the safest class for irreversible actions.",
+    "concepts/sensitive-tools.md": "The `@protect` decorator auto-attaches a default tool_params extractor so every protected tool is eligible for ToolParameters Approval Rules. The `@sensitive(impact=...)` factory form is the advanced API for typed BusinessImpact + digest-bound approval. Bare `@sensitive` is deprecated in SDK 0.18.1.",
     "concepts/workflow.md": "Group agent calls into a named workflow, propagate parent_trace_id, and bind cost to a logical unit instead of a single session.",
     "concepts/tracing.md": "OpenTelemetry-style spans for every gate decision, with parent_trace_id propagation so the dashboard renders a true waterfall.",
     "concepts/control-plane.md": "Real-time WebSocket channel for kill, pause, and approval_resolved — the operator's runtime control surface for live agents.",
@@ -59,7 +59,7 @@ DESCRIPTIONS = {
     "how-to/custom-tracking.md": "Manually report cost and events with track_llm, track_tool, and track_event when auto-instrumentation doesn't fit your runtime.",
     "how-to/ci-cd.md": "Fail-CLOSED gate integration in CI, with smoke-test scripts that verify the gate is reachable before a deploy.",
 
-    "reference/sdk-api.md": "Reference for every NullRun SDK symbol: init, @protect, @sensitive, workflow, chain, exceptions, manual tracking, and transport hooks.",
+    "reference/sdk-api.md": "Reference for every NullRun SDK symbol: init, @protect (canonical entry point), @sensitive(impact=...) (advanced API), workflow, chain, exceptions, manual tracking, and transport hooks. SDK 0.18.1: bare @sensitive is deprecated.",
     "reference/http-api.md": "Every NullRun HTTP endpoint: /api/v1/gate, /api/v1/track, /api/v1/capabilities, /api/v1/heartbeat, and the control-plane WebSocket protocol.",
     "reference/errors.md": "Full NullRun error-code reference: NR-B004 budget blocks, NR-T001 transport errors, NR-R001 refusals, and decision vs infrastructure classes.",
     "reference/llm-tool-catalog.md": "Per-model input and output pricing for every LLM NullRun understands, with capability flags for streaming, tools, and structured output.",

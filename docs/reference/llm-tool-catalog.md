@@ -7,7 +7,9 @@ description: Per-model input and output pricing for every LLM NullRun understand
 
 A reference list of the tool names LLM agents commonly expose, tagged
 with a default risk rating you can use as a starting point when you
-register `@sensitive` patterns.
+configure approval-rule patterns. SDK 0.18.1+ — `@protect` is the
+canonical entry point; every protected tool auto-attaches a default
+`ToolParamsExtractor` for ToolParameters rules.
 
 The catalog covers three sources that NullRun sees in production:
 
@@ -27,7 +29,7 @@ Risk rating:
 | --- | --- |
 | `low` | Read-only or reversible. Safe to call without a policy decision. |
 | `medium` | Mutates external state but the change is reversible (issue created, draft email, S3 put). |
-| `high` | **Side effects you can't easily undo** — files written or deleted, money moved, messages sent, code executed, infra changed. Mark `@sensitive` and route through a human approval gate. |
+| `high` | **Side effects you can't easily undo** — files written or deleted, money moved, messages sent, code executed, infra changed. Mark with `@protect` (auto-attaches the default `ToolParamsExtractor` for ToolParameters rules) and route through a human approval gate. |
 
 ## Search & retrieval
 

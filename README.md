@@ -51,7 +51,7 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 - [Set a hard cost cap](docs/how-to/cost-cap.md)
 
 **Reference**
-- [SDK API](docs/reference/sdk-api.md) · `init`, `@protect`, `@sensitive`, `workflow`, exceptions
+- [SDK API](docs/reference/sdk-api.md) · `init`, `@protect` (canonical), `@sensitive(impact=...)` (advanced), `workflow`, exceptions
 - [HTTP API](docs/reference/http-api.md) · `/track`, `/gate`, `/capabilities`, `/heartbeat`, WebSocket
 - [Error codes](docs/reference/errors.md) · `validation_error`, `RateLimitError`, kill contract
 

@@ -1150,7 +1150,7 @@ unavailable", never as `≈ $0 spent`.
 
 title: Sensitive tools
 maturity: stable
-description: Mark a tool @sensitive to make it fail-CLOSED on transport errors, with no opt-out — the safest class for irreversible actions.
+description: The `@protect` decorator auto-attaches a default tool_params extractor so every protected tool is eligible for ToolParameters Approval Rules. The `@sensitive(impact=...)` factory form is the advanced API for typed BusinessImpact + digest-bound approval. Bare `@sensitive` is deprecated in SDK 0.18.1.
 # Sensitive tools
 
 A **sensitive tool** is one that should never run without a human
@@ -5461,7 +5461,7 @@ checklist.
 
 title: SDK API
 maturity: stable
-description: Reference for every NullRun SDK symbol: init, @protect, @sensitive, workflow, chain, exceptions, manual tracking, and transport hooks.
+description: Reference for every NullRun SDK symbol: init, @protect (canonical entry point), @sensitive(impact=...) (advanced API), workflow, chain, exceptions, manual tracking, and transport hooks. SDK 0.18.1: bare @sensitive is deprecated.
 # SDK API
 
 The Python SDK lives in

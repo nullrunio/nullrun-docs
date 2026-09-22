@@ -47,8 +47,8 @@ SDK — TypeScript / JavaScript / Go have no equivalent.
 
 ## Reference
 
-- [SDK API](https://docs.nullrun.io/reference/sdk-api/): `init`, `@protect`, `@sensitive`, `workflow`, `chain`, exceptions, manual tracking
-- [Decorators & extractors](https://docs.nullrun.io/reference/decorators/): `@protect`, `@sensitive`, `@guarded`, `money_outflow`, `tool_params`, context managers, order of application
+- [SDK API](https://docs.nullrun.io/reference/sdk-api/): `init`, `@protect` (canonical), `@sensitive(impact=...)` (advanced), `workflow`, `chain`, exceptions, manual tracking
+- [Decorators & extractors](https://docs.nullrun.io/reference/decorators/): `@protect` (auto-attaches tool_params), `@sensitive(impact=...)` advanced API, `@guarded`, `money_outflow`, `tool_params`, context managers, order of application
 - [HTTP API](https://docs.nullrun.io/reference/http-api/): `/api/v1/gate`, `/api/v1/track`, `/api/v1/capabilities`, `/api/v1/heartbeat`, control-plane WebSocket
 - [Error codes](https://docs.nullrun.io/reference/errors/): `NR-B004`, `NR-T001`, `NR-R001`, full hierarchy + decision vs infrastructure
 - [LLM tool catalog](https://docs.nullrun.io/reference/llm-tool-catalog/): per-model pricing + capability flags

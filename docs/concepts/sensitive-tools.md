@@ -1,6 +1,6 @@
 title: Sensitive tools
 maturity: stable
-description: Mark a tool @sensitive to make it fail-CLOSED on transport errors, with no opt-out — the safest class for irreversible actions.
+description: The `@protect` decorator auto-attaches a default tool_params extractor so every protected tool is eligible for ToolParameters Approval Rules. The `@sensitive(impact=...)` factory form is the advanced API for typed BusinessImpact + digest-bound approval. Bare `@sensitive` is deprecated in SDK 0.18.1.
 # Sensitive tools
 
 A **sensitive tool** is one that should never run without a human
@@ -13,22 +13,34 @@ the gate at `/gate` evaluation time, regardless of the SDK's local
 context. This page covers the *recommended* patterns and how to wire
 them.
 
-!!! info "`@sensitive` vs `ToolBlock`"
+!!! info "The canonical entry point is `@protect`"
+    Since SDK 0.18.1, every protected tool is automatically eligible
+    for ToolParameters Approval Rules — `@protect` stamps a default
+    `ToolParamsExtractor(include_all=True)` so the kwargs of every
+    call reach the gate without any second decorator. The
+    `@sensitive(impact=...)` factory form is the **advanced API** for
+    typed impact + digest-bound approval flow (library authors). The
+    **bare `@sensitive` form is deprecated** — see
+    [Decorators & extractors → Deprecated form: bare `@sensitive`](../reference/decorators.md#deprecated-form-bare-sensitive).
+
+!!! info "`@sensitive(impact=...)` vs `ToolBlock`"
     Two distinct mechanisms, often confused:
 
-    - **`@sensitive` (SDK-side)** — a parameterless decorator that
-      marks a function so its kwargs are extracted into the
-      `BusinessImpact` predicate bag. Used with **approval rules**
-      that evaluate a typed predicate. Affects the SDK only; the
-      gate still has the final say.
+    - **`@sensitive(impact=...)` (SDK-side, advanced API)** — a
+      factory decorator that stamps a typed `BusinessImpact`
+      extractor on the function. Used with **approval rules** that
+      evaluate a typed predicate (`money_amount` / `tool_parameters`)
+      + the SHA-256 `action_digest` for tamper-proof approval.
+      Affects the SDK only; the gate still has the final say.
     - **`ToolBlock` (server-side)** — a policy rule evaluated by
       the gate on every `/gate` call. The gate fails-CLOSED if it
       cannot reach Redis or the policy cache to evaluate. This is
       the canonical "this tool is forbidden" mechanism.
 
-    Use `@sensitive` when you want a typed `BusinessImpact` approval
-    flow (e.g. "refunds over $500 need approval"). Use `ToolBlock`
-    when you want a hard rule ("never call `bash`").
+    Use `@sensitive(impact=...)` when you want a typed
+    `BusinessImpact` approval flow (e.g. "refunds over $500 need
+    approval"). Use `ToolBlock` when you want a hard rule ("never
+    call `bash`").
 
 ## What a sensitive tool is, in policy terms
 
@@ -37,17 +49,27 @@ enforcement decision is evaluated by the gate on every `/gate` call,
 so you can't accidentally miss a tool you didn't register locally.
 You express "sensitive" with one of two complementary mechanisms:
 
-- **`@sensitive` (SDK-side)** — marks a function so its kwargs flow
-  into the `BusinessImpact` predicate bag used by approval rules
-  (typed `money_amount` / `tool_parameters`). Use this when you want
-  a typed predicate — e.g. "refunds over $500 need approval".
+- **`@protect` (SDK-side, canonical)** — auto-attaches a default
+  `ToolParamsExtractor(include_all=True)` so the kwargs of every
+  call flow into the `BusinessImpact` predicate bag used by
+  ToolParameters approval rules (free-form typed predicates — no
+  argument renaming, every kwarg flows through). Use this when you
+  want a free-form predicate — e.g. "the `uid` parameter must equal
+  `42`".
+- **`@protect @sensitive(impact=...)` (SDK-side, advanced)** —
+  stamps a typed `BusinessImpact` extractor (`money_outflow(...)` or
+  `tool_params({...})`) so the gate evaluates a typed predicate
+  (`money_amount` / `tool_parameters`) and the SHA-256
+  `action_digest` for digest-bound approval flow. Use this when you
+  want the typed predicate — e.g. "refunds over $500 need
+  approval".
 - **`ToolBlock` (server-side)** — a policy rule evaluated by the
   gate. The gate fails-CLOSED if it cannot reach Redis or the policy
   cache to evaluate. Use this for hard rules — "never call `bash`".
 
 For the typed predicate wiring, see
-[Decorators & extractors → `money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact)
-and [`tool_params(...)`](../reference/decorators.md#tool_params-free-form-argument-bag).
+[Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-advanced-api-for-typed-impact-digest)
+and [`money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact).
 
 Recommended starter patterns (see
 [Tool catalog → Recommended ToolBlock starter list](../reference/llm-tool-catalog.md#recommended-toolblock-starter-list)
@@ -143,10 +165,12 @@ is bound to the exact action payload the SDK sent on `/gate`. See
 
 ## See also
 
-- [Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-the-per-tool-policy-marker)
-  — the two `@sensitive` forms (bare + factory), the
+- [Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-advanced-api-for-typed-impact-digest)
+  — the `@sensitive(impact=...)` factory form (advanced API), the
   `money_outflow(...)` / `tool_params(...)` impact extractors, and
-  the `_nullrun_extractor` contract that ties them to `/execute`
+  the `_nullrun_extractor` contract that ties them to `/execute`.
+  Also covers [Deprecated form: bare `@sensitive`](../reference/decorators.md#deprecated-form-bare-sensitive)
+  and the migration to `@protect`-only.
 - [Tool policies](tool-policies.md) — the actual rule structure
 - [Tool catalog](../reference/llm-tool-catalog.md) — recommended
   patterns with risk ratings

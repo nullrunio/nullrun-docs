@@ -1,7 +1,7 @@
 ---
 title: Decorators & extractors
 maturity: stable
-description: Deep-dive reference for the three Python SDK decorators (@protect, @sensitive, @guarded), the two impact extractors (money_outflow, tool_params), and the workflow / span / chain context managers they pair with.
+description: Deep-dive reference for the Python SDK decorators (@protect, @guarded), the impact extractor factories (money_outflow, tool_params) used by the @sensitive(impact=...) advanced API, and the workflow / span / chain context managers they pair with. SDK 0.18.1: @protect is the only canonical public entry point — it auto-attaches tool_params; bare @sensitive is deprecated.
 ---
 
 # Decorators & extractors
@@ -13,16 +13,62 @@ top-level symbol table is in
 [SDK API](sdk-api.md); this page explains the *contracts* each
 symbol establishes with the gate.
 
+**SDK 0.18.1 contract:** `@protect` is the single canonical public
+entry point. It auto-attaches a default `ToolParamsExtractor` so
+the wire payload carries `tool_name + params` for every protected
+function — no second decorator is needed to opt in. The
+`@sensitive(impact=...)` factory form remains supported as an
+advanced API for library authors who need a typed impact extractor
+(`money_outflow(...)`, `tool_params(...)`) and the digest-bound
+approval flow. The bare `@sensitive` form is deprecated — it
+emits `DeprecationWarning` in 0.18.x and is removed in 0.19.x.
+See [The canonical API: `@protect` only](#the-canonical-api-protect-only)
+below for the rationale and the migration path.
+
 If you only want the "which one do I use?" answer, jump to
 [When to use what](#when-to-use-what). If you want the full
 contract for a single symbol, use the section headings below.
+
+## The canonical API: `@protect` only
+
+**The single canonical public entry point for the SDK is `@protect`.**
+It is the gate. Every protected function call goes through the four
+pre-execution gates (control plane / budget / span / sensitive-tool
+policy) and emits a tool-call span event tagged with the masked
+arguments. Starting in SDK 0.18.1, `@protect` also auto-attaches a
+default `ToolParamsExtractor(include_all=True)` — the wire payload
+carries `tool_name + params` for **every** protected function, not
+only those that opted in via a second decorator.
+
+What changed in 0.18.1:
+
+- **`@protect`** stamps a default extractor and emits
+  `params={"<arg_name>": <live_value>, ...}` on the wire for every
+  call. Operators can match ToolParameters Approval Rules against
+  these kwargs without any extra code.
+- **`@sensitive(impact=...)`** (factory form) remains the advanced
+  API for library authors — typed `BusinessImpact` + SHA-256
+  `action_digest` for the digest-bound approval flow.
+- **`@sensitive`** (bare form) is **deprecated** — emits
+  `DeprecationWarning` in 0.18.x, removed in 0.19.x. It auto-attaches
+  the same default extractor `@protect` already attaches, so the
+  observable behaviour is identical. Migrate to `@protect` alone.
+
+The split is intentional: the SDK collects facts (every kwarg goes
+on the wire), the server decides what to do with them. Business
+semantics — "this is a money tool", "this requires human approval" —
+are expressed in NullRun policies, not in another decorator on the
+function. See
+[Human approval](../concepts/human-approval.md) for how operators
+configure the typed predicates the gate evaluates.
 
 ## What's in scope
 
 | Symbol | Type | Surface |
 |---|---|---|
-| `@protect` | decorator | eager (`from nullrun import protect`) |
-| `@sensitive` | decorator (bare + factory) | lazy (`from nullrun import sensitive`) |
+| `@protect` | decorator | eager (`from nullrun import protect`) — **canonical** |
+| `@sensitive(impact=...)` | factory decorator (advanced API) | lazy (`from nullrun import sensitive`) |
+| `@sensitive` (bare) | decorator | **deprecated in 0.18.1** — emits `DeprecationWarning`; removed in 0.19.x |
 | `@guarded` | decorator | eager (via `__all__`) |
 | `money_outflow(...)` | extractor factory | lazy (`from nullrun import money_outflow`) |
 | `tool_params(...)` | extractor factory | lazy (`from nullrun import tool_params`) |
@@ -122,22 +168,39 @@ or spends money. `@protect` is the gate. The workflow is derived
 from the API key on the backend; `fn.__name__` becomes the
 `tool_name` for the policy engine.
 
----
+### `@protect` auto-attaches tool_params
 
-## `@sensitive` — the per-tool policy marker
+Starting in SDK 0.18.1, every `@protect` stamps the function with a
+default `ToolParamsExtractor(include_all=True)`. The kwargs of
+every live call flow onto the wire under `params` without any
+additional decorator — the gate sees them and matches them against
+ToolParameters Approval Rules exactly the way bare `@sensitive`
+used to. See
+[Human approval → Typed predicates](../concepts/human-approval.md#typed-predicates).
 
-Two forms — bare and factory.
-
-```python title="sensitive_bare.py"
-@nullrun.sensitive
-def delete_user(uid: int): ...
+```python title="protect_only_auto_attaches.py"
+@nullrun.protect
+def delete_user(uid: int) -> None:
+    ...                  # params={"uid": <live value>} reaches the gate
 ```
 
-The bare form auto-attaches a `ToolParamsExtractor(include_all=True)`
-inside `_do_sensitive_register()`. The kwargs of every call are
-shipped on the wire so the gate can match them against
-ToolParameters Approval Rules — see
-[Human approval → Typed predicates](../concepts/human-approval.md#typed-predicates).
+This is the **recommended pattern** for any tool that should be
+eligible for ToolParameters approval rules. To skip the auto-attach
+(no `params` on the wire) — for example, when every kwarg is a
+secret — wrap the function with the explicit
+`@sensitive(impact=tool_params(include_all=False))` form below.
+
+---
+
+## `@sensitive` — advanced API for typed impact + digest
+
+`@sensitive` has two forms. The factory form
+`@sensitive(impact=...)` is the **advanced API**: it stamps a typed
+`BusinessImpact` extractor on the function and forwards the SHA-256
+`action_digest` to `/execute` so the gate's post-approval re-check
+refuses the call if the live payload drifts from the approved
+digest. The bare form is deprecated — see
+[Deprecated form: bare `@sensitive`](#deprecated-form-bare-sensitive).
 
 ```python title="sensitive_factory.py"
 @nullrun.sensitive(impact=money_outflow(argument="amount_cents"))
@@ -230,17 +293,61 @@ work either way.
 
 | Tool category | Recommendation |
 |---|---|
-| Read-only tools (`get_weather`, `list_files`) | No `@sensitive` — `@protect` alone covers budget + span tracking. The gate's per-tool policy runs on `/execute` only for marked tools. |
-| Side-effect tools with bounded blast radius (`send_email`, `revoke_access`, `delete_user`) | `@sensitive` (bare) — the kwargs become approval-rule predicates. |
-| Money-moving tools (`refund`, `charge_card`, `transfer`) | `@sensitive(impact=money_outflow(...))` — typed impact + `action_digest` for tamper-proof approval flow. |
-| Tools where rule names ≠ arg names | `@sensitive(impact=tool_params({"rule_param": "arg_name"}))` |
-| Tools whose every kwarg is a secret | `@sensitive(impact=tool_params(include_all=False))` to ship an empty `params` bag |
+| Read-only tools (`get_weather`, `list_files`) | `@protect` alone — covers budget + span tracking. Auto-attached `ToolParamsExtractor` ships every kwarg on the wire. |
+| Side-effect tools with bounded blast radius (`send_email`, `revoke_access`, `delete_user`) | `@protect` alone — auto-attached default extractor is enough for ToolParameters rules. |
+| Money-moving tools (`refund`, `charge_card`, `transfer`) | `@protect @sensitive(impact=money_outflow(...))` — typed impact + `action_digest` for tamper-proof approval flow. |
+| Tools where rule names ≠ arg names | `@protect @sensitive(impact=tool_params({"rule_param": "arg_name"}))` |
+| Tools whose every kwarg is a secret | `@protect @sensitive(impact=tool_params(include_all=False))` to ship an empty `params` bag |
+| Tools that need `kind="tool_call"` envelope with no extractor | `@protect @sensitive` (bare, **deprecated**) — emits `DeprecationWarning` in 0.18.x. Use `@protect @sensitive(impact=tool_params(include_all=False))` instead. |
 
-Without `@sensitive` (or an explicit
+In 0.18.1+ the bare `@sensitive` form is no longer required for
+any ToolParameters predicate — `@protect` already ships the kwargs
+on the wire. Reach for `@sensitive(impact=...)` only when you need
+the typed `BusinessImpact` envelope (money / tool_parameters) and
+the digest-bound approval flow.
+
+Without `@protect` (and without an explicit
 `runtime.add_sensitive_tool(fn.__name__)`), the `_enforce_sensitive_tool`
 gate is a no-op — the function body runs immediately after
 `/gate`. This violates the fail-CLOSED contract for any
 irreversible action.
+
+---
+
+## Deprecated form: bare `@sensitive`
+
+```python title="sensitive_bare_deprecated.py"
+@nullrun.sensitive          # DeprecationWarning in 0.18.x; removed in 0.19.x
+def delete_user(uid: int): ...
+```
+
+The bare form auto-attaches the same `ToolParamsExtractor`
+that `@protect` already attaches, so the observable behaviour
+is identical to `@protect` alone in 0.18.x. Use `@protect` and
+delete the bare `@sensitive`:
+
+```python title="sensitive_bare_migration.py"
+@nullrun.protect            # canonical form — no @sensitive required
+def delete_user(uid: int): ...
+```
+
+Why the deprecation:
+
+- `@protect` is the gate — every protected tool needs it. Adding
+  `@sensitive` on top was a second decorator that asked the same
+  question twice.
+- The default extractor (`include_all=True`) is the only thing
+  bare `@sensitive` contributed, and `@protect` stamps it
+  automatically in 0.18.1+.
+- The business interpretation of those params belongs to NullRun
+  policy (ToolParameters Approval Rules), not to a second
+  decorator on the SDK side.
+
+The legacy behaviour is preserved in 0.18.x with a
+`DeprecationWarning`. Removal is scheduled for 0.19.x. The
+factory form `@sensitive(impact=...)` is **not deprecated** —
+it remains the advanced API for typed impact + digest-bound
+approval flow.
 
 ---
 
@@ -441,11 +548,11 @@ the tool-block check for that single function name.
 
 | Task | API |
 |---|---|
-| Wrap a function that calls an LLM or tool | `@nullrun.protect` (no parameters) |
-| Mark an irreversible tool for per-tool policy | `@nullrun.sensitive` (bare) |
-| Mark a money-moving tool for typed approval | `@nullrun.sensitive(impact=money_outflow(argument="amount_cents", currency="USD"))` |
-| Mark a tool where rule names ≠ arg names | `@nullrun.sensitive(impact=tool_params({"user_id": "uid"}))` |
-| Mark a tool where every kwarg is a secret | `@nullrun.sensitive(impact=tool_params(include_all=False))` |
+| Wrap a function that calls an LLM or tool (canonical) | `@nullrun.protect` (no parameters) — auto-attaches default `ToolParamsExtractor` |
+| Mark a money-moving tool for typed approval + digest | `@nullrun.protect @nullrun.sensitive(impact=money_outflow(argument="amount_cents", currency="USD"))` |
+| Mark a tool where rule names ≠ arg names | `@nullrun.protect @nullrun.sensitive(impact=tool_params({"user_id": "uid"}))` |
+| Mark a tool where every kwarg is a secret | `@nullrun.protect @nullrun.sensitive(impact=tool_params(include_all=False))` |
+| Legacy code with bare `@sensitive` | Migrate to `@protect` alone — emits `DeprecationWarning` in 0.18.x; removed in 0.19.x |
 | Top-level script entry (friendly exit) | `with nullrun.handle():` (preferred) — `@nullrun.guarded` is the decorator alternative for the same behaviour |
 | Multi-step agent run (cost + trace per workflow) | `with nullrun.workflow("agent-name"): ...` |
 | Per-call model name and tools for `/gate` | `nullrun.set_call_context(model=..., tools=[...])` inside `with workflow` |
@@ -464,10 +571,14 @@ the tool-block check for that single function name.
 ## Order of application — cheat sheet
 
 ```python title="order_cheatsheet.py"
-# ─── Sensitive money tool ───
+# ─── Sensitive money tool (advanced API) ───
 @nullrun.sensitive(impact=money_outflow(argument="amount_cents", currency="USD"))
 @nullrun.protect
 def refund(amount_cents: int): ...
+
+# ─── Canonical: just @protect ───
+@nullrun.protect
+def delete_user(uid: int): ...           # ToolParameters rules "just work"
 
 # ─── Plain trackable function ───
 @nullrun.protect
@@ -523,6 +634,13 @@ with nullrun.chain(chain_id, op="start"):           # soft-mode budget
     `runtime.add_sensitive_tool` happens before the `@protect`
     wrapper is built. Both produce identical observable behaviour
     today; future shape changes may not.
+
+!!! note "Don't write bare `@sensitive` in new code (0.18.1+)"
+    Bare `@sensitive` is deprecated. `@protect` auto-attaches the
+    same default `ToolParamsExtractor`, so every tool that used to
+    be `@protect @sensitive` is now `@protect` alone. The factory
+    form `@sensitive(impact=...)` remains the advanced API for
+    typed impact + digest-bound approval.
 
 !!! warning "Don't put `@guarded` below `@protect`"
     `@guarded` only catches errors raised inside the function it

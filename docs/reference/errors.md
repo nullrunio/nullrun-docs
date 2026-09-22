@@ -267,7 +267,7 @@ you don't care about the exact cause.
 | --- | --- | --- | --- |
 | `NR-B001` | Transport-layer network error (timeout, ConnectError, DNS failure) | 500 | `NullRunTransportError` (default) |
 | `NR-B002` | Gateway 5xx | 500/503 | `NullRunBackendError` |
-| `NR-B003` | `@sensitive` business_impact extraction failed (tool param shapes unsupported) | 403 | `NullRunBlockedException` (raised from `decorators.py`) |
+| `NR-B003` | `@sensitive(impact=...)` business_impact extraction failed (tool param shapes unsupported) | 403 | `NullRunBlockedException` (raised from `decorators.py`) |
 | `NR-B005` | Local SDK circuit breaker tripped — short-circuits before the wire call | 503 | `NullRunBackendError` (with `source = BREAKER_OPEN`) |
 | `NR-R001` | Per-workflow rate limit hit (gateway returned 429 with `Retry-After`) | 429 | `RateLimitError` (subclass of `NullRunTransportError` — infrastructure class despite the 429 status) |
 | `NR-R002` | Rate-limit Redis unavailable (aggregate per-org rate-limit fail-CLOSED) | 503 | `NullRunRateLimitRedisError` |

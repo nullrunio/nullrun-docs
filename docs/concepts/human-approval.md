@@ -77,10 +77,13 @@ Two predicate kinds are supported on `action_predicate`:
 
 The `tool_parameters` predicate rides on the SDK's
 `ToolParamsExtractor`. With the default `include_all=True` mode,
-every kwarg of `@sensitive`-decorated functions flows into the
+every kwarg of `@protect`-decorated functions flows into the
 predicate bag (positional args are dropped; `f64` / set / custom
 objects are filtered; PII-masked sentinels like `"***"` for
 `password` / `token` / `api_key` keys are stripped before wire).
+In SDK 0.18.1+ `@protect` auto-attaches the default extractor, so
+no second decorator is needed to make a tool eligible for
+`tool_parameters` rules.
 
 ## `action_digest` — tamper-evident binding
 
@@ -258,10 +261,12 @@ arguments).
 ## SDK-side extraction
 
 The `action_digest` is **produced** by the SDK at extraction time.
-For the Python SDK, this happens inside `@sensitive` when you
-attach an `impact=` extractor — see
+For the Python SDK, this happens inside `@sensitive(impact=...)`
+when you attach a typed `BusinessImpact` extractor — see
 [Decorators & extractors → `money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact)
 and [Decorators & extractors → `tool_params(...)`](../reference/decorators.md#tool_params-free-form-argument-bag).
+The bare `@sensitive` form is deprecated; the factory form
+(`@sensitive(impact=...)`) is the advanced API for typed impact.
 
 The extracted `BusinessImpact` is canonicalised (keys sorted
 recursively, compact JSON, `nullrun/v1/business_impact:` prefix)
