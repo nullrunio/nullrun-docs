@@ -14,7 +14,7 @@ the work — you pick how much of each layer to use.
     | Your code | `except NullRunInfrastructureError` | Transport / 5xx / auth / config failures |
     | Your code | `except NullRunWorkflowKilledError` (or `WorkflowKilledInterrupt`) | Operator kill — terminal; caught by `except Exception:`, handle explicitly if you need to checkpoint before exit |
     | Your monitoring | `@nullrun.on_error` hook | Every `NullRunError`, fired before propagation |
-    | Your end user | `@guarded` / `format_user_message` | Friendly text from the catalog |
+    | Your end user | `with nullrun.handle():` / `format_user_message` | Friendly text from the catalog |
 
 ## Where errors appear in the dashboard
 
@@ -42,7 +42,7 @@ right thing?". Pair it with [Traces](tracing.md) for full context.
 |---|---|---|---|
 | **1. Structured exception** | Your Python code | Exception type, error code, what to do next | Your code decides: retry, fail, surface to UI |
 | **2. `on_error` hook** | Sentry / Datadog / logs | Same exception + context (workflow, tool, stage) | Observability: you see every error in your existing dashboards |
-| **3. `@guarded` / `format_user_message`** | End user | One friendly sentence from a catalog | The user gets a clean message, not a stack trace |
+| **3. `with nullrun.handle():` / `format_user_message`** | End user | One friendly sentence from a catalog | The user gets a clean message, not a stack trace |
 
 The SDK ships all three. You decide how much to use.
 
@@ -150,17 +150,16 @@ kill signal** (`WorkflowKilledInterrupt` and its typed alias
 `NullRunWorkflowKilledError`). If you want to skip kill inside the
 hook, filter on `error_code` (`"NR-W002"`).
 
-## Layer 3 — `@guarded` and `format_user_message`
+## Layer 3 — `with nullrun.handle():` and `format_user_message`
 
 For scripts that just want "run the agent and print a friendly
-message on failure", use the zero-boilerplate helpers:
+message on failure", use the zero-boilerplate helpers. The first
+`@protect` call lazily creates the runtime, so there is no `init()`
+line:
 
 ```python
-from nullrun import init_or_die, guarded, protect, shutdown
+from nullrun import protect, shutdown
 
-init_or_die()
-
-@guarded
 @protect
 def my_agent(prompt):
     return call_llm(prompt)
@@ -168,31 +167,43 @@ def my_agent(prompt):
 
 if __name__ == "__main__":
     try:
-        print(my_agent("What does NullRun do?"))
+        with nullrun.handle():
+            print(my_agent("What does NullRun do?"))
     finally:
         shutdown()
 ```
 
-What your terminal looks like on a rate-limit hit:
+What your terminal looks like on a rate-limit hit. `handle()` prints
+the structured four-line developer report (catalog headline +
+`[error_code]` + `what` + `where` + `why` + `how to fix`):
 
 ```
 $ python my_agent.py
 Too many requests. Please wait a moment and try again.
+  [NR-R001] what: rate limit (retryable)
+           where: endpoint=gate status=429 source=GATEWAY_ERROR
+           why: Per-workflow rate limit exceeded; retry after 30s.
+           how to fix: Wait 30s, then retry the call.
 $ echo $?
 1
 ```
 
-`@guarded` catches every `NullRunError` — which now includes the
-kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`
-both inherit from `NullRunError`) — prints the catalog wording to
-stderr, and exits with code 1. To handle kill distinctly (for
-example, checkpoint state before exit), use the un-`@guarded`
-`protect()` form and add your own `except NullRunWorkflowKilledError:`
-arm.
+`with nullrun.handle():` catches every `NullRunError` — which now
+includes the kill signal (`WorkflowKilledInterrupt` /
+`NullRunWorkflowKilledError` both inherit from `NullRunError`) —
+prints the structured report to stderr, and exits with code 1. To
+handle kill distinctly (for example, checkpoint state before exit),
+use the un-`handle()` form and add your own
+`except NullRunWorkflowKilledError:` arm.
 
-`@guarded` is for scripts and one-shots. For long-running services
-you want explicit handling — see [Server frameworks](#server-frameworks)
-below.
+`@guarded` (decorator equivalent of `handle()`) is still exported for
+back-compat, but `handle()` is the recommended form: it gives a
+clearer scope, accepts an `exit_code` argument, and the four-line
+report is what it always renders.
+
+`handle()` / `guarded()` are for scripts and one-shots. For
+long-running services you want explicit handling — see
+[Server frameworks](#server-frameworks) below.
 
 ### Branded wording
 
@@ -215,9 +226,10 @@ sugar on top of the catalog.
 
 ## Server frameworks
 
-For FastAPI / aiohttp / Flask / Django, you don't want `@guarded`
-(it's a CLI helper). Instead, catch the exception in your request
-handler and return an appropriate HTTP status:
+For FastAPI / aiohttp / Flask / Django, you don't want `handle()`
+or `@guarded` (they are CLI helpers that exit the process). Instead,
+catch the exception in your request handler and return an appropriate
+HTTP status:
 
 ```python
 from nullrun import NullRunError
@@ -298,11 +310,11 @@ except NullRunError:
     log.error("agent failed", exc_info=True)
 ```
 
-`@guarded` catches kill via the standard `NullRunError` arm — it
-prints the catalog wording and exits 1. To keep the process alive
-on kill (checkpoint, notify a supervisor, then exit), use the
-un-`@guarded` `protect()` form with your own
-`except NullRunWorkflowKilledError:` arm above.
+`handle()` / `@guarded` catches kill via the standard `NullRunError`
+arm — it prints the structured four-line report and exits 1. To keep
+the process alive on kill (checkpoint, notify a supervisor, then
+exit), use the un-`@guarded` / un-`handle()` `protect()` form with
+your own `except NullRunWorkflowKilledError:` arm above.
 
 ## See also
 

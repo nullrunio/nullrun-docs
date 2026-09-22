@@ -5,27 +5,24 @@ description: Auto-instrument a LangGraph agent with @protect, or wrap nodes manu
 
 # Protect a LangGraph agent
 
-Install with the LangGraph extra:
+The SDK auto-patches LangGraph on the **first `@protect` call** —
+no `init()`, no manual wrapper needed for the common case.
 
 ```bash title="shell"
 pip install "nullrun[langgraph]" langgraph langchain-openai
 ```
 
-`nullrun.init()` auto-instruments LangGraph — it attaches the
-NullRun callback to any compiled graph once `init()` runs. **No
-manual callback wiring needed** (the legacy direct-import path still
-works but is discouraged).
-
 ```python title="langgraph_agent.py"
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, MessagesState, StateGraph
 
-from nullrun import init
+from nullrun import protect
 
-init(api_key="nr_live_...")
-
+# The runtime + LangGraph Pregel hook are attached lazily on
+# the first @protect call. No init() / init_or_die() required.
 llm = ChatOpenAI(model="gpt-4o-mini")
 
+@protect
 def chat(state: MessagesState):
     return {"messages": [llm.invoke(state["messages"])]}
 
@@ -44,23 +41,32 @@ Every LLM call inside the graph is now cost-attributed and gated by
 your workspace policy. The same auto-instrumentation path works for
 any LangChain `Runnable` and most LangGraph node types.
 
-## Manual wrapper (advanced)
+## Manual wrapper (advanced / deprecated)
+
+> **Deprecated.** `nullrun.toolbox.langgraph.wrapper()` was the manual
+> attach path in pre-0.18 SDKs. The auto-instrumentation above is now
+> the canonical route and covers every common case. `wrapper()` is
+> kept as an escape hatch for tests with custom runtimes, `Pregel`
+> imported before init, or manual callback control. It will be removed
+> in a future minor version.
 
 If you need to attach the callback manually — e.g. inside a library
-that re-compiles graphs after `init()` ran — the canonical wrapper is:
+that re-compiles graphs after the runtime was created — the explicit
+form is:
 
 ```python title="langgraph_manual_wrapper.py"
-from nullrun.toolbox.langgraph import wrapper
+from nullrun.instrumentation.auto import patch_langgraph_compiled
 
-app = wrapper(graph.compile())
+patch_langgraph_compiled()  # idempotent — safe to call repeatedly
+app = graph.compile()
 ```
 
-`wrapper` wraps the compiled app's `.invoke` and `.stream` methods
-to inject the NullRun callback into the LangChain `config["callbacks"]`
-list per call. The control-plane kill/pause subscription is
-**independent** — it's started automatically by `init()` and works
-for every `@protect` call in the process regardless of whether you
-used `wrapper()` or relied on the auto-instrumentation path above.
+`patch_langgraph_compiled` wraps every compiled app's `.invoke` and
+`.stream` methods to inject the NullRun callback into the LangChain
+`config["callbacks"]` list per call. The control-plane kill/pause
+subscription is **independent** — it starts on the first `@protect`
+call and works for every protected call in the process regardless of
+whether you used the manual patch or the auto-instrumentation path.
 
 ## See also
 

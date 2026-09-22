@@ -35,12 +35,15 @@ and its own key:
 ```python title="fanout.py"
 import multiprocessing as mp
 import nullrun
-from nullrun import init_or_die, protect
+from nullrun import protect
 
 
 def _agent_main(key: str, prompt: str) -> str:
-    # Each child process initializes its own runtime with its own key.
-    init_or_die(api_key=key)
+    # Each child process lazily initializes its own runtime from
+    # NULLRUN_API_KEY on the first @protect call. To force a specific
+    # key per child, set NULLRUN_API_KEY in the subprocess env.
+    import os
+    os.environ["NULLRUN_API_KEY"] = key
 
     @protect
     def step(p: str) -> str:

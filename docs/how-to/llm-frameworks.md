@@ -1,17 +1,26 @@
+---
 title: LLM frameworks
 maturity: stable
 description: Coverage matrix for OpenAI, Anthropic, Mistral, Gemini, Cohere, Bedrock, LangChain, LlamaIndex, CrewAI, AutoGen, and the raw openai SDK.
+---
 # LLM frameworks
 
-`nullrun.init()` patches the underlying HTTP transport (`httpx`) and
-the agent framework modules it can detect in `sys.modules`. Every
-patch wraps the vendor import in `try/except ImportError`, so you
-can install one extra group without crashing on `init()`.
+The SDK's auto-instrumentation runs **lazily on the first `@protect`
+call**, not at import or `init()` time. The lazy trigger creates the
+runtime and walks `sys.modules` looking for known framework packages,
+applying each detected patch in a single process-wide idempotent step.
 
 In every case, the LLM call gets `track_llm` events automatically —
 **no `@protect` required for cost tracking**. `@protect` is the
 **gate** layer (budget pre-flight + kill / pause / sensitive-tool
 decision).
+
+> **HTTP-level coverage is the foundation.** OpenAI, Anthropic,
+> Mistral, Gemini, Cohere, and Bedrock are covered by URL-keyed httpx
+> extractors — the SDK never imports those vendor packages, so no
+> extra is required. The extras below are only needed when NullRun
+> has to call into the vendor package directly (framework hooks, not
+> HTTP hooks).
 
 > The Gemini vendor extra is `google-genai` (the actively maintained
 > package, ≥ 1.0); the older `google.generativeai` package is **not**
@@ -21,19 +30,18 @@ decision).
 
 | Provider | Install extra | Auto-instrumented | Tested end-to-end | Patcher |
 | --- | --- | --- | --- | --- |
-| OpenAI (`openai`) | `nullrun[openai]` | ✅ | ✅ | `httpx` transport hook |
-| Anthropic (`anthropic`) | `nullrun[anthropic]` | ✅ | ✅ | `httpx` transport hook |
+| OpenAI (`openai`) | none — httpx URL-keyed | ✅ | ✅ | `httpx` transport hook |
+| Anthropic (`anthropic`) | none — httpx URL-keyed | ✅ | ✅ | `httpx` transport hook |
 | OpenAI Agents (`openai-agents`) | `nullrun[agents]` | ✅ | ✅ | `patch_openai_agents` |
-| Mistral (`mistralai`) | `nullrun[mistral]` | ✅ | ⚠️ extractor only | per-vendor extractor |
-| Gemini (`google-genai`) | `nullrun[gemini]` | ✅ | ⚠️ extractor only | per-vendor extractor |
-| Cohere (`cohere`) | `nullrun[cohere]` | ✅ | ⚠️ extractor only | per-vendor extractor |
-| AWS Bedrock (`boto3`) | `nullrun[bedrock]` | ⚠️ partial | ⚠️ extractor only | `httpx` extractor on `bedrock-runtime.amazonaws.com` |
+| Mistral (`mistralai`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | per-vendor extractor |
+| Gemini (`google-genai`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | per-vendor extractor |
+| Cohere (`cohere`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | per-vendor extractor |
+| AWS Bedrock (`boto3`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | `httpx` extractor on `bedrock-runtime.amazonaws.com` |
 | LangChain (`langchain`) | `nullrun[langchain]` | ✅ | ✅ | `patch_langchain_callback` |
-| LangGraph (`langgraph`) | `nullrun[langgraph]` | ✅ | ✅ | `patch_langgraph_compiled` |
+| LangGraph (`langgraph`) | `nullrun[langgraph]` | ✅ | ✅ | `patch_langgraph_compiled` (auto on first `@protect` call) |
 | LlamaIndex (`llama-index`) | `nullrun[llama-index]` | ✅ | ⚠️ extractor only | `instrumentation.llama_index` |
 | CrewAI (`crewai`) | `nullrun[crewai]` | ✅ | ⚠️ extractor only | `instrumentation.crewai` |
 | AutoGen (`autogen-agentchat`) | `nullrun[autogen]` | ✅ | ⚠️ extractor only | `instrumentation.autogen` |
-| Raw `openai` SDK | `nullrun[openai]` | ✅ | ✅ | `httpx` transport hook |
 
 > "Tested end-to-end" means: a multi-roundtrip test exists that
 > verifies tokens flow from the vendor response into `/api/v1/track`.
@@ -47,7 +55,9 @@ decision).
 pip install "nullrun[all]"
 ```
 
-Installs every vendor extra. The `[all]` meta-extra lives at
+Installs every vendor extra (the ones that actually pull a vendor
+package — `[agents]`, `[crewai]`, `[langgraph]`, `[langchain]`,
+`[llama-index]`, `[autogen]`). The `[all]` meta-extra lives at
 `pyproject.toml` and pulls every individual extra in one go.
 
 ## How the httpx transport hook works
@@ -68,16 +78,16 @@ SDK only reports token counts, never dollar amounts.
 ## Detection logic
 
 If your framework is installed, the SDK patches it automatically on
-`init()`. The detection logic walks `sys.modules` looking for known
-packages — `openai`, `openai-agents`, `anthropic`, `langgraph`,
-`langchain`, `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock),
-`llama_index`, `crewai`, `autogen_agentchat` — and applies the
-appropriate patch.
+the **first `@protect` call**. The detection logic walks
+`sys.modules` looking for known packages — `openai`, `openai-agents`,
+`anthropic`, `langgraph`, `langchain`, `mistralai`, `google-genai`,
+`cohere`, `boto3` (bedrock), `llama_index`, `crewai`,
+`autogen_agentchat` — and applies the appropriate patch.
 
-Order matters: if your code imports `openai` before `init()`,
-the hook is in place before the first request. If you import
-after `init()`, the SDK patches at import time on next
-`init()` call — or you can call `nullrun.patch()` explicitly.
+Order matters: if your code imports `openai` before the first
+`@protect` call, the hook is in place before the first request. If
+you import after the first `@protect` call, the SDK may not see the
+late import — call `nullrun.patch()` explicitly to force a re-scan.
 
 ## Provider-specific notes
 
@@ -107,28 +117,31 @@ Bedrock calls must be reported via `track_llm` manually.
 
 The `nullrun[langgraph]` extra wraps `Pregel.invoke` / `.ainvoke` /
 `.stream` / `.astream` so every node that calls an LLM goes through
-the gate. See [Protect a LangGraph agent](langgraph.md) for the
-canonical wiring pattern and the manual `wrapper()` escape hatch.
+the gate. The patch is auto-applied on the first `@protect` call.
+See [Protect a LangGraph agent](langgraph.md) for the canonical
+wiring pattern.
 
 ### CrewAI / AutoGen
 
 Multi-agent frameworks spawn sub-agents that each make their own
-LLM calls. The hook fires per call, so cost attribution lands in
-the right `agent_id` automatically (the framework passes
-`agent_name` through to the SDK contextvar).
+LLM calls. The hook fires per call, so cost attribution lands in the
+right `agent_id` automatically (the framework passes `agent_name`
+through to the SDK contextvar).
 
 ## When auto-instrumentation can't see the call
 
 Some patterns bypass the auto-instrumentation:
 
 - Custom HTTP transport (not `httpx`) — use [`track_llm`](../reference/sdk-api.md#track_llm-manual-usage)
-- Streaming chunks where the SDK is constructed before `init()` — call
+- Streaming chunks where the SDK is constructed before the first `@protect` call — call
   `nullrun.patch()` after the late imports
 - A framework not listed above — file an issue at
   `github.com/nullrunio/nullrun-sdk-python`
 
 The catch-all `track_llm(input_tokens=…, output_tokens=…, model=…)`
-is the escape hatch for any of these.
+is the escape hatch for any of these. If `@protect` fires 50+ times
+without the runtime seeing a single `track_llm` event, the SDK logs
+**one** WARNING naming the three most likely root causes.
 
 ## See also
 

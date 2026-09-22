@@ -55,9 +55,10 @@ explicitly. See [Error handling → Kill signal](../concepts/error-handling.md#k
 for the recommended handler shape.
 
 If you use the zero-boilerplate helpers from the SDK, you don't have
-to write any of this — `@guarded` catches the standard exceptions
-(including the kill signal), prints the catalog wording, and exits 1.
-To handle kill distinctly, use the un-`@guarded` `protect()` form.
+to write any of this — `with nullrun.handle():` catches the standard
+exceptions (including the kill signal), prints the structured
+four-line developer report, and exits 1. To handle kill distinctly,
+use the un-`@guarded` `protect()` form.
 
 ## When the gateway is unreachable
 

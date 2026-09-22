@@ -116,14 +116,16 @@ required.
 | Helper | Catches | For |
 |---|---|---|
 | `init_or_die(api_key=...)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
-| `@guarded` | Any `NullRunError` raised inside the wrapped function | Standard agent loop |
-| `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) |
+| `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) — **recommended** form |
+| `@guarded` | Any `NullRunError` raised inside the wrapped function | Decorator equivalent of `handle()` |
 
-All three propagate non-`NullRunError` exceptions (anything that
-isn't an SDK error) as honest tracebacks. `NullRunError` subclasses
-— including the kill signal `NullRunWorkflowKilledError` — are
-caught and converted to catalog wording. For the full design
-rationale and the boundary between "what NullRun tells the
+All three helpers propagate non-`NullRunError` exceptions (anything
+that isn't an SDK error) as honest tracebacks. `NullRunError`
+subclasses — including the kill signal `NullRunWorkflowKilledError` —
+are caught and rendered as the **structured four-line developer
+report** (catalog headline + `[error_code]` + `what` + `where` +
+`why` + `how to fix`), then the process exits 1. For the full
+design rationale and the boundary between "what NullRun tells the
 developer" and "what the developer tells their end users", see
 [Concepts → Error handling](../concepts/error-handling.md).
 

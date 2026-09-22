@@ -5,21 +5,22 @@ description: Install the nullrun[agents] extra and gate every tool call from an 
 
 # Use with OpenAI Agents
 
-Install:
+Install (the OpenAI Agents framework hook is the only one that
+needs a vendor package — `openai-agents`):
 
 ```bash title="shell"
 pip install "nullrun[agents]" openai-agents
 ```
 
 Wrap the `Runner.run_sync` call (or any sync / async runner) with
-`@protect`:
+`@protect`. The runtime + `openai-agents` `RunHooks` /
+`RunStreamedHooks` patch are attached lazily on the first `@protect`
+call — no `init()` needed:
 
 ```python title="openai_agents_protect.py"
 from agents import Agent, Runner
 
-from nullrun import init, protect
-
-init(api_key="nr_live_...")
+from nullrun import protect
 
 
 @protect

@@ -76,12 +76,9 @@ export NULLRUN_SECRET_KEY="hmac_xxxxxxxxxxxxxxxxxxxx"
 Create a file `tour_agent.py`:
 
 ```python title="tour_agent.py"
-import os
 import nullrun
-from nullrun import init, protect, NullRunBudgetError
+from nullrun import protect, NullRunBudgetError
 from langchain_openai import ChatOpenAI
-
-init(api_key=os.environ["NULLRUN_API_KEY"])
 
 llm = ChatOpenAI(model="gpt-4o-mini")
 
@@ -98,10 +95,14 @@ if __name__ == "__main__":
             break
 ```
 
+No `init()` call is needed — the first `@protect` call creates the
+runtime from `NULLRUN_API_KEY` and patches the auto-instrumentation
+hooks.
+
 Run it:
 
 ```bash title="shell"
-pip install "nullrun[langgraph]" langgraph langchain-openai
+pip install nullrun langgraph langchain-openai
 python tour_agent.py
 ```
 

@@ -14,9 +14,9 @@ the final chunk (which carries the `usage` block).
 ```python title="streaming_agent.py"
 import nullrun
 from openai import AsyncOpenAI
-from nullrun import init_or_die, protect
+from nullrun import protect
 
-init_or_die()
+# No init() — the first @protect call creates the runtime lazily.
 client = AsyncOpenAI()
 
 
@@ -117,7 +117,7 @@ estimate. See
 [OpenAI streaming reference](https://platform.openai.com/docs/api-reference/chat-streaming).
 
 ```python
-from nullrun import init_or_die, protect, track_llm
+from nullrun import protect, track_llm
 
 
 @protect

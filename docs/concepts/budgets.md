@@ -74,7 +74,7 @@ Spending → $49.95 of $50.00
 Next @protect call:        #2.00 projected
 gate decision:             block
 SDK raises:                 NullRunBudgetError (NR-B004)
-@guarded:                   prints friendly message, sys.exit(1)
+with nullrun.handle():     prints the 4-line dev report, sys.exit(1)
 ```
 <figcaption>Hard mode — the projected cost of the next call exceeds the remaining budget. The gate returns `block` before the model runs.</figcaption>
 

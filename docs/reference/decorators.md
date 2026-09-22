@@ -244,9 +244,11 @@ irreversible action.
 
 ---
 
-## `@guarded` — friendly-exit wrapper
+## `@guarded` and `with nullrun.handle():` — friendly-exit wrapper
 
-**Parameters: none.** Accepts only a callable.
+**Parameters: none (decorators and context managers).** Accept only
+a callable (for `@guarded`) or an optional `exit_code` keyword (for
+`handle`).
 
 ```python title="guarded_basic.py"
 @nullrun.guarded
@@ -255,11 +257,17 @@ def my_agent(prompt: str) -> str:
     return call_llm(prompt)
 ```
 
-### What `@guarded` does
+### What they do
 
-Any `NullRunError` raised inside the wrapped function is caught,
-rendered as the catalog user-message via `format_user_message(exc)`,
-printed to **stderr**, and the process exits with code `1`.
+Any `NullRunError` raised inside the wrapped function (or inside
+the `handle()` block) is caught, rendered as the **structured
+four-line developer report** (`[error_code]` + `what` + `where` +
+`why` + `how to fix`), printed to **stderr**, and the process
+exits with code `1`.
+
+The catalog user-message is the headline line so end-user-facing
+deployments still get a clean single sentence; the structured detail
+below it is the developer-facing fix.
 
 Exceptions that propagate unchanged:
 
@@ -290,25 +298,43 @@ def my_agent(prompt): ...
 ### When to use
 
 For **top-level entry points** in scripts and CLIs: instead of a
-raw traceback on `NullRunAuthenticationError(NR-C001)`, the
-operator sees the catalog wording and the process exits cleanly.
-In libraries and long-running services, prefer
-`try/except NullRunError` — `@guarded` exits the process, which
-isn't appropriate there.
+raw traceback on `NullRunConfigError(NR-C001)` at the first gate
+call, the operator sees the structured four-line developer report
+and the process exits cleanly. In libraries and long-running
+services, prefer `try/except NullRunError` — `@guarded` / `handle()`
+exit the process, which isn't appropriate there.
 
-The context-manager form `with nullrun.handle():` is equivalent
-for region-of-code scopes:
+The context-manager form `with nullrun.handle():` is the
+**recommended form** for region-of-code scopes — it makes the
+scope explicit, accepts an `exit_code=` argument, and the four-line
+report is what it always renders:
 
 ```python title="handle_context.py"
 import nullrun
+from nullrun import protect
 
-nullrun.init(api_key="nr_live_...")
+@protect
+def run_my_agent(prompt: str) -> str:
+    return call_llm(prompt)
 
-with nullrun.handle():
-    run_my_agent("hello")
-# ↑ if run_my_agent raised NullRunError, the catalog user-message
-#   is printed and the script exits 1.
+
+if __name__ == "__main__":
+    with nullrun.handle():
+        print(run_my_agent("hello"))
+    # ↑ if run_my_agent raised NullRunError, the four-line developer
+    #   report is printed (catalog headline + error_code + what +
+    #   where + why + how to fix) and the script exits 1.
 ```
+
+### Zero-activity diagnostic
+
+The runtime tracks `_protect_call_count` and
+`_llm_call_event_count`. If `@protect` fires 50+ times without the
+runtime observing a single `track_llm` event — typically a sign
+that auto-instrumentation did not attach (vendor SDK imported
+later, custom transport not on httpx, framework hook missing) —
+the SDK logs **one** WARNING naming the three most likely root
+causes. The diagnostic is warn-once; subsequent bumps do not spam.
 
 ---
 
@@ -413,11 +439,11 @@ the tool-block check for that single function name.
 | Mark a money-moving tool for typed approval | `@nullrun.sensitive(impact=money_outflow(argument="amount_cents", currency="USD"))` |
 | Mark a tool where rule names ≠ arg names | `@nullrun.sensitive(impact=tool_params({"user_id": "uid"}))` |
 | Mark a tool where every kwarg is a secret | `@nullrun.sensitive(impact=tool_params(include_all=False))` |
-| Top-level script entry (friendly exit) | `@nullrun.guarded` or `with nullrun.handle():` |
+| Top-level script entry (friendly exit) | `@nullrun.guarded` or `with nullrun.handle():` (preferred) |
 | Multi-step agent run (cost + trace per workflow) | `with nullrun.workflow("agent-name"): ...` |
 | Per-call model name and tools for `/gate` | `nullrun.set_call_context(model=..., tools=[...])` inside `with workflow` |
 | Soft-mode budget (controlled overdrafts) | `with nullrun.chain(uuid.uuid4(), op="start"): ...` |
-| LangGraph auto-tracking | `from nullrun.toolbox.langgraph import wrapper; graph = wrapper(graph)` |
+| LangGraph auto-tracking | (auto on first `@protect` call; legacy manual wrapper `from nullrun.toolbox.langgraph import wrapper` is deprecated) |
 | Manual LLM tracking (custom client) | `nullrun.track_llm(input_tokens=..., output_tokens=..., model=...)` |
 | Manual tool-call tracking | `nullrun.track_tool(tool_name=..., duration_ms=..., metadata=...)` |
 | Custom business event | `nullrun.track_event("agent.milestone", step=..., elapsed_secs=...)` |

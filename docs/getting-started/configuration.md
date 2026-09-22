@@ -18,7 +18,7 @@ gateway.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `NULLRUN_API_KEY` | unset (required) | API key from the NullRun dashboard (`nr_live_...`). Missing at `init()` raises `NullRunAuthenticationError` (NR-C001). |
+| `NULLRUN_API_KEY` | unset (required) | API key from the NullRun dashboard (`nr_live_...`). Missing at the first `@protect` call (lazy init) raises `NullRunConfigError` (NR-C001). |
 | `NULLRUN_API_URL` | `https://api.nullrun.io` | Gateway REST base URL. The WebSocket control plane URL is derived from this as `wss://<api-host>/ws/control/{org_id}` — `{org_id}` is the `organization_id` returned by `POST /api/v1/auth/verify`, and is **not** a separate env var. |
 | `NULLRUN_SECRET_KEY` | unset | HMAC-SHA256 signing secret. The SDK signs every request automatically when this is set. |
 | `NULLRUN_ENV` | unset | Environment tag (`production` / `staging` / ...). |

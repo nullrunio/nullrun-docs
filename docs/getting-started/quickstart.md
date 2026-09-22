@@ -10,15 +10,13 @@ behaviour, and let NullRun halt it when it goes off the rails.
 
 ```python title="app.py"
 from openai import OpenAI
-from nullrun import init_or_die, guarded, protect, workflow, shutdown
+from nullrun import protect, workflow, shutdown
 
-init_or_die(api_key="nr_live_...")        # exits cleanly if api_key missing
 client = OpenAI()
 
 with workflow("my-first-agent"):       # scopes the gate to a workflow
-    @guarded                           # catches NullRunError, prints
-    @protect                           # the catalog user-message,
-    def answer(prompt: str) -> str:    # sys.exit(1) — zero boilerplate
+    @protect                           # gates every call via /check;
+    def answer(prompt: str) -> str:    # lazy-creates the runtime on first call
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
@@ -27,10 +25,19 @@ with workflow("my-first-agent"):       # scopes the gate to a workflow
 
 if __name__ == "__main__":
     try:
-        print(answer("What does NullRun do?"))
+        with nullrun.handle():        # catches NullRunError, prints the
+            print(answer("What does NullRun do?"))
+            # structured 4-line developer report on failure, then sys.exit(1)
     finally:
         shutdown()
 ```
+
+> **Zero-init SDK.** You don't need to call `init()` or `init_or_die()` —
+> the first `@protect` call creates the runtime from `NULLRUN_API_KEY` and
+> patches the auto-instrumentation hook in a single process-wide idempotent
+> step. If the API key is missing, the runtime raises a clear
+> `NullRunConfigError` (NR-C001) at the first gate call instead of
+> silently no-op'ing.
 
 > The `with workflow("..."):` block binds every `@protect` call inside
 > to a named workflow — required, otherwise the SDK falls back to an
@@ -40,8 +47,9 @@ if __name__ == "__main__":
 
 Every call inside `answer()` is cost-attributed and governed by your
 workspace policy. On any policy outcome (budget cap, tool block, rate
-limit, transport outage), `@guarded` prints the catalog wording on
-stderr and exits `1`.
+limit, transport outage), `with nullrun.handle():` prints the structured
+four-line developer report (`error_code` + what + where + why +
+how to fix) and exits `1`.
 
 ## What gets tracked
 

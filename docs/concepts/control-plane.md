@@ -76,10 +76,11 @@ except WorkflowPausedException:
     raise
 ```
 
-Both signals inherit from `NullRunError`, so `@guarded` catches both
-(prints catalog wording, exits 1). To handle kill distinctly —
-checkpoint state, notify a supervisor, then exit — wrap the
-un-`@guarded` call in your own try/except. See
+Both signals inherit from `NullRunError`, so `with nullrun.handle():`
+catches both (prints the structured four-line developer report, exits
+1). To handle kill distinctly — checkpoint state, notify a
+supervisor, then exit — wrap the un-`handle()` call in your own
+try/except. See
 [Error handling → Kill signal](../concepts/error-handling.md#kill-signal)
 for the recommended handler shape.
 

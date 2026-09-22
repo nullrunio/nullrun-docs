@@ -31,14 +31,18 @@ when you need them.
 ## 2. Install the SDK
 
 ```bash title="shell"
-pip install "nullrun[openai]"     # raw openai SDK + tracking
-pip install "nullrun[langgraph]"  # if you're using LangGraph
-pip install "nullrun[agents]"     # if you're using OpenAI Agents SDK
-pip install "nullrun[all]"        # every vendor extra — heaviest install
+pip install nullrun
 ```
 
-See [Install](install.md#optional-extras) for the full list of extras.
-For this walk-through `nullrun[openai]` is enough.
+The plain `nullrun` package covers the full HTTP-level instrumentation
+(httpx hook for OpenAI, Azure, Anthropic, Mistral, Gemini, Cohere,
+Bedrock) and the auto-patch path for LangGraph, LangChain, OpenAI
+Agents, LlamaIndex, CrewAI, and AutoGen. **No vendor extra is required**
+— the SDK uses URL-keyed extractors, not vendor-package imports, for
+all of the LLM providers above. See [Install](install.md#optional-extras)
+for the full list of extras and when you would still need one.
+
+For this walk-through `pip install nullrun` is enough.
 
 ## 3. Wire NullRun into your code
 
@@ -47,16 +51,14 @@ Pick the pattern that matches what you have today:
 ### A. You already call `client.chat.completions.create(...)`
 
 ```python title="my_agent.py"
-import nullrun
 from openai import OpenAI
-from nullrun import init_or_die, protect, shutdown
-
-# 1. One line — reads NULLRUN_API_KEY from env if not passed.
-init_or_die(api_key="nr_live_...")
+from nullrun import protect, shutdown
 
 client = OpenAI()
 
-# 2. @protect gates every call through NullRun before it runs.
+# @protect gates every call through NullRun before it runs.
+# The runtime is created lazily on the first call from
+# NULLRUN_API_KEY — no init() call needed.
 @protect
 def answer(prompt: str) -> str:
     response = client.chat.completions.create(
@@ -66,11 +68,14 @@ def answer(prompt: str) -> str:
     return response.choices[0].message.content
 
 
-# 3. shutdown() flushes pending events and closes the WS cleanly
-#    — register via atexit in production scripts.
+# shutdown() flushes pending events and closes the WS cleanly
+# — register via atexit in production scripts.
 if __name__ == "__main__":
     try:
-        print(answer("What does NullRun do?"))
+        with nullrun.handle():
+            print(answer("What does NullRun do?"))
+            # handle() prints the structured 4-line developer report
+            # on any NullRunError, then sys.exit(1).
     finally:
         shutdown()
 ```
@@ -85,7 +90,8 @@ auto-instrumentation.
 Auto-instrumentation does the same thing — see
 [Use with LangGraph](../how-to/langgraph.md) or any of the other
 [framework how-tos](../how-to/llm-frameworks.md).
-Most of the time the only line you add is the `init()` call.
+The framework hook subscribes itself on the first `@protect` call; you
+do not need to add an init line.
 
 ## 4. Set a budget
 
@@ -146,6 +152,6 @@ Common next steps, in rough order of how often they're needed:
 - [Concepts → Circuit breaker](../concepts/circuit-breaker.md) —
   the mental model behind `@protect`.
 - [Concepts → Error handling](../concepts/error-handling.md) — the
-  three-layer error model.
+  three-layer error model and the structured four-line developer report.
 - [Concepts → Workflow context](../concepts/workflow.md) — what the
   `with nullrun.workflow(...)` block does.
