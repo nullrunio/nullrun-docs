@@ -5,7 +5,10 @@ description: Wrap CrewAI tools and tasks with @protect so the NullRun gate evalu
 
 # CrewAI
 
-Install (CrewAI **1.15+** required):
+Install (the SDK declares `crewai>=0.80,<2.0`; the EventBus
+subsystem used here was added in **CrewAI 1.15+**, which is what
+this guide targets — earlier versions get some legacy telemetry via
+`step_callback` / `task_callback` instead):
 
 ```bash title="shell"
 pip install "nullrun[crewai]"

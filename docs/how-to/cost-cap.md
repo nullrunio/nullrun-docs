@@ -48,11 +48,12 @@ with nullrun.workflow("my-workflow"):
 
 Cumulative cost > 500¢ → `NullRunBudgetError` raised on the next
 gate call with `error_code = "NR-B004"` (wire `BUDGET_HARD_BLOCKED`).
-For non-budget policy blocks (tool block, sensitive tool) the generic
-`NullRunBlockedException` is raised with
-`error_code = "NR-T001"` (wire `TOOL_BLOCKED`).
-See [Errors](../reference/errors.md) for the full catalog and the
-recommended `except` pattern.
+For tool-block policy hits, `NullRunToolBlockedError` is raised with
+`error_code = "NR-T001"` (wire `TOOL_BLOCKED`). Both are subclasses of
+`NullRunBlockedException`, so a broad `except NullRunBlockedException`
+still catches both — but the typed subclass carries the more specific
+`error_code`. See [Errors](../reference/errors.md) for the full catalog
+and the recommended `except` pattern.
 
 `max_budget_cents == 0` means **"no per-key budget configured"**, not
 "block everything" — the gate passes through to the org-level plan
