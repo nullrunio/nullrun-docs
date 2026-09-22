@@ -123,10 +123,16 @@ jobs:
 
       - name: 3. Capabilities probe
         run: |
-          # Verify the gateway capabilities are present before promoting to prod
+          # Verify the gateway is v3-ready before promoting to prod.
+          # /api/v1/capabilities returns a nested `capabilities: {}` object
+          # (protocol v3.18+). All three flags must be true for the v3 wire
+          # contract; mirrors ServerCapabilities.is_v3_ready() in the SDK.
           curl -fs "${NULLRUN_API_URL}/api/v1/capabilities" \
-            | python -c "import json,sys; c=json.load(sys.stdin); \
-              assert c['capabilities_ok'], 'gateway capabilities not ready'"
+            | python -c "import json,sys; c=json.load(sys.stdin)['capabilities']; \
+              assert c['server_minted_execution_id'] \
+                and c['per_execution_reservations'] \
+                and c['heartbeat_time_based'], \
+              'gateway not v3-ready — server_minted_execution_id, per_execution_reservations, and heartbeat_time_based must all be true'"
 
       - name: 4. Approval pause/resume (manual)
         # Trigger an approval-required call, click approve in the
