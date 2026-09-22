@@ -17,16 +17,15 @@ Verify:
 python -c "from nullrun import protect; print('ok')"
 ```
 
-> **No manual initialization required.** Initialization is lazy,
-> process-wide, and triggered by the first `@protect` call. There is
-> no `init()` / `init_or_die()` boilerplate to add to your entry
-> point — see the mental-model diagram in [Quickstart](quickstart.md).
+> **First `@protect` call builds the runtime.** Initialization is
+> lazy, process-wide, and triggered by the first `@protect` call —
+> see the mental-model diagram in [Quickstart](quickstart.md).
 
 > **No local mode.** If `NULLRUN_API_KEY` is missing when the first
 > `@protect` call hits the runtime, the SDK raises
-> `NullRunConfigError` (NR-C001) at the gate. There is no offline /
-> local-only fallback — the silent-no-op path was removed because it
-> bypassed every backend gate.
+> `NullRunConfigError` (NR-C001) at the gate. Every gate decision
+> is server-side — a silent local fallback would bypass the backend
+> gate.
 
 ## API key
 
@@ -44,16 +43,15 @@ variable:
 export NULLRUN_API_KEY=nr_live_...
 ```
 
-The SDK reads `NULLRUN_API_KEY` on the first `@protect` call (no
-`init()` step). The HMAC secret is **not** a constructor argument —
-it is read from `NULLRUN_SECRET_KEY` or returned by `/api/v1/auth/verify`.
+The SDK reads `NULLRUN_API_KEY` on the first `@protect` call. The HMAC
+secret is **not** a constructor argument — it is read from
+`NULLRUN_SECRET_KEY` or returned by `/api/v1/auth/verify`.
 
-> **Optional: explicit `init()` / `init_or_die()`.** The first
-> `@protect` call creates the runtime lazily from `NULLRUN_API_KEY`.
-> Explicit `init()` is only needed if you want to fail-fast on a
-> missing key before the first gate call (CI / smoke tests), or to
-> bind an API key from a non-env source. Most apps skip it.
-> See [Reference → init / init_or_die](../reference/sdk-api.md#init--init_or_die-optional-early-fail-fast)
+> **Explicit `init()` / `init_or_die()`.** The first `@protect` call
+> creates the runtime lazily from `NULLRUN_API_KEY`. Call `init()`
+> directly when you want fail-fast on a missing key before the first
+> gate call (CI / smoke tests), or to bind an API key from a non-env
+> source. See [Reference → init / init_or_die](../reference/sdk-api.md#init--init_or_die-optional-early-fail-fast)
 > for the contract.
 
 For env-var setup (`NULLRUN_API_KEY`, `NULLRUN_SECRET_KEY`, and other

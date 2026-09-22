@@ -95,8 +95,7 @@ if __name__ == "__main__":
             break
 ```
 
-No `init()` call is needed — the first `@protect` call creates the
-runtime from `NULLRUN_API_KEY`.
+The first `@protect` call creates the runtime from `NULLRUN_API_KEY`.
 
 Run it:
 

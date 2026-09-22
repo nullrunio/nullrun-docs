@@ -25,7 +25,7 @@ when it isn't.
 | Gateway unreachable, aggregate rate limit | **Fail-CLOSED** — 503 | `NullRunRateLimitRedisError` |
 | Workflow killed via dashboard | Raise at next `/gate` call (or at WS push receipt) | `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) |
 | Workflow paused via dashboard | Raise at next `/gate` call | `WorkflowPausedException` |
-| Missing `api_key` on `init()` | Raise at first SDK call | `NullRunAuthenticationError` |
+| Missing `NULLRUN_API_KEY` | Raise at first SDK call | `NullRunAuthenticationError` |
 | HMAC signature missing / stale | Reject the request (401) | `NullRunAuthenticationError` |
 | Plan monthly / per-dimension cap reached | Reject the request (422 `plan_limit_exceeded`; `details.resource` names the dimension) | `NullRunBlockedException` (HTTP 422 via `exc.status_code`) |
 | Consume over-budget on commit | Reject the `/track` commit (422; actual cost > reserved + ε) | `NullRunConsumeOverbudgetError` |

@@ -32,18 +32,15 @@ if __name__ == "__main__":
         shutdown()
 ```
 
-> **No manual initialization required.** You don't need to call `init()`
-> or `init_or_die()` — initialization is lazy, process-wide, and triggered
-> by the first `@protect` call. The runtime is created from
-> `NULLRUN_API_KEY`, the HTTP instrumentation hook is installed, and any
-> importable framework hook is attached in a single idempotent step.
-> If the API key is missing, the runtime raises a clear
-> `NullRunConfigError` (NR-C001) at the first gate call instead of
-> silently no-op'ing.
+> **First `@protect` call builds the runtime.** It reads
+> `NULLRUN_API_KEY`, installs the HTTP instrumentation hook, and attaches
+> every importable framework hook in a single idempotent step. If the
+> API key is missing at that point, the SDK raises `NullRunConfigError`
+> (NR-C001) at the first gate call.
 
-> **`@protect` is the entry point. Everything else is optional.** If you
-> need early fail-fast (CI / smoke tests) before the first `@protect`
-> call, see [Reference → init / init_or_die](../reference/sdk-api.md#init--init_or_die-optional-early-fail-fast).
+> **`@protect` is the entry point.** For early fail-fast (CI / smoke
+> tests) before the first `@protect` call, see [Reference → init /
+> init_or_die](../reference/sdk-api.md#init--init_or_die-optional-early-fail-fast).
 
 > The `with workflow("..."):` block binds every `@protect` call inside
 > to a named workflow — required, otherwise the SDK falls back to an

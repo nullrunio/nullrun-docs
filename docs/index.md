@@ -122,10 +122,11 @@ flowchart LR
       </div>
       <div class="nr-feature__title">Auto-instrumentation</div>
       <div class="nr-feature__body">
-        <code>nullrun.init()</code> patches OpenAI, Anthropic,
-        LangGraph, OpenAI Agents, Mistral, Gemini, Cohere, Bedrock,
-        LlamaIndex, CrewAI, and AutoGen — cost tracking without
-        <code>@protect</code>.
+        The first <code>@protect</code> call activates
+        auto-instrumentation for OpenAI, Anthropic, LangGraph,
+        OpenAI Agents, Mistral, Gemini, Cohere, Bedrock, LlamaIndex,
+        CrewAI, and AutoGen. Vendor SDKs are patched in place —
+        every LLM call goes through the gateway.
       </div>
     </div>
     <div class="nr-feature">
