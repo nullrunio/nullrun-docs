@@ -27,10 +27,10 @@ decision).
 | Mistral (`mistralai`) | `nullrun[mistral]` | ✅ | ⚠️ extractor only | per-vendor extractor |
 | Gemini (`google-genai`) | `nullrun[gemini]` | ✅ | ⚠️ extractor only | per-vendor extractor |
 | Cohere (`cohere`) | `nullrun[cohere]` | ✅ | ⚠️ extractor only | per-vendor extractor |
-| AWS Bedrock (`boto3`) | `nullrun[bedrock]` | ⚠️ partial | ⚠️ extractor only | `boto3` event-stream hook |
+| AWS Bedrock (`boto3`) | `nullrun[bedrock]` | ⚠️ partial | ⚠️ extractor only | `httpx` extractor on `bedrock-runtime.amazonaws.com` |
 | LangChain (`langchain`) | `nullrun[langchain]` | ✅ | ✅ | `patch_langchain_callback` |
 | LangGraph (`langgraph`) | `nullrun[langgraph]` | ✅ | ✅ | `patch_langgraph_compiled` |
-| LlamaIndex (`llama-index`) | `nullrun[llama]` | ✅ | ⚠️ extractor only | `instrumentation.llama_index` |
+| LlamaIndex (`llama-index`) | `nullrun[llama-index]` | ✅ | ⚠️ extractor only | `instrumentation.llama_index` |
 | CrewAI (`crewai`) | `nullrun[crewai]` | ✅ | ⚠️ extractor only | `instrumentation.crewai` |
 | AutoGen (`autogen-agentchat`) | `nullrun[autogen]` | ✅ | ⚠️ extractor only | `instrumentation.autogen` |
 | Raw `openai` SDK | `nullrun[openai]` | ✅ | ✅ | `httpx` transport hook |
