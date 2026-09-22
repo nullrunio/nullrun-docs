@@ -64,18 +64,23 @@ NullRunError                          (Exception)
 ├── NullRunDecision                   (marker — expected policy outcomes)
 │   ├── NullRunBlockedException       (policy / budget / loop / sensitive block)
 │   │   ├── NullRunBudgetError        (budget exhausted — NR-B004)
+│   │   │   └── NullRunBudgetRecheckFailedError (NR-B006 — post-approval recheck)
 │   │   └── NullRunToolBlockedError   (tool in block list — NR-T001)
-│   ├── WorkflowPausedException       (paused via control plane)
-│   └── NullRunWorkflowKilledError    (kill via control plane — NR-W002;
-│                                       preferred typed alias of
-│                                       `WorkflowKilledInterrupt`)
+│   ├── NullRunConsumeOverbudgetError (actual cost > reservation + ε — NR-O001)
+│   ├── WorkflowPausedException       (paused via control plane — NR-W003)
+│   ├── NullRunWorkflowInactiveError  (soft-deleted / inactive — NR-W004)
+│   └── WorkflowKilledInterrupt       (kill via control plane — NR-W002)
+│       └── NullRunWorkflowKilledError (typed public name; same code NR-W002)
 └── NullRunInfrastructureError        (marker — system failures)
     ├── NullRunConfigError            (misconfiguration, e.g. missing api_key)
     ├── NullRunAuthenticationError   (401 / 403)
     │   └── NullRunAuthError          (401 specifically)
+    ├── NullRunProtocolError          (wire-protocol version mismatch — NR-P001)
+    ├── NullRunApprovalDbUnavailableError (approval DB unavailable — NR-A016)
     └── NullRunTransportError         (transport failures)
-        ├── NullRunBackendError       (5xx — retryable)
-        └── RateLimitError            (429 — carries .retry_after, .upgrade_url)
+        ├── NullRunBackendError       (5xx — retryable; BREAKER_OPEN → NR-B005)
+        └── RateLimitError            (gateway 429 — carries .retry_after)
+            └── NullRunRateLimitRedisError (rate-limit Redis down — NR-R002)
 ```
 
 `NullRunDecision` and `NullRunInfrastructureError` are **marker
@@ -92,10 +97,15 @@ tool-scoped), and `.details` (free-form). There is **no** `.message`
 attribute — use `str(exc)`.
 
 
-`NullRunWorkflowKilledError` (and its parent `WorkflowKilledInterrupt`)
-inherit from `NullRunError`, so a bare `except Exception:` catches
-the kill signal. For kill-specific handling — checkpointing state,
-notifying a supervisor, etc. — catch the typed exception explicitly.
+`WorkflowKilledInterrupt` (and its typed subclass `NullRunWorkflowKilledError`)
+both inherit from `NullRunError` (post-2026-09-08 migration — the
+class was formerly a `BaseException` subclass), so a bare
+`except Exception:` catches the kill signal. For kill-specific
+handling — checkpointing state, notifying a supervisor, etc. —
+catch the typed exception explicitly. The deprecated
+`WorkflowKilledException` parent remains a `BaseException` subclass
+for back-compat but does NOT match the new class — migrate to
+`WorkflowKilledInterrupt` or `NullRunWorkflowKilledError`.
 
 ## The default path: zero lines of error handling
 
@@ -224,14 +234,15 @@ and end-user-facing wording lives in
 | `error_code` | When | HTTP | SDK class |
 | --- | --- | --- | --- |
 | `NR-B004` | Workflow budget exhausted | 402 | `NullRunBudgetError` |
-| `NR-B006` | Post-approval budget re-check failed on the same envelope as the original `/gate` | 503 | `NullRunBudgetRecheckFailedError` |
+| `NR-B006` | Post-approval budget re-check failed on `/execute` (budget counter moved between `/gate` reserve and `/execute`) | 402 | `NullRunBudgetRecheckFailedError` |
 | `NR-O001` | Actual cost > reservation + ε | 422 | `NullRunConsumeOverbudgetError` |
 | `NR-R001` | Per-workflow rate limit | 429 | `RateLimitError` |
 | `NR-T001` | Tool in block list | 403 | `NullRunToolBlockedError` |
-| `NR-CH001` | Chain context invalid (CHAIN_MAX_DURATION_EXCEEDED) | 402 | `NullRunChainError` |
-| `NR-W001` | Workflow does not exist or is not visible to this API key | 404 | `NullRunError` |
+| `NR-CH001` | Chain context invalid (chain_id / parent_execution_id / max_duration exceeded) | 402 | `NullRunChainError` |
+| `NR-EX01` | `/execute` or `/cancel` called without a prior `/gate` that minted this `execution_id` (binding TTL expired or never bound) | 404 | `NullRunExecutionNotFoundError` |
 | `NR-W002` | Operator kill signal (via dashboard **Kill** button or WS push) | n/a (raised) | `NullRunWorkflowKilledError` (alias `WorkflowKilledInterrupt`) |
-| `NR-W004` | Workflow soft-deleted, killed, or paused | 403/503 | `WorkflowPausedException` / kill signal |
+| `NR-W003` | Workflow paused via dashboard or chain cooldown | 503 | `WorkflowPausedException` |
+| `NR-W004` | Workflow soft-deleted (inactive) — restore it to resume traffic | 403 | `NullRunWorkflowInactiveError` |
 | `NR-A003` | API key rejected | 401 | `NullRunAuthError` |
 | `NR-A004` | Approval response missing — gate returned `require_approval` but no row found on `/execute` | 403 | `NullRunApprovalResponseMissingError` |
 | `NR-A010` | Approval exists, status `PENDING` — operator has not decided yet | 403 | `NullRunApprovalNotYetApprovedError` |
@@ -253,11 +264,13 @@ you don't care about the exact cause.
 
 | `error_code` | When | HTTP | SDK class |
 | --- | --- | --- | --- |
+| `NR-B001` | Transport-layer network error (timeout, ConnectError, DNS failure) | 500 | `NullRunTransportError` (default) |
 | `NR-B002` | Gateway 5xx | 500/503 | `NullRunBackendError` |
-| `NR-B003` | Budget Redis unavailable (fail-CLOSED on the budget path) | 402 | `NullRunBudgetError` |
-| `NR-B005` | Budget data unavailable (approximate-budget lookup, all sources down) | 503 | `NullRunBackendError` |
-| `NR-R002` | Rate-limit Redis unavailable | 503 | `NullRunRateLimitRedisError` |
-| `NR-C001` | Missing or invalid `NULLRUN_API_KEY` at `init()` | n/a (raised) | `NullRunAuthenticationError` |
+| `NR-B003` | `@sensitive` business_impact extraction failed (tool param shapes unsupported) | 403 | `NullRunBlockedException` (raised from `decorators.py`) |
+| `NR-B005` | Local SDK circuit breaker tripped — short-circuits before the wire call | 503 | `NullRunBackendError` (with `source = BREAKER_OPEN`) |
+| `NR-R002` | Rate-limit Redis unavailable (aggregate per-org rate-limit fail-CLOSED) | 503 | `NullRunRateLimitRedisError` |
+| `NR-C000` | Misconfiguration (missing api_key, invalid setup) | n/a (raised) | `NullRunConfigError` (default) |
+| `NR-A001` | Auth rejected by backend (general) | 401/403 | `NullRunAuthenticationError` (default) |
 | `NR-P001` | Wire-protocol version mismatch | 400 | `NullRunProtocolError` |
 
 ## See also
