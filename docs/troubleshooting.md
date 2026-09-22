@@ -118,8 +118,10 @@ Two usual suspects:
 - **Operator action** — open the workflow's detail page; the audit
   log shows the actor and timestamp.
 - **Plan or workflow limit** — `max_workflows_per_plan` was hit
-  (Lite 5, Starter 25, Growth 150, Scale 500), causing auto-pause.
-  Check the plan picker for your tier's cap.
+  (Lite 3, Starter 8, Growth 50, Scale 200, Enterprise unlimited),
+  causing auto-pause. Check the plan picker for your tier's cap — the
+  full per-tier table is in
+  [Billing & Plan → Per-tier caps](concepts/billing.md#per-tier-caps).
 
 ### "Why is the SDK raising `NullRunAuthenticationError`?"
 
