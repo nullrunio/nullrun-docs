@@ -46,7 +46,6 @@ The blocklist has two tiers.
 | `VE` | Venezuela | Partial — signups blocked; existing read-only API access preserved (write operations blocked) |
 | `MM` | Myanmar | OFAC + EU restrictive measures |
 | `AF` | Afghanistan | Post-2021 sanctions regime |
-| `ZW` | Zimbabwe | OFAC selective sanctions |
 
 Sanctioned requests are blocked with **403** even on the marketing
 site — no waitlist, no email capture. Strict liability does not allow
@@ -60,7 +59,6 @@ the "we will email you when we do" bridge.
 | `IS NO LI` | EEA / EFTA | Treated like EU for our purposes |
 | `CH` | Switzerland | FADP — high compliance burden |
 | `GB` | United Kingdom | UK GDPR + ICO + class actions |
-| `US CA` | United States / Canada | CCPA + state patchwork |
 | `CN` | China | PIPL + data localisation |
 | `IN` | India | DPDPA 2023 + criminal penalties for officers |
 
