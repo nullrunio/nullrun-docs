@@ -70,8 +70,9 @@ install time.
 | `NR-X001` | decision | `403` | Generic block (catch-all decision) |
 
 `WorkflowKilledInterrupt` always maps to `503` (caught by the ASGI
-middleware, not the exception-handler chain — Starlette refuses
-`BaseException` subclasses in `add_exception_handler`). See
+middleware, not the exception-handler chain — kill can fire from
+control-plane WebSocket pushes and background tasks that aren't part
+of the active request lifecycle). See
 [Reference → Errors](../reference/errors.md) for the full catalog.
 
 ## Locale resolution

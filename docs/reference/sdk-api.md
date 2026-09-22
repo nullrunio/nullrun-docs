@@ -279,7 +279,7 @@ function never raises and never returns an empty string.
 
 - [Decorators & extractors](decorators.md) — deep-dive on `@protect`
   (canonical entry point, auto-attaches default extractor), the
-  `@sensitive(impact=...)` advanced API, `@guarded`,
+  `@sensitive(impact=...)` factory form, `@guarded`,
   `money_outflow`, `tool_params`, `set_call_context`, and the
   workflow / span / chain context managers
 - [Errors](errors.md)

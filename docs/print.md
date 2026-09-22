@@ -236,9 +236,9 @@ When the breaker trips, the SDK raises an exception. The exact exception depends
 |---|---|---|
 | Budget exceeded | `NullRunBudgetError` (`error_code = "NR-B004"`) | No |
 | Tool blocked | `NullRunBlockedException` (`error_code = "NR-T001"`) | No |
-| Operator kill | `WorkflowKilledInterrupt` | **Yes** |
+| Operator kill | `NullRunWorkflowKilledError` (alias for `WorkflowKilledInterrupt`) | No |
 
-The kill signal is a `BaseException`, not an `Exception`, so it propagates through `try/except Exception:` blocks.
+The kill signal is a `NullRunError` subclass, so it lands in `except Exception:` arms like every other SDK error.
 
 ### When the breaker recovers
 

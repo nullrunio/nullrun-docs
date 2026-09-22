@@ -26,7 +26,7 @@ home: true
   <div>
     <h1 class="nr-hero__title">Runtime decision layer for tool-using AI agents</h1>
     <p class="nr-hero__subtitle">Before your agent executes a supported tool or model call, the SDK asks the gate.
-      <br/><code>allow</code>, <code>block</code>, or
+      <code>allow</code>, <code>block</code>, or
       <code>require_approval</code> — backed by tool patterns, budgets, rate limits, and human approvals.
     </p>
     <div class="nr-hero__cta">
@@ -137,10 +137,11 @@ flowchart LR
       </div>
       <div class="nr-feature__title">Auto-instrumentation</div>
       <div class="nr-feature__body">
-        <code>nullrun.init()</code> patches OpenAI, Anthropic,
-        LangGraph, OpenAI Agents, Mistral, Gemini, Cohere, Bedrock,
-        LlamaIndex, CrewAI, and AutoGen — cost tracking without
-        <code>@protect</code>.
+        The first <code>@protect</code> call activates
+        auto-instrumentation for OpenAI, Anthropic, LangGraph,
+        OpenAI Agents, Mistral, Gemini, Cohere, Bedrock, LlamaIndex,
+        CrewAI, and AutoGen. Vendor SDKs are patched in place —
+        every LLM call goes through the gateway.
       </div>
     </div>
     <div class="nr-feature">
@@ -246,14 +247,16 @@ when you need them.
 ## 2. Install the SDK
 
 ```bash title="shell"
-pip install "nullrun[openai]"     # raw openai SDK + tracking
-pip install "nullrun[langgraph]"  # if you're using LangGraph
-pip install "nullrun[agents]"     # if you're using OpenAI Agents SDK
-pip install "nullrun[all]"        # every vendor extra — heaviest install
+pip install nullrun
 ```
 
-See [Install](install.md#optional-extras) for the full list of extras.
-For this walk-through `nullrun[openai]` is enough.
+The plain `nullrun` package covers the full HTTP-level instrumentation
+(httpx hook for OpenAI, Azure, Anthropic, Mistral, Gemini, Cohere,
+Bedrock) and the auto-patch path for LangGraph, LangChain, OpenAI
+Agents, LlamaIndex, CrewAI, and AutoGen. **No vendor extra is required**
+— the SDK uses URL-keyed extractors, not vendor-package imports, for
+all of the LLM providers above. See [Install](install.md#optional-extras)
+for the full list of extras and when you would still need one.
 
 ## 3. Wire NullRun into your code
 
@@ -262,16 +265,15 @@ Pick the pattern that matches what you have today:
 ### A. You already call `client.chat.completions.create(...)`
 
 ```python title="my_agent.py"
-import nullrun
 from openai import OpenAI
-from nullrun import init_or_die, protect, shutdown
-
-# 1. One line — reads NULLRUN_API_KEY from env if not passed.
-init_or_die(api_key="nr_live_...")
+from nullrun import protect, shutdown
 
 client = OpenAI()
 
-# 2. @protect gates every call through NullRun before it runs.
+# @protect gates every call through NullRun before it runs.
+# The runtime is created lazily on the first protected execution
+# from NULLRUN_API_KEY, the HTTP instrumentation is installed,
+# and tracking starts.
 @protect
 def answer(prompt: str) -> str:
     response = client.chat.completions.create(
@@ -281,11 +283,14 @@ def answer(prompt: str) -> str:
     return response.choices[0].message.content
 
 
-# 3. shutdown() flushes pending events and closes the WS cleanly
-#    — register via atexit in production scripts.
+# shutdown() flushes pending events and closes the WS cleanly
+# — register via atexit in production scripts.
 if __name__ == "__main__":
     try:
-        print(answer("What does NullRun do?"))
+        with nullrun.handle():
+            print(answer("What does NullRun do?"))
+            # handle() prints the structured 4-line developer report
+            # on any NullRunError, then sys.exit(1).
     finally:
         shutdown()
 ```
@@ -300,7 +305,7 @@ auto-instrumentation.
 Auto-instrumentation does the same thing — see
 [Use with LangGraph](../how-to/langgraph.md) or any of the other
 [framework how-tos](../how-to/llm-frameworks.md).
-Most of the time the only line you add is the `init()` call.
+The framework hook subscribes itself on the first `@protect` call.
 
 ## 4. Set a budget
 
@@ -361,7 +366,7 @@ Common next steps, in rough order of how often they're needed:
 - [Concepts → Circuit breaker](../concepts/circuit-breaker.md) —
   the mental model behind `@protect`.
 - [Concepts → Error handling](../concepts/error-handling.md) — the
-  three-layer error model.
+  three-layer error model and the structured four-line developer report.
 - [Concepts → Workflow context](../concepts/workflow.md) — what the
   `with nullrun.workflow(...)` block does.
 
@@ -449,12 +454,9 @@ export NULLRUN_SECRET_KEY="hmac_xxxxxxxxxxxxxxxxxxxx"
 Create a file `tour_agent.py`:
 
 ```python title="tour_agent.py"
-import os
 import nullrun
-from nullrun import init, protect, NullRunBudgetError
+from nullrun import protect, NullRunBudgetError
 from langchain_openai import ChatOpenAI
-
-init(api_key=os.environ["NULLRUN_API_KEY"])
 
 llm = ChatOpenAI(model="gpt-4o-mini")
 
@@ -471,10 +473,12 @@ if __name__ == "__main__":
             break
 ```
 
+The first `@protect` call creates the runtime from `NULLRUN_API_KEY`.
+
 Run it:
 
 ```bash title="shell"
-pip install "nullrun[langgraph]" langgraph langchain-openai
+pip install nullrun langgraph langchain-openai
 python tour_agent.py
 ```
 
@@ -591,9 +595,15 @@ Verify:
 python -c "from nullrun import protect; print('ok')"
 ```
 
-> **No local mode.** If `init()` is called without an API key, the
-> SDK raises `NullRunAuthenticationError` at first use. There is no
-> offline / local-only fallback.
+> **First `@protect` call builds the runtime.** Initialization is
+> lazy, process-wide, and triggered by the first `@protect` call —
+> see the mental-model diagram in [Quickstart](quickstart.md).
+
+> **No local mode.** If `NULLRUN_API_KEY` is missing when the first
+> `@protect` call hits the runtime, the SDK raises
+> `NullRunConfigError` (NR-C001) at the gate. Every gate decision
+> is server-side — a silent local fallback would bypass the backend
+> gate.
 
 ## API key
 
@@ -604,73 +614,93 @@ transparently obtains the HMAC secret via:
 POST /api/v1/auth/verify
 ```
 
-on first use, so you only need to pass the API key:
+on first use, so you only need to export the key as an environment
+variable:
 
-```python title="app.py"
-import nullrun
-nullrun.init(api_key="nr_live_...")
+```bash title="shell"
+export NULLRUN_API_KEY=nr_live_...
 ```
 
-The public `init()` surface takes `api_key` (and optionally `api_url`,
-`debug`). The HMAC secret is **not** a constructor argument — it is
-read from `NULLRUN_SECRET_KEY` or returned by `/api/v1/auth/verify`.
+The SDK reads `NULLRUN_API_KEY` on the first `@protect` call. The HMAC
+secret is **not** a constructor argument — it is read from
+`NULLRUN_SECRET_KEY` or returned by `/api/v1/auth/verify`.
+
+> **Explicit `init()` / `init_or_die()`.** The first `@protect` call
+> creates the runtime lazily from `NULLRUN_API_KEY`. Call `init()`
+> directly when you want fail-fast on a missing key before the first
+> gate call (CI / smoke tests), or to bind an API key from a non-env
+> source. See [Reference → init / init_or_die](../reference/sdk-api.md#init--init_or_die-optional-early-fail-fast)
+> for the contract.
 
 For env-var setup (`NULLRUN_API_KEY`, `NULLRUN_SECRET_KEY`, and other
 runtime flags), see [Configuration](configuration.md).
 
 ## Auto-instrumentation
 
-`nullrun.init()` patches the underlying HTTP transport (`httpx`) and
-the agent framework modules it can detect in `sys.modules`:
+The SDK's auto-instrumentation runs **lazily on the first protected
+execution path**, not at import time or in any pre-`@protect` hook.
+The lazy trigger creates the runtime, reads `NULLRUN_API_KEY`, installs
+the HTTP instrumentation, and attaches every framework / transport
+hook it can detect in `sys.modules` in a single process-wide
+idempotent step.
 
 | Detected | Coverage |
 | --- | --- |
-| `openai` ≥ 1.0 | HTTP transport hook |
-| `openai-agents` | Agent framework hook |
-| `anthropic` | HTTP transport hook |
-| `langgraph` | Graph runtime hook (`invoke` / `stream` / `ainvoke` / `astream`) |
-| `langchain` | Callback manager hook |
+| `openai` ≥ 1.0 | HTTP transport hook (httpx) |
+| `openai-agents` | Agent framework hook (`Runner.run` / `run_streamed`) |
+| `anthropic` | HTTP transport hook (httpx) |
+| `langgraph` | Graph runtime hook (`Pregel.invoke` / `stream` / `ainvoke` / `astream`) |
+| `langchain` | Callback manager hook (`BaseCallbackManager`) |
 | `llama-index` | LlamaIndex tool/agent hook |
 | `crewai` | CrewAI EventBus bridge (1.15+) |
 | `autogen` | AutoGen agent runtime hook |
-| `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock) | per-vendor extractors |
+| `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock) | per-vendor URL-keyed extractors |
 
 The Gemini vendor extra is `google-genai` (the actively maintained
 package, ≥ 1.0); the older `google.generativeai` package is **not**
-supported. Install with `pip install "nullrun[gemini]"`.
+supported.
 
 In every case the call is cost-tracked automatically — `@protect` is
 not required for tracking. `@protect` is the **gate** layer (budget
 pre-flight + kill/pause + sensitive-tool decision).
 
+### Zero-activity diagnostic
+
+If `@protect` fires 50+ times without the runtime observing a single
+`track_llm` event (i.e. your code path never reaches an LLM call, or
+auto-instrumentation never attached), the SDK logs **one WARNING**
+naming the three most likely root causes — no spam, warn-once.
+
 ## Optional extras
 
-| Extra | Installs |
-| --- | --- |
-| `nullrun[opentelemetry]` | `opentelemetry-api`, `opentelemetry-sdk` |
-| `nullrun[langgraph]` | `langgraph` |
-| `nullrun[openai]` | `openai` |
-| `nullrun[anthropic]` | `anthropic` |
-| `nullrun[mistral]` | `mistralai` |
-| `nullrun[gemini]` | `google-genai` |
-| `nullrun[cohere]` | `cohere` |
-| `nullrun[bedrock]` | `boto3` |
-| `nullrun[agents]` | `openai-agents` |
-| `nullrun[langchain]` | `langchain-core` |
-| `nullrun[llama-index]` | `llama-index-core` |
-| `nullrun[crewai]` | `crewai` |
-| `nullrun[autogen]` | `autogen-agentchat`, `autogen-ext[openai]` |
-| `nullrun[fastapi]` | `fastapi`, `starlette`, `httpx` (server-framework integration) |
-| `nullrun[opentelemetry]` | `opentelemetry-api`, `opentelemetry-sdk` |
-| `nullrun[all]` | every vendor extra |
+The plain `pip install nullrun` package covers every LLM provider
+(OpenAI, Anthropic, Mistral, Gemini, Cohere, Bedrock) via URL-keyed
+httpx extractors — those vendor SDKs are **never imported** by
+NullRun. The extras below are only needed when NullRun has to call
+into the vendor package directly (framework hooks, not HTTP hooks).
+
+| Extra | Installs | When you need it |
+| --- | --- | --- |
+| `nullrun[agents]` | `openai-agents` | OpenAI Agents SDK framework hook |
+| `nullrun[crewai]` | `crewai` | CrewAI EventBus bridge |
+| `nullrun[langgraph]` | `langgraph` | LangGraph Pregel runtime hook |
+| `nullrun[llama-index]` | `llama-index-core` | LlamaIndex dispatcher hook |
+| `nullrun[autogen]` | `autogen-agentchat`, `autogen-ext[openai]` | AutoGen runtime hook |
+| `nullrun[langchain]` | `langchain-core` | LangChain callback manager hook |
+| `nullrun[opentelemetry]` | `opentelemetry-api`, `opentelemetry-sdk` | OTel span export |
+| `nullrun[fastapi]` | `fastapi`, `starlette`, `httpx` | Server-framework integration |
 
 ```bash title="shell"
 pip install "nullrun[langgraph]"
-pip install "nullrun[all]"
+pip install "nullrun[crewai]"
 ```
 
-> Note: `nullrun[openai]` is for the raw `openai` SDK — it is **not**
-> the OpenAI Agents SDK. For agents use `nullrun[agents]`.
+> **Deprecated extras (kept for back-compat, no longer required):**
+> `nullrun[openai]`, `nullrun[anthropic]`, `nullrun[mistral]`,
+> `nullrun[gemini]`, `nullrun[cohere]`, `nullrun[bedrock]`. The SDK
+> never imported those vendor packages for the HTTP-level path; the
+> extras are now no-ops. URL-keyed httpx extractors cover all six
+> without any vendor install.
 
 
 ---
@@ -690,15 +720,13 @@ behaviour, and let NullRun halt it when it goes off the rails.
 
 ```python title="app.py"
 from openai import OpenAI
-from nullrun import init_or_die, guarded, protect, workflow, shutdown
+from nullrun import protect, workflow, shutdown
 
-init_or_die(api_key="nr_live_...")        # exits cleanly if api_key missing
 client = OpenAI()
 
 with workflow("my-first-agent"):       # scopes the gate to a workflow
-    @guarded                           # catches NullRunError, prints
-    @protect                           # the catalog user-message,
-    def answer(prompt: str) -> str:    # sys.exit(1) — zero boilerplate
+    @protect                           # gates every call via /check;
+    def answer(prompt: str) -> str:    # lazy-creates the runtime on first call
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
@@ -707,10 +735,22 @@ with workflow("my-first-agent"):       # scopes the gate to a workflow
 
 if __name__ == "__main__":
     try:
-        print(answer("What does NullRun do?"))
+        with nullrun.handle():        # catches NullRunError, prints the
+            print(answer("What does NullRun do?"))
+            # structured 4-line developer report on failure, then sys.exit(1)
     finally:
         shutdown()
 ```
+
+> **First `@protect` call builds the runtime.** It reads
+> `NULLRUN_API_KEY`, installs the HTTP instrumentation hook, and attaches
+> every importable framework hook in a single idempotent step. If the
+> API key is missing at that point, the SDK raises `NullRunConfigError`
+> (NR-C001) at the first gate call.
+
+> **`@protect` is the entry point.** For early fail-fast (CI / smoke
+> tests) before the first `@protect` call, see [Reference → init /
+> init_or_die](../reference/sdk-api.md#init--init_or_die-optional-early-fail-fast).
 
 > The `with workflow("..."):` block binds every `@protect` call inside
 > to a named workflow — required, otherwise the SDK falls back to an
@@ -720,8 +760,9 @@ if __name__ == "__main__":
 
 Every call inside `answer()` is cost-attributed and governed by your
 workspace policy. On any policy outcome (budget cap, tool block, rate
-limit, transport outage), `@guarded` prints the catalog wording on
-stderr and exits `1`.
+limit, transport outage), `with nullrun.handle():` prints the structured
+four-line developer report (`error_code` + what + where + why +
+how to fix) and exits `1`.
 
 ## What gets tracked
 
@@ -745,6 +786,7 @@ see [Concepts → Error handling](../concepts/error-handling.md).
 - [How-to → Set a hard cost cap](../how-to/cost-cap.md)
 - [How-to → Use with LangGraph](../how-to/langgraph.md)
 
+
 ---
 
 # Source: https://docs.nullrun.io/getting-started/configuration/
@@ -757,20 +799,22 @@ description: Every NullRun SDK environment variable, transport option, and fail-
 
 # Configuration
 
-NullRun reads configuration from environment variables. `nullrun.init()`
-only needs the API key — everything else has sensible defaults.
+NullRun reads configuration from environment variables. The runtime
+is created lazily on the first protected execution. Only
+`NULLRUN_API_KEY` is required; everything else has sensible defaults.
 
-Variables are read by the Python SDK process. The gateway is operated
-by the NullRun team and exposes no user-facing runtime flags.
+Variables are read by the Python SDK process on the first `@protect`
+call. The gateway is operated by the NullRun team and exposes no
+user-facing runtime flags.
 
 ## SDK env vars
 
-Read by `nullrun.init` and the SDK transport. None of these affect the
-gateway.
+Read by the SDK transport when the runtime is created on the first
+`@protect` call. None of these affect the gateway.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `NULLRUN_API_KEY` | unset (required) | API key from the NullRun dashboard (`nr_live_...`). Missing at `init()` raises `NullRunAuthenticationError` (NR-C001). |
+| `NULLRUN_API_KEY` | unset (required) | API key from the NullRun dashboard (`nr_live_...`). Missing at the first `@protect` call (lazy init) raises `NullRunConfigError` (NR-C001). |
 | `NULLRUN_API_URL` | `https://api.nullrun.io` | Gateway REST base URL. The WebSocket control plane URL is derived from this as `wss://<api-host>/ws/control/{org_id}` — `{org_id}` is the `organization_id` returned by `POST /api/v1/auth/verify`, and is **not** a separate env var. |
 | `NULLRUN_SECRET_KEY` | unset | HMAC-SHA256 signing secret. The SDK signs every request automatically when this is set. |
 | `NULLRUN_ENV` | unset | Environment tag (`production` / `staging` / ...). |
@@ -793,7 +837,7 @@ gateway.
 | --- | --- | --- |
 | `NULLRUN_SKIP_BUDGET_CHECK=1` | Fully bypasses the gate on every `@protect` call in the process. **For local SDK development and CI only** — do not export in production environments. Production with this flag set silently skips every policy check. | Local SDK experiments, integration tests where you want to verify business logic without gate noise. |
 | `NULLRUN_ALLOW_SKIP_BUDGET_CHECK=1` | Acknowledges the previous flag in CI logs so an audit reviewer can see the bypass was deliberate. Has no effect by itself; safe to set alongside the previous flag in CI. | CI pipelines that intentionally skip the gate. |
-| `NULLRUN_SENSITIVE_FAIL_OPEN=1` | Returns a permissive result instead of failing-CLOSED when a sensitive-tool transport error blocks the gate call. | Legacy environments without a working transport for sensitive-tool lookups — modern installs should leave this unset. |
+| `NULLRUN_SENSITIVE_FAIL_OPEN=1` | Returns a permissive result instead of failing-CLOSED when a sensitive-tool transport error blocks the gate call. | Environments without a working transport for sensitive-tool lookups — modern installs should leave this unset. |
 
 If a CI test "passes only with `NULLRUN_SKIP_BUDGET_CHECK=1`" that's a
 signal the gate is blocking what it should not — fix the gate, not
@@ -887,9 +931,10 @@ explicitly. See [Error handling → Kill signal](../concepts/error-handling.md#k
 for the recommended handler shape.
 
 If you use the zero-boilerplate helpers from the SDK, you don't have
-to write any of this — `@guarded` catches the standard exceptions
-(including the kill signal), prints the catalog wording, and exits 1.
-To handle kill distinctly, use the un-`@guarded` `protect()` form.
+to write any of this — `with nullrun.handle():` catches the standard
+exceptions (including the kill signal), prints the structured
+four-line developer report, and exits 1. To handle kill distinctly,
+use the un-`@guarded` `protect()` form.
 
 ## When the gateway is unreachable
 
@@ -945,8 +990,7 @@ next reset.
 ### "I want to test my agent without the breaker tripping"
 
 Use a **separate workflow** with its own (low or zero) budget. Don't
-disable the gate — bypassing it is a dev/test opt-out that the SDK
-flags with a `RuntimeWarning`.
+disable the gate — bypassing it is a dev/test opt-out.
 
 ## See also
 
@@ -1020,7 +1064,7 @@ NullRun has two period sources:
 
 | Plan | Period source | When it resets |
 |---|---|---|
-| **Lite** (free) | Calendar month UTC | 1st of each month at 00:00 UTC |
+| **Lite** (free) | Rolling 1-month window anchored at `organizations.created_at` | One month after signup (e.g. signed up Jun 15 → resets Jul 15, Aug 15, …) |
 | **Paid** (Starter / Growth / Scale) | Your billing cycle (Polar subscription) | Set when you subscribed; on renewal |
 
 The dashboard shows the period start and end dates next to the
@@ -1039,7 +1083,7 @@ Spending → $49.95 of $50.00
 Next @protect call:        #2.00 projected
 gate decision:             block
 SDK raises:                 NullRunBudgetError (NR-B004)
-@guarded:                   prints friendly message, sys.exit(1)
+with nullrun.handle():     prints the 4-line dev report, sys.exit(1)
 ```
 <figcaption>Hard mode — the projected cost of the next call exceeds the remaining budget. The gate returns `block` before the model runs.</figcaption>
 
@@ -1150,7 +1194,7 @@ unavailable", never as `≈ $0 spent`.
 
 title: Sensitive tools
 maturity: stable
-description: The `@protect` decorator auto-attaches a default tool_params extractor so every protected tool is eligible for ToolParameters Approval Rules. The `@sensitive(impact=...)` factory form is the advanced API for typed BusinessImpact + digest-bound approval. Bare `@sensitive` is deprecated in SDK 0.18.1.
+description: The `@protect` decorator auto-attaches a default tool_params extractor so every protected tool is eligible for ToolParameters Approval Rules. The `@sensitive(impact=...)` factory form stamps a typed BusinessImpact + digest-bound approval.
 # Sensitive tools
 
 A **sensitive tool** is one that should never run without a human
@@ -1163,22 +1207,32 @@ the gate at `/gate` evaluation time, regardless of the SDK's local
 context. This page covers the *recommended* patterns and how to wire
 them.
 
-!!! info "`@sensitive` vs `ToolBlock`"
+!!! info "The canonical entry point is `@protect`"
+    Every protected tool is automatically eligible for ToolParameters
+    Approval Rules — `@protect` stamps a default
+    `ToolParamsExtractor(include_all=True)` so the kwargs of every
+    call reach the gate without any second decorator. The
+    `@sensitive(impact=...)` factory form stamps a typed
+    `BusinessImpact` + digest-bound approval flow.
+
+!!! info "`@sensitive(impact=...)` vs `ToolBlock`"
     Two distinct mechanisms, often confused:
 
-    - **`@sensitive` (SDK-side)** — a parameterless decorator that
-      marks a function so its kwargs are extracted into the
-      `BusinessImpact` predicate bag. Used with **approval rules**
-      that evaluate a typed predicate. Affects the SDK only; the
-      gate still has the final say.
+    - **`@sensitive(impact=...)` (SDK-side)** — a factory decorator
+      that stamps a typed `BusinessImpact` extractor on the
+      function. Used with **approval rules** that evaluate a typed
+      predicate (`money_amount` / `tool_parameters`) + the SHA-256
+      `action_digest` for tamper-proof approval. Affects the SDK
+      only; the gate still has the final say.
     - **`ToolBlock` (server-side)** — a policy rule evaluated by
       the gate on every `/gate` call. The gate fails-CLOSED if it
       cannot reach Redis or the policy cache to evaluate. This is
       the canonical "this tool is forbidden" mechanism.
 
-    Use `@sensitive` when you want a typed `BusinessImpact` approval
-    flow (e.g. "refunds over $500 need approval"). Use `ToolBlock`
-    when you want a hard rule ("never call `bash`").
+    Use `@sensitive(impact=...)` when you want a typed
+    `BusinessImpact` approval flow (e.g. "refunds over $500 need
+    approval"). Use `ToolBlock` when you want a hard rule ("never
+    call `bash`").
 
 ## What a sensitive tool is, in policy terms
 
@@ -1187,17 +1241,27 @@ enforcement decision is evaluated by the gate on every `/gate` call,
 so you can't accidentally miss a tool you didn't register locally.
 You express "sensitive" with one of two complementary mechanisms:
 
-- **`@sensitive` (SDK-side)** — marks a function so its kwargs flow
-  into the `BusinessImpact` predicate bag used by approval rules
-  (typed `money_amount` / `tool_parameters`). Use this when you want
-  a typed predicate — e.g. "refunds over $500 need approval".
+- **`@protect` (SDK-side, canonical)** — auto-attaches a default
+  `ToolParamsExtractor(include_all=True)` so the kwargs of every
+  call flow into the `BusinessImpact` predicate bag used by
+  ToolParameters approval rules (free-form typed predicates — no
+  argument renaming, every kwarg flows through). Use this when you
+  want a free-form predicate — e.g. "the `uid` parameter must equal
+  `42`".
+- **`@protect @sensitive(impact=...)` (SDK-side)** — stamps a
+  typed `BusinessImpact` extractor (`money_outflow(...)` or
+  `tool_params({...})`) so the gate evaluates a typed predicate
+  (`money_amount` / `tool_parameters`) and the SHA-256
+  `action_digest` for digest-bound approval flow. Use this when you
+  want the typed predicate — e.g. "refunds over $500 need
+  approval".
 - **`ToolBlock` (server-side)** — a policy rule evaluated by the
   gate. The gate fails-CLOSED if it cannot reach Redis or the policy
   cache to evaluate. Use this for hard rules — "never call `bash`".
 
 For the typed predicate wiring, see
-[Decorators & extractors → `money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact)
-and [`tool_params(...)`](../reference/decorators.md#tool_params-free-form-argument-bag).
+[Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-advanced-api-for-typed-impact-digest)
+and [`money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact).
 
 Recommended starter patterns (see
 [Tool catalog → Recommended ToolBlock starter list](../reference/llm-tool-catalog.md#recommended-toolblock-starter-list)
@@ -1293,10 +1357,10 @@ is bound to the exact action payload the SDK sent on `/gate`. See
 
 ## See also
 
-- [Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-the-per-tool-policy-marker)
-  — the two `@sensitive` forms (bare + factory), the
+- [Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-typed-impact-digest)
+  — the `@sensitive(impact=...)` factory form, the
   `money_outflow(...)` / `tool_params(...)` impact extractors, and
-  the `_nullrun_extractor` contract that ties them to `/execute`
+  the `_nullrun_extractor` contract that ties them to `/execute`.
 - [Tool policies](tool-policies.md) — the actual rule structure
 - [Tool catalog](../reference/llm-tool-catalog.md) — recommended
   patterns with risk ratings
@@ -1387,8 +1451,8 @@ You'll land on the new workflow's detail page. From there:
 - **Mint an API key** under the **API keys** tab. The key value
   (`nr_live_...`) is shown **once** — copy it into your secret
   manager immediately.
-- **Point your SDK at it**: `nullrun.init(api_key=...)` picks up
-  the key; the workflow binding happens server-side.
+- **Point your SDK at it**: export `NULLRUN_API_KEY` and the workflow
+  binding happens server-side.
 
 ## How to control one
 
@@ -1598,6 +1662,12 @@ After the retention window expires, the trace is removed from the
 dashboard; the aggregated cost information stays (it's summarised
 per workflow per period).
 
+The retention window is independent of the trace *generation* caps
+— Lite also throttles to **10 000 tokens/hour** and **75 000
+executions/month** (see [Billing & Plan → Per-tier caps](billing.md#per-tier-caps)),
+so a Lite workflow's traces stop accumulating well before the 3-day
+window applies.
+
 If you need longer retention for compliance, you can export traces
 from the dashboard as JSON via the **Export** button on the
 Executions page. The exported shape matches the wire format.
@@ -1641,8 +1711,9 @@ When you're debugging a production issue, traces answer:
 
 ### "My trace shows nothing"
 
-If `init()` was never called or the API key is missing, the SDK
-runs in error mode and no spans are recorded. Check the SDK logs for
+If the runtime was never created (the first `@protect` call never
+fired) or the API key is missing, the SDK runs in error mode and no
+spans are recorded. Check the SDK logs for
 `NullRunAuthenticationError`.
 
 ### "My trace is incomplete — only some spans show up"
@@ -1709,7 +1780,7 @@ exception at the next yield boundary inside the agent's loop.
 ## How the signal reaches your SDK
 
 The dashboard pushes signals over a WebSocket connection that the SDK
-opens automatically when `init()` runs. The connection is
+opens automatically on the first `@protect` call. The connection is
 authenticated with the same API key the SDK uses for `/gate` and
 `/track`, plus HMAC signature verification.
 
@@ -1723,8 +1794,8 @@ arrive on the next gate or yield boundary.
 The control-plane transport is auto-negotiated by the SDK — WS push
 in production traffic with HTTP-polling fallback when the WS
 connection drops repeatedly. You don't need to opt in or pass any
-flag to `init()`; the SDK handles both transports internally.
-For most agents this is invisible: `init()` opens the WS, and the
+flag; the SDK handles both transports internally. For most agents
+this is invisible: the first `@protect` call opens the WS, and the
 gateway's Pause / Kill / `approval_resolved` signals arrive in
 real time without any further setup.
 
@@ -1750,10 +1821,11 @@ except WorkflowPausedException:
     raise
 ```
 
-Both signals inherit from `NullRunError`, so `@guarded` catches both
-(prints catalog wording, exits 1). To handle kill distinctly —
-checkpoint state, notify a supervisor, then exit — wrap the
-un-`@guarded` call in your own try/except. See
+Both signals inherit from `NullRunError`, so `with nullrun.handle():`
+catches both (prints the structured four-line developer report, exits
+1). To handle kill distinctly — checkpoint state, notify a
+supervisor, then exit — wrap the un-`handle()` call in your own
+try/except. See
 [Error handling → Kill signal](../concepts/error-handling.md#kill-signal)
 for the recommended handler shape.
 
@@ -1856,6 +1928,12 @@ counter at the top of the page (`N / <plan-cap>`) tells you how many
 keys your org has versus your plan's cap. The page shows every key
 with its name, workflow, last-used timestamp, and expiration date.
 
+Per-plan key cap: Lite = 10, Starter = 15, Growth = 100,
+Scale = 350, Enterprise = unlimited (see
+[Billing & Plan → Per-tier caps](billing.md#per-tier-caps)). The
+cap is enforced server-side — the create handler rejects with
+`plan_limit_exceeded` once you hit it.
+
 ## The mental model
 
 Each workflow needs at least one API key to run. The key is what the
@@ -1936,16 +2014,9 @@ gateway verifies every request came from a holder of the secret.
 In production deployments, HMAC is required. Without it, every SDK
 request returns 401.
 
-You can pass the API key directly to `init()`:
-
-```python
-import nullrun
-from nullrun import init
-
-init(api_key="nr_live_xxx...")
-```
-
-Or set it via environment variable before the SDK starts:
+The runtime is created lazily on the first `@protect` call from
+`NULLRUN_API_KEY`. Set `NULLRUN_API_KEY` (and `NULLRUN_SECRET_KEY`
+for HMAC) in the environment before the first protected call runs:
 
 ```bash title="env"
 export NULLRUN_API_KEY=nr_live_xxx...
@@ -1953,8 +2024,7 @@ python my_agent.py
 ```
 
 The HMAC secret is read from `NULLRUN_SECRET_KEY` in the
-environment. It cannot be passed to `init()` — you set it once per
-process.
+environment. It is set once per process.
 
 ## Scopes
 
@@ -2390,6 +2460,22 @@ The dashboard rejects invalid patterns at save time:
 on **Growth+** plans. Lite and Starter can have `BudgetLimit` and
 `RateLimit` policies, but not ToolBlock.
 
+**Approval rules** (separate from ToolBlock) are gated by the
+`approvals` plan feature. The per-tier cap matches:
+
+| Plan | Approval rules allowed | Why |
+|---|---|---|
+| Lite | 0 | `approvals` feature disabled |
+| Starter | 0 | `approvals` feature disabled (server-side invariant: `approval_rules > 0 ⇒ approvals == true`) |
+| Growth | 20 | `approvals` enabled |
+| Scale | unlimited | `approvals` enabled, no cap |
+| Enterprise | unlimited | `approvals` enabled, no cap |
+
+The gate enforces `approval_rules = 0` server-side on Lite and
+Starter — even if you mint a key on a higher tier and downgrade,
+existing rules are kept (for audit) but no new rule can be created
+until the plan is upgraded back.
+
 On Lite / Starter, the dashboard shows ToolBlock policy creation
 greyed out with an "Upgrade" link.
 
@@ -2504,10 +2590,13 @@ Two predicate kinds are supported on `action_predicate`:
 
 The `tool_parameters` predicate rides on the SDK's
 `ToolParamsExtractor`. With the default `include_all=True` mode,
-every kwarg of `@sensitive`-decorated functions flows into the
+every kwarg of `@protect`-decorated functions flows into the
 predicate bag (positional args are dropped; `f64` / set / custom
 objects are filtered; PII-masked sentinels like `"***"` for
 `password` / `token` / `api_key` keys are stripped before wire).
+`@protect` auto-attaches the default extractor, so no second
+decorator is needed to make a tool eligible for `tool_parameters`
+rules.
 
 ## `action_digest` — tamper-evident binding
 
@@ -2685,8 +2774,8 @@ arguments).
 ## SDK-side extraction
 
 The `action_digest` is **produced** by the SDK at extraction time.
-For the Python SDK, this happens inside `@sensitive` when you
-attach an `impact=` extractor — see
+For the Python SDK, this happens inside `@sensitive(impact=...)`
+when you attach a typed `BusinessImpact` extractor — see
 [Decorators & extractors → `money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact)
 and [Decorators & extractors → `tool_params(...)`](../reference/decorators.md#tool_params-free-form-argument-bag).
 
@@ -2905,7 +2994,7 @@ the work — you pick how much of each layer to use.
     | Your code | `except NullRunInfrastructureError` | Transport / 5xx / auth / config failures |
     | Your code | `except NullRunWorkflowKilledError` (or `WorkflowKilledInterrupt`) | Operator kill — terminal; caught by `except Exception:`, handle explicitly if you need to checkpoint before exit |
     | Your monitoring | `@nullrun.on_error` hook | Every `NullRunError`, fired before propagation |
-    | Your end user | `@guarded` / `format_user_message` | Friendly text from the catalog |
+    | Your end user | `with nullrun.handle():` / `format_user_message` | Friendly text from the catalog |
 
 ## Where errors appear in the dashboard
 
@@ -2933,7 +3022,7 @@ right thing?". Pair it with [Traces](tracing.md) for full context.
 |---|---|---|---|
 | **1. Structured exception** | Your Python code | Exception type, error code, what to do next | Your code decides: retry, fail, surface to UI |
 | **2. `on_error` hook** | Sentry / Datadog / logs | Same exception + context (workflow, tool, stage) | Observability: you see every error in your existing dashboards |
-| **3. `@guarded` / `format_user_message`** | End user | One friendly sentence from a catalog | The user gets a clean message, not a stack trace |
+| **3. `with nullrun.handle():` / `format_user_message`** | End user | One friendly sentence from a catalog | The user gets a clean message, not a stack trace |
 
 The SDK ships all three. You decide how much to use.
 
@@ -3041,17 +3130,15 @@ kill signal** (`WorkflowKilledInterrupt` and its typed alias
 `NullRunWorkflowKilledError`). If you want to skip kill inside the
 hook, filter on `error_code` (`"NR-W002"`).
 
-## Layer 3 — `@guarded` and `format_user_message`
+## Layer 3 — `with nullrun.handle():` and `format_user_message`
 
 For scripts that just want "run the agent and print a friendly
-message on failure", use the zero-boilerplate helpers:
+message on failure", use the no-boilerplate helpers. The first
+`@protect` call lazily creates the runtime:
 
 ```python
-from nullrun import init_or_die, guarded, protect, shutdown
+from nullrun import protect, shutdown
 
-init_or_die()
-
-@guarded
 @protect
 def my_agent(prompt):
     return call_llm(prompt)
@@ -3059,37 +3146,50 @@ def my_agent(prompt):
 
 if __name__ == "__main__":
     try:
-        print(my_agent("What does NullRun do?"))
+        with nullrun.handle():
+            print(my_agent("What does NullRun do?"))
     finally:
         shutdown()
 ```
 
-What your terminal looks like on a rate-limit hit:
+What your terminal looks like on a rate-limit hit. `handle()` prints
+the structured four-line developer report (catalog headline +
+`[error_code]` + `what` + `where` + `why` + `how to fix`):
 
 ```
 $ python my_agent.py
 Too many requests. Please wait a moment and try again.
+  [NR-R001] what: rate limit (retryable)
+           where: endpoint=gate status=429 source=GATEWAY_ERROR
+           why: Per-workflow rate limit exceeded; retry after 30s.
+           how to fix: Wait 30s, then retry the call.
 $ echo $?
 1
 ```
 
-`@guarded` catches every `NullRunError` — which now includes the
-kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`
-both inherit from `NullRunError`) — prints the catalog wording to
-stderr, and exits with code 1. To handle kill distinctly (for
-example, checkpoint state before exit), use the un-`@guarded`
-`protect()` form and add your own `except NullRunWorkflowKilledError:`
-arm.
+`with nullrun.handle():` catches every `NullRunError` — which now
+includes the kill signal (`WorkflowKilledInterrupt` /
+`NullRunWorkflowKilledError` both inherit from `NullRunError`) —
+prints the structured report to stderr, and exits with code 1. To
+handle kill distinctly (for example, checkpoint state before exit),
+use the un-`handle()` form and add your own
+`except NullRunWorkflowKilledError:` arm.
 
-`@guarded` is for scripts and one-shots. For long-running services
-you want explicit handling — see [Server frameworks](#server-frameworks)
-below.
+`handle()` is the recommended form: it gives a clearer scope,
+accepts an `exit_code` argument, and the four-line report is what it
+always renders. `@guarded` is the decorator equivalent of the same
+behaviour.
+
+`handle()` / `guarded()` are for scripts and one-shots. For
+long-running services you want explicit handling — see
+[Server frameworks](#server-frameworks) below.
 
 ### Branded wording
 
 If you want your own error messages (e.g. "You've used all your
 support credits" instead of the default wording), call
-`set_user_message` once at startup:
+`set_user_message` once at the top of your entry point (or register
+it via `atexit`):
 
 ```python
 import nullrun
@@ -3106,9 +3206,10 @@ sugar on top of the catalog.
 
 ## Server frameworks
 
-For FastAPI / aiohttp / Flask / Django, you don't want `@guarded`
-(it's a CLI helper). Instead, catch the exception in your request
-handler and return an appropriate HTTP status:
+For FastAPI / aiohttp / Flask / Django, you don't want `handle()`
+(it exits the process). Instead,
+catch the exception in your request handler and return an appropriate
+HTTP status:
 
 ```python
 from nullrun import NullRunError
@@ -3189,11 +3290,11 @@ except NullRunError:
     log.error("agent failed", exc_info=True)
 ```
 
-`@guarded` catches kill via the standard `NullRunError` arm — it
-prints the catalog wording and exits 1. To keep the process alive
-on kill (checkpoint, notify a supervisor, then exit), use the
-un-`@guarded` `protect()` form with your own
-`except NullRunWorkflowKilledError:` arm above.
+`handle()` / `@guarded` catches kill via the standard `NullRunError`
+arm — it prints the structured four-line report and exits 1. To keep
+the process alive on kill (checkpoint, notify a supervisor, then
+exit), use the un-`@guarded` / un-`handle()` `protect()` form with
+your own `except NullRunWorkflowKilledError:` arm above.
 
 ## See also
 
@@ -3707,8 +3808,11 @@ Default landing. The header reads **Billing** with the subtitle
 
 The hero card surfaces:
 
-- **Plan name + price** (e.g. `Starter · $49/mo · Renews Sep 30`).
-- **Status pill** — `Active` / `Trialing` / `Past due`.
+- **Plan name + price** (e.g. `Starter · $29/mo · Renews Sep 30`).
+- **Status pill** — `Active` / `Past due` / `Cancelled` / `Expired`
+  (4-state machine; `Trialing` was removed — paid plans go straight
+  to `Active` after Polar checkout; Lite is free forever with no
+  trial).
 - **Manage subscription** button (opens the customer portal — see
   the migration note below).
 - **Update payment method** button.
@@ -3734,9 +3838,11 @@ Below the hero:
 
 ### Lite orgs
 
-Lite is the free tier — there is no `billing_subscriptions` row.
-The hero reads `$0/mo · Free tier` and the payment-method /
-invoices sections collapse.
+Lite is the free tier — there is no active `billing_subscriptions`
+row (a row in `Cancelled` or `Expired` status is also treated as
+Lite: no Polar anchor, no live payment method). The hero reads
+`$0/mo · Free tier` and the payment-method / invoices sections
+collapse.
 
 ## The Plan tab
 
@@ -3747,11 +3853,14 @@ availability."
 The tab surfaces:
 
 - **Quota usage cards** — every plan cap (workflows, policies,
-  api_keys, seats, executions) with `used / limit` and a
-  percentage. The executions card surfaces
-  `executions_period_kind` so the operator knows whether the reset
-  is **calendar_month UTC** (Lite) or the **Polar billing-cycle
-  anchor** (paid plans) or the **lite_rolling_period**.
+  api_keys, seats, executions, tokens/hour, requests/second,
+  approval rules) with `used / limit` and a percentage. The
+  executions card surfaces `executions_period_kind` so the operator
+  knows whether the reset is the **Lite rolling 1-month window**
+  anchored at `organizations.created_at` (Lite) or the **Polar
+  billing-cycle anchor** (paid plans). `calendar_month` only
+  appears as a Postgres-failure fallback when the org-row lookup
+  fails.
 - **At-risk banner** — when `quota.at_risk` is true, the page
   renders a callout with the projected hit date
   (`projected_hit_in_days`) and a CTA to upgrade.
@@ -3761,6 +3870,27 @@ The tab surfaces:
   and disabled.
 - **Per-tier feature-gate panel** — a tighter view of which
   features are on/off at the current plan, with upgrade CTAs.
+
+### Per-tier caps
+
+Canonical cap values per plan (from the `plans` table — single
+source of truth, surfaced via `GET /api/v1/plans`):
+
+| Cap | Lite | Starter | Growth | Scale | Enterprise |
+|---|---|---|---|---|---|
+| Workflows | 3 | 8 | 50 | 200 | unlimited |
+| API keys | 10 | 15 | 100 | 350 | unlimited |
+| Seats | 1 | 3 | 10 | 75 | unlimited |
+| Policies | 3 | 10 | 25 | 150 | unlimited |
+| Approval rules | 0 | 0 | 20 | unlimited | unlimited |
+| Tokens / hour | 10 000 | 25 000 | 300 000 | unlimited | unlimited |
+| Executions / month | 75 000 | 100 000 | 750 000 | 2 000 000 | unlimited |
+| Requests / second | 5 | 10 | 50 | 300 | 1 000 |
+
+Lite has the `team` and `approvals` features disabled; Starter
+unlocks cloud sync, alerts, and advanced metrics; Growth unlocks
+team, approvals, audit log, replay, custom policies; Scale adds
+SSO and VPC; Enterprise removes every cap.
 
 The catalog comes from `GET /api/v1/plans`, which is
 unauthenticated and lives outside the `createApiClient` factory,
@@ -3772,7 +3902,19 @@ tabs.
 Above the comparison table, a `BillingPeriodToggle` switches
 between **Monthly** and **Yearly** price columns. The yearly
 column is computed via `computeYearlyPriceCents` so the discount
-matches the public pricing page.
+matches the public pricing page. The wire string for the yearly
+period is `"year"` (not `"yearly"`) — `BillingPeriod::Yearly.as_str()`
+returns the short form to match the frontend
+`BillingData.billing_cycle: "monthly" | "year"` type.
+
+!!! note "Plan IDs on the wire"
+    The canonical id for Enterprise is `"enterprise_unlimited"`.
+    The legacy `"enterprise"` string was reclaimed by the database
+    migration that consolidated Scale and Enterprise (the legacy
+    id now carries Scale content). `GET /api/v1/plans` returns the
+    canonical id; the dashboard renders it as the **Enterprise**
+    plan name. If you query the catalog by id, use
+    `enterprise_unlimited`.
 
 ## Auto-checkout (post-signup)
 
@@ -3820,7 +3962,7 @@ The **Team** page is the org-membership surface. It lists every
 member and every pending invite, surfaces the per-role capability
 matrix, and lets owners + admins invite or remove people. It lives
 at `/control-center/team` in the sidebar under **Access** and is
-gated by the `team` plan feature (Starter and above).
+gated by the `team` plan feature (Growth and above).
 
 ## Roles and what each can do
 
@@ -3986,7 +4128,7 @@ page stays interactive.
 The page does not host the members table itself — the link in
 the team section takes the operator to the **Team** page
 (`/control-center/team`) under **Access**. Plan-gated to
-Starter+.
+Growth+.
 
 ## Delete organization (irreversible)
 
@@ -4175,27 +4317,24 @@ description: Auto-instrument a LangGraph agent with @protect, or wrap nodes manu
 
 # Protect a LangGraph agent
 
-Install with the LangGraph extra:
+The SDK auto-patches LangGraph on the **first `@protect` call** —
+no manual wrapper needed for the common case.
 
 ```bash title="shell"
 pip install "nullrun[langgraph]" langgraph langchain-openai
 ```
 
-`nullrun.init()` auto-instruments LangGraph — it attaches the
-NullRun callback to any compiled graph once `init()` runs. **No
-manual callback wiring needed** (the legacy direct-import path still
-works but is discouraged).
-
 ```python title="langgraph_agent.py"
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, MessagesState, StateGraph
 
-from nullrun import init
+from nullrun import protect
 
-init(api_key="nr_live_...")
-
+# The runtime + LangGraph Pregel hook are attached lazily on
+# the first @protect call.
 llm = ChatOpenAI(model="gpt-4o-mini")
 
+@protect
 def chat(state: MessagesState):
     return {"messages": [llm.invoke(state["messages"])]}
 
@@ -4214,23 +4353,25 @@ Every LLM call inside the graph is now cost-attributed and gated by
 your workspace policy. The same auto-instrumentation path works for
 any LangChain `Runnable` and most LangGraph node types.
 
-## Manual wrapper (advanced)
+## Manual wrapper
 
 If you need to attach the callback manually — e.g. inside a library
-that re-compiles graphs after `init()` ran — the canonical wrapper is:
+that re-compiles graphs after the runtime was created — the explicit
+form is:
 
 ```python title="langgraph_manual_wrapper.py"
-from nullrun.toolbox.langgraph import wrapper
+from nullrun.instrumentation.auto import patch_langgraph_compiled
 
-app = wrapper(graph.compile())
+patch_langgraph_compiled()  # idempotent — safe to call repeatedly
+app = graph.compile()
 ```
 
-`wrapper` wraps the compiled app's `.invoke` and `.stream` methods
-to inject the NullRun callback into the LangChain `config["callbacks"]`
-list per call. The control-plane kill/pause subscription is
-**independent** — it's started automatically by `init()` and works
-for every `@protect` call in the process regardless of whether you
-used `wrapper()` or relied on the auto-instrumentation path above.
+`patch_langgraph_compiled` wraps every compiled app's `.invoke` and
+`.stream` methods to inject the NullRun callback into the LangChain
+`config["callbacks"]` list per call. The control-plane kill/pause
+subscription is **independent** — it starts on the first `@protect`
+call and works for every protected call in the process regardless of
+whether you used the manual patch or the auto-instrumentation path.
 
 ## See also
 
@@ -4250,21 +4391,22 @@ description: Install the nullrun[agents] extra and gate every tool call from an 
 
 # Use with OpenAI Agents
 
-Install:
+Install (the OpenAI Agents framework hook is the only one that
+needs a vendor package — `openai-agents`):
 
 ```bash title="shell"
 pip install "nullrun[agents]" openai-agents
 ```
 
 Wrap the `Runner.run_sync` call (or any sync / async runner) with
-`@protect`:
+`@protect`. The runtime + `openai-agents` `RunHooks` /
+`RunStreamedHooks` patch are attached lazily on the first `@protect`
+call:
 
 ```python title="openai_agents_protect.py"
 from agents import Agent, Runner
 
-from nullrun import init, protect
-
-init(api_key="nr_live_...")
+from nullrun import protect
 
 
 @protect
@@ -4301,20 +4443,24 @@ description: Wrap CrewAI tools and tasks with @protect so the NullRun gate evalu
 
 # CrewAI
 
-Install (CrewAI **1.15+** required):
+Install (the SDK declares `crewai>=0.80,<2.0`; the EventBus
+subsystem used here was added in **CrewAI 1.15+**, which is what
+this guide targets — earlier versions get some legacy telemetry via
+`step_callback` / `task_callback` instead):
 
 ```bash title="shell"
 pip install "nullrun[crewai]"
 ```
 
 The current patch subscribes to the crewai `EventBus` and translates
-each lifecycle event into a `runtime.track_event` call.
+each lifecycle event into a `runtime.track_event` call. The runtime
+and the crewai EventBus hook are attached lazily on the first
+`@protect` call:
 
 ```python title="crewai_crew.py"
 import nullrun
 from crewai import Agent, Crew, Task
-
-nullrun.init(api_key="nr_live_...")
+from nullrun import protect
 
 researcher = Agent(
     role="Researcher",
@@ -4329,7 +4475,14 @@ task = Task(
 )
 
 crew = Crew(agents=[researcher], tasks=[task])
-result = crew.kickoff()
+
+
+@protect
+def run_crew() -> str:
+    return str(crew.kickoff())
+
+
+print(run_crew())
 ```
 
 The CrewAI integration automatically tracks crew / agent / task /
@@ -4399,7 +4552,7 @@ chain: every `NullRunError` subclass — including `WorkflowKilledInterrupt`
 | --- | --- | --- | --- |
 | `NullRunError` (budget, tool block, rate limit, soft block, etc.) | `app.add_exception_handler` | per `error_code` | `user_message`, `category: "decision"`, `retryable` |
 | Infrastructure errors (transport, 5xx, auth, config) | `app.add_exception_handler` | `503` | `user_message`, `category: "infrastructure"`, `retryable` |
-| `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) | `app.add_exception_handler` | `503` | `user_message`, `category: "killed"` |
+| `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) | `NullRunMiddleware` (ASGI) | `503` | `user_message`, `category: "killed"` |
 
 `Retry-After` is set on the response whenever the exception carries a
 `retry_after` (gateway 429) or `resume_after` (workflow pause)
@@ -4407,18 +4560,27 @@ attribute.
 
 ## HTTP status mapping
 
+The status codes below come from `_DECISION_STATUS` and
+`_DEFAULT_DECISION_STATUS = 429` / `_DEFAULT_INFRASTRUCTURE_STATUS = 503`
+in `nullrun.integrations.fastapi`. SDK exception classes (`exceptions.py`)
+carry an `error_code` attribute; the integration maps it to HTTP at
+install time.
+
 | `error_code` | Category | HTTP | Notes |
 | --- | --- | --- | --- |
-| `NR-B004` | decision | `402` | `retryable: false` — user must upgrade or wait for next cycle. Covers `BUDGET_HARD_BLOCKED`, `BUDGET_SOFT_BLOCKED`, `BUDGET_OVERDRAFT_EXCEEDED`, `BUDGET_ANTI_DOS_RESERVED_CAP`, `BUDGET_PERIOD_NOT_STARTED` |
-| `NR-R001` | decision | `429` | `Retry-After` from `.retry_after` |
-| `RATE_LIMIT_REDIS_UNAVAILABLE` | decision | `503` | Aggregate rate limit fails closed |
+| `NR-B004` | decision | `429` | `retryable: false`. Covers `BUDGET_HARD_BLOCKED`, `BUDGET_SOFT_BLOCKED`, `BUDGET_OVERDRAFT_EXCEEDED`, `BUDGET_ANTI_DOS_RESERVED_CAP`, `BUDGET_PERIOD_NOT_STARTED`. Per `_DECISION_STATUS["NR-B004"]`. |
+| `NR-R001` | infrastructure | `503` | `Retry-After` from `.retry_after`. Class is `RateLimitError(NullRunTransportError)` so it lands on the infrastructure handler despite the `_DECISION_STATUS["NR-R001"]=429` entry being unreachable in practice. |
+| `NR-R002` | infrastructure | `503` | `retryable: true` — Redis unavailable for aggregate rate limit (fail-CLOSED). Class is `NullRunRateLimitRedisError(NullRunInfrastructureError)`. |
 | `NR-T001` | decision | `403` | The action itself is forbidden |
-| `WORKFLOW_INACTIVE` | decision | `403` | Workflow was soft-deleted or killed |
-| `CHAIN_MAX_DURATION_EXCEEDED` | decision | `402` | Chain exceeded `max_chain_duration_seconds` |
-| `BUDGET_REDIS_UNAVAILABLE` | infrastructure | `402` | `retryable: true` — money math fail-CLOSED |
-| `BUDGET_DATA_UNAVAILABLE` | infrastructure | `503` | Approximate-budget lookup: all sources down |
+| `NR-W004` | decision | `429` | Workflow soft-deleted or killed (`NullRunWorkflowInactiveError`). No `_DECISION_STATUS` entry → falls through to `_DEFAULT_DECISION_STATUS=429`. |
+| `NR-W003` | decision | `503` | Workflow paused (`WorkflowPausedException`) — override default to signal server-driven resume |
+| `NR-CH001` | decision | `429` | Chain context invalid (chain_id / parent_execution_id). No `_DECISION_STATUS` entry → default 429. |
+| `NR-X001` | decision | `403` | Generic block (catch-all decision) |
 
-`WorkflowKilledInterrupt` always maps to `503`. See
+`WorkflowKilledInterrupt` always maps to `503` (caught by the ASGI
+middleware, not the exception-handler chain — kill can fire from
+control-plane WebSocket pushes and background tasks that aren't part
+of the active request lifecycle). See
 [Reference → Errors](../reference/errors.md) for the full catalog.
 
 ## Locale resolution
@@ -4503,7 +4665,8 @@ response is returned.
 ## Per-deployment wording overrides
 
 To brand the wording for a single deployment, call
-`nullrun.set_user_message(...)` once at startup:
+`nullrun.set_user_message(...)` once at the top of your entry point
+(or register via `atexit`):
 
 ```python
 nullrun.set_user_message(
@@ -4535,20 +4698,29 @@ nullrun.set_user_message(
 # Source: https://docs.nullrun.io/how-to/llm-frameworks/
 # File: docs/how-to/llm-frameworks.md
 
+---
 title: LLM frameworks
 maturity: stable
 description: Coverage matrix for OpenAI, Anthropic, Mistral, Gemini, Cohere, Bedrock, LangChain, LlamaIndex, CrewAI, AutoGen, and the raw openai SDK.
+---
 # LLM frameworks
 
-`nullrun.init()` patches the underlying HTTP transport (`httpx`) and
-the agent framework modules it can detect in `sys.modules`. Every
-patch wraps the vendor import in `try/except ImportError`, so you
-can install one extra group without crashing on `init()`.
+The SDK's auto-instrumentation runs **lazily on the first `@protect`
+call**. The lazy trigger creates the runtime and walks `sys.modules`
+looking for known framework packages, applying each detected patch
+in a single process-wide idempotent step.
 
 In every case, the LLM call gets `track_llm` events automatically —
 **no `@protect` required for cost tracking**. `@protect` is the
 **gate** layer (budget pre-flight + kill / pause / sensitive-tool
 decision).
+
+> **HTTP-level coverage is the foundation.** OpenAI, Anthropic,
+> Mistral, Gemini, Cohere, and Bedrock are covered by URL-keyed httpx
+> extractors — the SDK never imports those vendor packages, so no
+> extra is required. The extras below are only needed when NullRun
+> has to call into the vendor package directly (framework hooks, not
+> HTTP hooks).
 
 > The Gemini vendor extra is `google-genai` (the actively maintained
 > package, ≥ 1.0); the older `google.generativeai` package is **not**
@@ -4558,19 +4730,18 @@ decision).
 
 | Provider | Install extra | Auto-instrumented | Tested end-to-end | Patcher |
 | --- | --- | --- | --- | --- |
-| OpenAI (`openai`) | `nullrun[openai]` | ✅ | ✅ | `httpx` transport hook |
-| Anthropic (`anthropic`) | `nullrun[anthropic]` | ✅ | ✅ | `httpx` transport hook |
+| OpenAI (`openai`) | none — httpx URL-keyed | ✅ | ✅ | `httpx` transport hook |
+| Anthropic (`anthropic`) | none — httpx URL-keyed | ✅ | ✅ | `httpx` transport hook |
 | OpenAI Agents (`openai-agents`) | `nullrun[agents]` | ✅ | ✅ | `patch_openai_agents` |
-| Mistral (`mistralai`) | `nullrun[mistral]` | ✅ | ⚠️ extractor only | per-vendor extractor |
-| Gemini (`google-genai`) | `nullrun[gemini]` | ✅ | ⚠️ extractor only | per-vendor extractor |
-| Cohere (`cohere`) | `nullrun[cohere]` | ✅ | ⚠️ extractor only | per-vendor extractor |
-| AWS Bedrock (`boto3`) | `nullrun[bedrock]` | ⚠️ partial | ⚠️ extractor only | `boto3` event-stream hook |
+| Mistral (`mistralai`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | per-vendor extractor |
+| Gemini (`google-genai`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | per-vendor extractor |
+| Cohere (`cohere`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | per-vendor extractor |
+| AWS Bedrock (`boto3`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | `httpx` extractor on `bedrock-runtime.amazonaws.com` |
 | LangChain (`langchain`) | `nullrun[langchain]` | ✅ | ✅ | `patch_langchain_callback` |
-| LangGraph (`langgraph`) | `nullrun[langgraph]` | ✅ | ✅ | `patch_langgraph_compiled` |
-| LlamaIndex (`llama-index`) | `nullrun[llama]` | ✅ | ⚠️ extractor only | `instrumentation.llama_index` |
+| LangGraph (`langgraph`) | `nullrun[langgraph]` | ✅ | ✅ | `patch_langgraph_compiled` (auto on first `@protect` call) |
+| LlamaIndex (`llama-index`) | `nullrun[llama-index]` | ✅ | ⚠️ extractor only | `instrumentation.llama_index` |
 | CrewAI (`crewai`) | `nullrun[crewai]` | ✅ | ⚠️ extractor only | `instrumentation.crewai` |
 | AutoGen (`autogen-agentchat`) | `nullrun[autogen]` | ✅ | ⚠️ extractor only | `instrumentation.autogen` |
-| Raw `openai` SDK | `nullrun[openai]` | ✅ | ✅ | `httpx` transport hook |
 
 > "Tested end-to-end" means: a multi-roundtrip test exists that
 > verifies tokens flow from the vendor response into `/api/v1/track`.
@@ -4584,7 +4755,9 @@ decision).
 pip install "nullrun[all]"
 ```
 
-Installs every vendor extra. The `[all]` meta-extra lives at
+Installs every vendor extra (the ones that actually pull a vendor
+package — `[agents]`, `[crewai]`, `[langgraph]`, `[langchain]`,
+`[llama-index]`, `[autogen]`). The `[all]` meta-extra lives at
 `pyproject.toml` and pulls every individual extra in one go.
 
 ## How the httpx transport hook works
@@ -4605,16 +4778,16 @@ SDK only reports token counts, never dollar amounts.
 ## Detection logic
 
 If your framework is installed, the SDK patches it automatically on
-`init()`. The detection logic walks `sys.modules` looking for known
-packages — `openai`, `openai-agents`, `anthropic`, `langgraph`,
-`langchain`, `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock),
-`llama_index`, `crewai`, `autogen_agentchat` — and applies the
-appropriate patch.
+the **first `@protect` call**. The detection logic walks
+`sys.modules` looking for known packages — `openai`, `openai-agents`,
+`anthropic`, `langgraph`, `langchain`, `mistralai`, `google-genai`,
+`cohere`, `boto3` (bedrock), `llama_index`, `crewai`,
+`autogen_agentchat` — and applies the appropriate patch.
 
-Order matters: if your code imports `openai` before `init()`,
-the hook is in place before the first request. If you import
-after `init()`, the SDK patches at import time on next
-`init()` call — or you can call `nullrun.patch()` explicitly.
+Order matters: if your code imports `openai` before the first
+`@protect` call, the hook is in place before the first request. If
+you import after the first `@protect` call, the SDK may not see the
+late import — call `nullrun.patch()` explicitly to force a re-scan.
 
 ## Provider-specific notes
 
@@ -4644,28 +4817,31 @@ Bedrock calls must be reported via `track_llm` manually.
 
 The `nullrun[langgraph]` extra wraps `Pregel.invoke` / `.ainvoke` /
 `.stream` / `.astream` so every node that calls an LLM goes through
-the gate. See [Protect a LangGraph agent](langgraph.md) for the
-canonical wiring pattern and the manual `wrapper()` escape hatch.
+the gate. The patch is auto-applied on the first `@protect` call.
+See [Protect a LangGraph agent](langgraph.md) for the canonical
+wiring pattern.
 
 ### CrewAI / AutoGen
 
 Multi-agent frameworks spawn sub-agents that each make their own
-LLM calls. The hook fires per call, so cost attribution lands in
-the right `agent_id` automatically (the framework passes
-`agent_name` through to the SDK contextvar).
+LLM calls. The hook fires per call, so cost attribution lands in the
+right `agent_id` automatically (the framework passes `agent_name`
+through to the SDK contextvar).
 
 ## When auto-instrumentation can't see the call
 
 Some patterns bypass the auto-instrumentation:
 
 - Custom HTTP transport (not `httpx`) — use [`track_llm`](../reference/sdk-api.md#track_llm-manual-usage)
-- Streaming chunks where the SDK is constructed before `init()` — call
+- Streaming chunks where the SDK is constructed before the first `@protect` call — call
   `nullrun.patch()` after the late imports
 - A framework not listed above — file an issue at
   `github.com/nullrunio/nullrun-sdk-python`
 
 The catch-all `track_llm(input_tokens=…, output_tokens=…, model=…)`
-is the escape hatch for any of these.
+is the escape hatch for any of these. If `@protect` fires 50+ times
+without the runtime seeing a single `track_llm` event, the SDK logs
+**one** WARNING naming the three most likely root causes.
 
 ## See also
 
@@ -4730,11 +4906,12 @@ with nullrun.workflow("my-workflow"):
 
 Cumulative cost > 500¢ → `NullRunBudgetError` raised on the next
 gate call with `error_code = "NR-B004"` (wire `BUDGET_HARD_BLOCKED`).
-For non-budget policy blocks (tool block, sensitive tool) the generic
-`NullRunBlockedException` is raised with
-`error_code = "NR-T001"` (wire `TOOL_BLOCKED`).
-See [Errors](../reference/errors.md) for the full catalog and the
-recommended `except` pattern.
+For tool-block policy hits, `NullRunToolBlockedError` is raised with
+`error_code = "NR-T001"` (wire `TOOL_BLOCKED`). Both are subclasses of
+`NullRunBlockedException`, so a broad `except NullRunBlockedException`
+still catches both — but the typed subclass carries the more specific
+`error_code`. See [Errors](../reference/errors.md) for the full catalog
+and the recommended `except` pattern.
 
 `max_budget_cents == 0` means **"no per-key budget configured"**, not
 "block everything" — the gate passes through to the org-level plan
@@ -4772,12 +4949,10 @@ description: Run multiple agents in one workflow, propagate parent_trace_id, and
 
 # Run multiple agents (multi-key / multi-process)
 
-NullRun's `init()` is intended to be called **once per process**.
 The SDK's runtime is a process-scoped singleton — transport pool,
-WebSocket subscription, and event batch buffer. If you call `init()`
-twice in the same process, behaviour depends on the runtime
-implementation; the supported pattern is one `init()` per process
-and one process per workflow key.
+WebSocket subscription, and event batch buffer — created lazily on
+the first `@protect` call. The supported pattern is one runtime per
+process and one process per workflow key.
 
 For everything beyond a single one-shot script, run **one process per
 key**. This page shows the three patterns that cover real workloads.
@@ -4802,12 +4977,15 @@ and its own key:
 ```python title="fanout.py"
 import multiprocessing as mp
 import nullrun
-from nullrun import init_or_die, protect
+from nullrun import protect
 
 
 def _agent_main(key: str, prompt: str) -> str:
-    # Each child process initializes its own runtime with its own key.
-    init_or_die(api_key=key)
+    # Each child process lazily initializes its own runtime from
+    # NULLRUN_API_KEY on the first @protect call. To force a specific
+    # key per child, set NULLRUN_API_KEY in the subprocess env.
+    import os
+    os.environ["NULLRUN_API_KEY"] = key
 
     @protect
     def step(p: str) -> str:
@@ -4826,15 +5004,16 @@ def fan_out(jobs: list[tuple[str, str]]) -> list[str]:
         return [r.get(timeout=120) for r in async_results]
 ```
 
-Each child gets its own copy of the SDK state, so each `init()` runs
-cleanly with no shutdown collisions. **Do not** call `init()` once at
-the parent and share the runtime across children — that's the
-multi-key-in-one-process anti-pattern and you'll get shutdown warnings
-the moment the first child finishes.
+Each child gets its own copy of the SDK state, so each runtime
+initializes lazily and cleanly with no shutdown collisions. **Do
+not** share a runtime across children — that's the multi-key-in-one-
+process anti-pattern and you'll get shutdown warnings the moment the
+first child finishes.
 
 Pick the pool start method that matches your platform (see the
 `multiprocessing` docs). The rule is the same regardless: each child
-is a fresh interpreter and runs its own `init()` independently.
+is a fresh interpreter and initializes its own runtime on the first
+`@protect` call.
 
 ## Pattern 3 — one entrypoint, multiple keys, hard process boundary
 
@@ -4861,17 +5040,16 @@ def run_workflow(key: str, prompt: str) -> str:
     return result.stdout
 ```
 
-The subprocess startup cost (~150 ms for `init()` + WebSocket connect)
-is the price for clean isolation. For high-throughput paths, see
-Pattern 2 — multiprocessing keeps workers warm in a pool.
+The subprocess startup cost (~150 ms for the lazy runtime init +
+WebSocket connect) is the price for clean isolation. For high-
+throughput paths, see Pattern 2 — multiprocessing keeps workers warm
+in a pool.
 
 ## What doesn't work
 
-Calling `init()` more than once in the same process is not a
-supported pattern. The runtime singleton is process-scoped, and
-mixing multiple keys in one process leads to interleaved events
-on the wrong workflow. The supported alternative is one process per
-key (Pattern 1) or one subprocess per request (Pattern 3).
+Mixing multiple keys in one process leads to interleaved events on
+the wrong workflow. The supported alternative is one process per key
+(Pattern 1) or one subprocess per request (Pattern 3).
 
 ## What if I want a single dashboard view across all my processes?
 
@@ -4882,9 +5060,8 @@ key), all their `/gate` and `/track` calls land on the same workflow
 record in the backend.
 
 The case where this **doesn't** hold is the "many workflows, one
-process" anti-pattern above: each `init()` call swaps the active key
-but the prior workflow's events have already gone to the prior key's
-workflow.
+process" anti-pattern above: prior workflow's events have already
+gone to the prior key's workflow.
 
 ## See also
 
@@ -4923,9 +5100,10 @@ from langgraph.graph import END, StateGraph
 from langchain_openai import ChatOpenAI
 
 import nullrun
-from nullrun import init_or_die, protect, workflow, shutdown
+from nullrun import protect, workflow, shutdown
 
-init_or_die()
+# The first @protect call lazily creates the runtime from
+# NULLRUN_API_KEY and patches the LangGraph Pregel hook.
 llm = ChatOpenAI(model="gpt-4o-mini")
 
 
@@ -5043,9 +5221,9 @@ the final chunk (which carries the `usage` block).
 ```python title="streaming_agent.py"
 import nullrun
 from openai import AsyncOpenAI
-from nullrun import init_or_die, protect
+from nullrun import protect
 
-init_or_die()
+# The first @protect call creates the runtime lazily.
 client = AsyncOpenAI()
 
 
@@ -5146,7 +5324,7 @@ estimate. See
 [OpenAI streaming reference](https://platform.openai.com/docs/api-reference/chat-streaming).
 
 ```python
-from nullrun import init_or_die, protect, track_llm
+from nullrun import protect, track_llm
 
 
 @protect
@@ -5429,10 +5607,16 @@ jobs:
 
       - name: 3. Capabilities probe
         run: |
-          # Verify the gateway capabilities are present before promoting to prod
+          # Verify the gateway is v3-ready before promoting to prod.
+          # /api/v1/capabilities returns a nested `capabilities: {}` object
+          # (protocol v3.18+). All three flags must be true for the v3 wire
+          # contract; mirrors ServerCapabilities.is_v3_ready() in the SDK.
           curl -fs "${NULLRUN_API_URL}/api/v1/capabilities" \
-            | python -c "import json,sys; c=json.load(sys.stdin); \
-              assert c['capabilities_ok'], 'gateway capabilities not ready'"
+            | python -c "import json,sys; c=json.load(sys.stdin)['capabilities']; \
+              assert c['server_minted_execution_id'] \
+                and c['per_execution_reservations'] \
+                and c['heartbeat_time_based'], \
+              'gateway not v3-ready — server_minted_execution_id, per_execution_reservations, and heartbeat_time_based must all be true'"
 
       - name: 4. Approval pause/resume (manual)
         # Trigger an approval-required call, click approve in the
@@ -5461,7 +5645,7 @@ checklist.
 
 title: SDK API
 maturity: stable
-description: Reference for every NullRun SDK symbol: init, @protect (canonical entry point), @sensitive(impact=...) (advanced API), workflow, chain, exceptions, manual tracking, and transport hooks. SDK 0.18.1: bare @sensitive is deprecated.
+description: Reference for every NullRun SDK symbol: @protect (canonical entry point), @sensitive(impact=...) for typed impact + digest-bound approval, workflow / chain context managers, exceptions, manual tracking, and transport hooks.
 # SDK API
 
 The Python SDK lives in
@@ -5476,8 +5660,8 @@ pip install "nullrun[all]"     # every optional extra
 ```
 
 Auto-instrumentation for httpx-based libraries (`openai`,
-`anthropic`, `openai-agents`, …) is on by default once `init()` runs —
-see [Auto-instrumentation](../getting-started/install.md#auto-instrumentation).
+`anthropic`, `openai-agents`, …) attaches lazily on the first
+`@protect` call — see [Auto-instrumentation](../getting-started/install.md#auto-instrumentation).
 
 ## Top-level
 
@@ -5485,23 +5669,29 @@ see [Auto-instrumentation](../getting-started/install.md#auto-instrumentation).
 from nullrun import init, init_or_die, protect, workflow, span, agent, chain, track_llm, track_tool, track_event
 ```
 
-### `init()` vs `init_or_die()` — which one to use
+### `init` / `init_or_die` {#init--init_or_die}
+
+The runtime is created lazily on the first `@protect` call from
+`NULLRUN_API_KEY` — most apps skip `init()` entirely. These helpers
+exist for the cases where you need early fail-fast before any
+`@protect` call runs (CI / smoke tests, pre-flight validation, library
+authors wiring keys from a non-env source).
 
 | Helper | Behaviour | Use when |
 |---|---|---|
-| `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI) |
-| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Catches the `NullRunAuthenticationError` exception, prints the catalog user-message to stderr, calls `sys.exit(exit_code)`. Returns the runtime otherwise. | One-shot scripts, CLI tools, examples, anything where a missing key is a hard error |
+| `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI). Library authors wiring an SDK key from a non-env source. |
+| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Catches the `NullRunAuthenticationError` exception, prints the catalog user-message to stderr, calls `sys.exit(exit_code)`. Returns the runtime otherwise. | One-shot scripts, CLI tools, smoke tests — anywhere a missing key is a hard error and you want a clean exit instead of a traceback. |
 
-`init_or_die` is `init` plus an `try/except NullRunAuthenticationError → sys.exit(1)`. The chain `@guarded` decorator does the same for callsite-level errors.
+`init_or_die` is `init` plus a `try/except NullRunAuthenticationError → sys.exit(1)`. The chain `@guarded` decorator does the same for callsite-level errors. Both helpers are also idempotent — calling `init()` twice returns the same singleton without re-running the lazy trigger.
 
 || Symbol | Purpose | In `__all__` |
 |---|---|---|---|
-| `init(api_key=None, api_url=None, debug=False)` | Initialise the SDK singleton. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
+| `init(api_key=None, api_url=None, debug=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
 | `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Like `init` but exits cleanly with `exit_code` (default 1) if no API key is configured. See the table above. | ✅ |
-| `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. Always pair with `@guarded` for the zero-boilerplate exit-on-block pattern. | ✅ |
-| `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check before the body runs. If the gate is unreachable, the call is rejected. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
-| `@guarded` | Decorator that wraps a function so any `NullRunError` raised inside is converted to `format_user_message(exc)` on stderr and `sys.exit(1)`. The kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) is also a `NullRunError` subclass, so `@guarded` catches it too. Use the un-`@guarded` `protect()` form if you need to handle kill distinctly. | ✅ |
-| `with nullrun.handle(*, exit_code=1):` | Context manager form of `@guarded` — apply to a region of code rather than a single function. | ✅ |
+| `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — auto-attaches a default `ToolParamsExtractor` so every kwarg reaches the operator on the wire. Pair with `with nullrun.handle():` for the structured 4-line dev report on failure. | ✅ |
+| `@sensitive(impact=...)` | Factory form — stamps a typed `BusinessImpact` extractor (`money_outflow(...)` for money flows, `tool_params(...)` for an explicit rename map or empty-bag mode) + SHA-256 `action_digest` for digest-bound approval. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
+| `@guarded` | Decorator equivalent of `with nullrun.handle():` — wraps a function so any `NullRunError` raised inside is converted to the structured 4-line dev report on stderr and `sys.exit(1)`. Use the un-`@guarded` `protect()` form if you need to handle kill distinctly. | ✅ |
+| `with nullrun.handle(*, exit_code=1):` | Context manager form of `@guarded` — apply to a region of code rather than a single function. **Recommended** for the structured 4-line developer report. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
 | `chain(chain_id: str, op: str = "start")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
 | `span(name=None)` | Context manager for nested trace spans. | (lazy) |
@@ -5515,7 +5705,7 @@ from nullrun import init, init_or_die, protect, workflow, span, agent, chain, tr
 | `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
 | `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
 | `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads. Safe to register via `atexit`. | ✅ |
-| `status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. Raises `NullRunConfigError` if the runtime hasn't been initialised yet. | ✅ |
+| `status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. Raises `NullRunConfigError` with `error_code="NR-C004"` if the runtime hasn't been initialised yet. | ✅ |
 
 Rows marked **lazy** are exposed under `nullrun.*` via `__getattr__`
 on first access; they do not appear in `dir(nullrun)` until used.
@@ -5613,7 +5803,7 @@ hierarchy diagram.
 | `NullRunAuthError` | 401 specifically (key rejected) | Subclass of `NullRunAuthenticationError`. Carries `.status_code` (the wire HTTP status). |
 | `NullRunTransportError` | Gateway unreachable | Carries `.source` (e.g. `NETWORK_ERROR` / `GATEWAY_ERROR` / `BREAKER_OPEN` / `AUTH_ERROR`) and `.endpoint`. Retryable. |
 | `NullRunBackendError` | 5xx from the gateway | Subclass of `NullRunTransportError`. Code `NR-B002` family. Retryable. |
-| `RateLimitError` | HTTP 429 | Subclass of `NullRunTransportError`. Carries `.retry_after`, `.upgrade_url`, `.body`. Code `NR-R001`. Retryable. |
+| `RateLimitError` | HTTP 429 (gateway rate-limit response) | Subclass of `NullRunTransportError` → `NullRunInfrastructureError` (infrastructure class — see exception tree above). Carries `.retry_after`, `.upgrade_url`, `.body`. Code `NR-R001`. Retryable. Despite the 4xx status, integration handlers should treat it as infrastructure (FastAPI middleware maps it to 503). |
 | `NullRunRateLimitRedisError` | 503 — Redis reservation failed | Subclass of `NullRunInfrastructureError`. Code `NR-R002`. |
 | `NullRunProtocolError` | Backend returned 400 `PROTOCOL_TOO_OLD` | Carries `.min_required_version`. Upgrade SDK past the min required protocol version. |
 | `NullRunBlockedException` | Generic policy block | Inspect `.workflow_id`, `.reason`, `.action`, `.tool_name`, `.details`. Carries `.status_code` (the wire HTTP status, e.g. 402 budget, 403 cross-org, 422 `CONSUME_OVERBUDGET`, 429 cap-reached). **No** `.message` — use `str(exc)`. |
@@ -5625,23 +5815,25 @@ hierarchy diagram.
 | `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
 | `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
 | `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunError`. Carries `.workflow_id`, `.reason`, `.resume_after`. |
-| `WorkflowKilledException` | Killed via control plane (legacy parent) | `BaseException` subclass. **Deprecated** — emits `DeprecationWarning` on construction. Use `NullRunWorkflowKilledError` directly. |
-| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `NullRunError` (was `BaseException` before SDK 0.16.x — now caught by `except Exception:` like every other SDK error). |
-| `NullRunWorkflowKilledError` | Kill arrived mid-call (typed alias) | Preferred subclass of `WorkflowKilledInterrupt`. Same wire semantics; use this for typed `except` arms. |
+| `WorkflowKilledException` | Killed via control plane (legacy parent) | `BaseException` subclass. Use `NullRunWorkflowKilledError` directly. |
+| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `NullRunError`. Caught by `except Exception:` like every other SDK error. |
+| `NullRunWorkflowKilledError` | Kill arrived mid-call (typed alias) | Subclass of `WorkflowKilledInterrupt`. Same wire semantics; use this for typed `except` arms. |
 
 
 ## Catch-all pattern
 
 ```python title="catch_all_pattern.py"
 import nullrun
-from nullrun import WorkflowKilledInterrupt, init, protect
+from nullrun import WorkflowKilledInterrupt, protect
 from nullrun.breaker.exceptions import (
     NullRunBlockedException,
     RateLimitError,
     WorkflowPausedException,
 )
 
-init(api_key="nr_live_...")
+# init() is OPTIONAL — the first protect(...) below creates the
+# runtime lazily from NULLRUN_API_KEY. See
+# init / init_or_die above.
 
 try:
     step()
@@ -5730,10 +5922,11 @@ function never raises and never returns an empty string.
 
 ## See also
 
-- [Decorators & extractors](decorators.md) — deep-dive on `@protect`,
-  `@sensitive`, `@guarded`, `money_outflow`, `tool_params`,
-  `set_call_context`, and the workflow / span / chain context
-  managers
+- [Decorators & extractors](decorators.md) — deep-dive on `@protect`
+  (canonical entry point, auto-attaches default extractor), the
+  `@sensitive(impact=...)` factory form, `@guarded`,
+  `money_outflow`, `tool_params`, `set_call_context`, and the
+  workflow / span / chain context managers
 - [Errors](errors.md)
 - [Errors → Decision vs. infrastructure](errors.md#decision-vs-infrastructure)
 - [Use with FastAPI](../how-to/fastapi.md)
@@ -5789,11 +5982,11 @@ All SDK-traffic endpoints (`/track`, `/track/batch`, `/gate`,
 
 The SDK computes and signs every request automatically once
 `NULLRUN_API_KEY` and `NULLRUN_SECRET_KEY` are set. The gateway
-default for `NULLRUN_HMAC_REQUIRED` is `false` for backward
-compatibility — operators must set it explicitly to `true` in
-production. When `NULLRUN_HMAC_REQUIRED=true`, unsigned SDK requests
-are rejected with 401 and the SDK-auth middleware emits a per-request
-WARN so the gap is visible in logs.
+default for `NULLRUN_HMAC_REQUIRED` is `false` — operators must set
+it explicitly to `true` in production. When
+`NULLRUN_HMAC_REQUIRED=true`, unsigned SDK requests are rejected
+with 401 and the SDK-auth middleware emits a per-request WARN so
+the gap is visible in logs.
 
 > SDK requests to `/api/v1/orgs/{org_id}/*` are also checked for
 > org-mismatch: the org claimed in the URL must match the org the
@@ -5826,8 +6019,8 @@ documents every field.
 
 | Method | Path | Status |
 | --- | --- | --- |
-| `POST` | `/api/v1/check` | Deprecated — returns `410 Gone` with `replacement: /api/v1/gate`. Use `/gate` for new integrations. |
-| `POST` | `/api/v1/execute` | Live — per-tool invocation with gate pre-flight and budget reservation (thin adapter in front of the unified gate engine). |
+| `POST` | `/api/v1/check` | Returns `410 Gone` with `replacement: /api/v1/gate`. Use `/gate` for new integrations. |
+| `POST` | `/api/v1/execute` | Per-tool invocation with gate pre-flight and budget reservation (thin adapter in front of the unified gate engine). |
 
 ## Auth
 
@@ -6183,18 +6376,23 @@ NullRunError                          (Exception)
 ├── NullRunDecision                   (marker — expected policy outcomes)
 │   ├── NullRunBlockedException       (policy / budget / loop / sensitive block)
 │   │   ├── NullRunBudgetError        (budget exhausted — NR-B004)
+│   │   │   └── NullRunBudgetRecheckFailedError (NR-B006 — post-approval recheck)
 │   │   └── NullRunToolBlockedError   (tool in block list — NR-T001)
-│   ├── WorkflowPausedException       (paused via control plane)
-│   └── NullRunWorkflowKilledError    (kill via control plane — NR-W002;
-│                                       preferred typed alias of
-│                                       `WorkflowKilledInterrupt`)
+│   ├── NullRunConsumeOverbudgetError (actual cost > reservation + ε — NR-O001)
+│   ├── WorkflowPausedException       (paused via control plane — NR-W003)
+│   ├── NullRunWorkflowInactiveError  (soft-deleted / inactive — NR-W004)
+│   └── WorkflowKilledInterrupt       (kill via control plane — NR-W002)
+│       └── NullRunWorkflowKilledError (typed public name; same code NR-W002)
 └── NullRunInfrastructureError        (marker — system failures)
     ├── NullRunConfigError            (misconfiguration, e.g. missing api_key)
     ├── NullRunAuthenticationError   (401 / 403)
     │   └── NullRunAuthError          (401 specifically)
+    ├── NullRunProtocolError          (wire-protocol version mismatch — NR-P001)
+    ├── NullRunApprovalDbUnavailableError (approval DB unavailable — NR-A016)
     └── NullRunTransportError         (transport failures)
-        ├── NullRunBackendError       (5xx — retryable)
-        └── RateLimitError            (429 — carries .retry_after, .upgrade_url)
+        ├── NullRunBackendError       (5xx — retryable; BREAKER_OPEN → NR-B005)
+        └── RateLimitError            (gateway 429 — carries .retry_after)
+            └── NullRunRateLimitRedisError (rate-limit Redis down — NR-R002)
 ```
 
 `NullRunDecision` and `NullRunInfrastructureError` are **marker
@@ -6211,10 +6409,11 @@ tool-scoped), and `.details` (free-form). There is **no** `.message`
 attribute — use `str(exc)`.
 
 
-`NullRunWorkflowKilledError` (and its parent `WorkflowKilledInterrupt`)
-inherit from `NullRunError`, so a bare `except Exception:` catches
-the kill signal. For kill-specific handling — checkpointing state,
-notifying a supervisor, etc. — catch the typed exception explicitly.
+`WorkflowKilledInterrupt` (and its typed subclass `NullRunWorkflowKilledError`)
+both inherit from `NullRunError`, so a bare
+`except Exception:` catches the kill signal. For kill-specific
+handling — checkpointing state, notifying a supervisor, etc. —
+catch the typed exception explicitly.
 
 ## The default path: zero lines of error handling
 
@@ -6225,14 +6424,16 @@ required.
 | Helper | Catches | For |
 |---|---|---|
 | `init_or_die(api_key=...)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
-| `@guarded` | Any `NullRunError` raised inside the wrapped function | Standard agent loop |
-| `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) |
+| `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) — **recommended** form |
+| `@guarded` | Any `NullRunError` raised inside the wrapped function | Decorator equivalent of `handle()` |
 
-All three propagate non-`NullRunError` exceptions (anything that
-isn't an SDK error) as honest tracebacks. `NullRunError` subclasses
-— including the kill signal `NullRunWorkflowKilledError` — are
-caught and converted to catalog wording. For the full design
-rationale and the boundary between "what NullRun tells the
+All three helpers propagate non-`NullRunError` exceptions (anything
+that isn't an SDK error) as honest tracebacks. `NullRunError`
+subclasses — including the kill signal `NullRunWorkflowKilledError` —
+are caught and rendered as the **structured four-line developer
+report** (catalog headline + `[error_code]` + `what` + `where` +
+`why` + `how to fix`), then the process exits 1. For the full
+design rationale and the boundary between "what NullRun tells the
 developer" and "what the developer tells their end users", see
 [Concepts → Error handling](../concepts/error-handling.md).
 
@@ -6343,14 +6544,14 @@ and end-user-facing wording lives in
 | `error_code` | When | HTTP | SDK class |
 | --- | --- | --- | --- |
 | `NR-B004` | Workflow budget exhausted | 402 | `NullRunBudgetError` |
-| `NR-B006` | Post-approval budget re-check failed on the same envelope as the original `/gate` | 503 | `NullRunBudgetRecheckFailedError` |
+| `NR-B006` | Post-approval budget re-check failed on `/execute` (budget counter moved between `/gate` reserve and `/execute`) | 402 | `NullRunBudgetRecheckFailedError` |
 | `NR-O001` | Actual cost > reservation + ε | 422 | `NullRunConsumeOverbudgetError` |
-| `NR-R001` | Per-workflow rate limit | 429 | `RateLimitError` |
 | `NR-T001` | Tool in block list | 403 | `NullRunToolBlockedError` |
-| `NR-CH001` | Chain context invalid (CHAIN_MAX_DURATION_EXCEEDED) | 402 | `NullRunChainError` |
-| `NR-W001` | Workflow does not exist or is not visible to this API key | 404 | `NullRunError` |
+| `NR-CH001` | Chain context invalid (chain_id / parent_execution_id / max_duration exceeded) | 402 | `NullRunChainError` |
+| `NR-EX01` | `/execute` or `/cancel` called without a prior `/gate` that minted this `execution_id` (binding TTL expired or never bound) | 404 | `NullRunExecutionNotFoundError` |
 | `NR-W002` | Operator kill signal (via dashboard **Kill** button or WS push) | n/a (raised) | `NullRunWorkflowKilledError` (alias `WorkflowKilledInterrupt`) |
-| `NR-W004` | Workflow soft-deleted, killed, or paused | 403/503 | `WorkflowPausedException` / kill signal |
+| `NR-W003` | Workflow paused via dashboard or chain cooldown | 503 | `WorkflowPausedException` |
+| `NR-W004` | Workflow soft-deleted (inactive) — restore it to resume traffic | 403 | `NullRunWorkflowInactiveError` |
 | `NR-A003` | API key rejected | 401 | `NullRunAuthError` |
 | `NR-A004` | Approval response missing — gate returned `require_approval` but no row found on `/execute` | 403 | `NullRunApprovalResponseMissingError` |
 | `NR-A010` | Approval exists, status `PENDING` — operator has not decided yet | 403 | `NullRunApprovalNotYetApprovedError` |
@@ -6372,11 +6573,15 @@ you don't care about the exact cause.
 
 | `error_code` | When | HTTP | SDK class |
 | --- | --- | --- | --- |
+| `NR-B001` | Transport-layer network error (timeout, ConnectError, DNS failure) | 500 | `NullRunTransportError` (default) |
 | `NR-B002` | Gateway 5xx | 500/503 | `NullRunBackendError` |
-| `NR-B003` | Budget Redis unavailable (fail-CLOSED on the budget path) | 402 | `NullRunBudgetError` |
-| `NR-B005` | Budget data unavailable (approximate-budget lookup, all sources down) | 503 | `NullRunBackendError` |
-| `NR-R002` | Rate-limit Redis unavailable | 503 | `NullRunRateLimitRedisError` |
-| `NR-C001` | Missing or invalid `NULLRUN_API_KEY` at `init()` | n/a (raised) | `NullRunAuthenticationError` |
+| `NR-B003` | `@sensitive(impact=...)` business_impact extraction failed (tool param shapes unsupported) | 403 | `NullRunBlockedException` (raised from `decorators.py`) |
+| `NR-B005` | Local SDK circuit breaker tripped — short-circuits before the wire call | 503 | `NullRunBackendError` (with `source = BREAKER_OPEN`) |
+| `NR-R001` | Per-workflow rate limit hit (gateway returned 429 with `Retry-After`) | 429 | `RateLimitError` (subclass of `NullRunTransportError` — infrastructure class despite the 429 status) |
+| `NR-R002` | Rate-limit Redis unavailable (aggregate per-org rate-limit fail-CLOSED) | 503 | `NullRunRateLimitRedisError` |
+| `NR-C000` | Misconfiguration (missing api_key, invalid setup) | n/a (raised) | `NullRunConfigError` (default) |
+| `NR-C004` | `nullrun.status()` called before the runtime is bound (no `@protect` / `init()` yet) | n/a (raised) | `NullRunConfigError` (raised by `status()` when no runtime is bound) |
+| `NR-A001` | Auth rejected by backend (general) | 401/403 | `NullRunAuthenticationError` (default) |
 | `NR-P001` | Wire-protocol version mismatch | 400 | `NullRunProtocolError` |
 
 ## See also
@@ -6405,7 +6610,9 @@ description: Per-model input and output pricing for every LLM NullRun understand
 
 A reference list of the tool names LLM agents commonly expose, tagged
 with a default risk rating you can use as a starting point when you
-register `@sensitive` patterns.
+configure approval-rule patterns. `@protect` is the canonical entry
+point; every protected tool auto-attaches a default
+`ToolParamsExtractor` for ToolParameters rules.
 
 The catalog covers three sources that NullRun sees in production:
 
@@ -6425,7 +6632,7 @@ Risk rating:
 | --- | --- |
 | `low` | Read-only or reversible. Safe to call without a policy decision. |
 | `medium` | Mutates external state but the change is reversible (issue created, draft email, S3 put). |
-| `high` | **Side effects you can't easily undo** — files written or deleted, money moved, messages sent, code executed, infra changed. Mark `@sensitive` and route through a human approval gate. |
+| `high` | **Side effects you can't easily undo** — files written or deleted, money moved, messages sent, code executed, infra changed. Mark with `@protect` (auto-attaches the default `ToolParamsExtractor` for ToolParameters rules) and route through a human approval gate. |
 
 ## Search & retrieval
 
@@ -6677,7 +6884,6 @@ The blocklist has two tiers.
 | `VE` | Venezuela | Partial — signups blocked; existing read-only API access preserved (write operations blocked) |
 | `MM` | Myanmar | OFAC + EU restrictive measures |
 | `AF` | Afghanistan | Post-2021 sanctions regime |
-| `ZW` | Zimbabwe | OFAC selective sanctions |
 
 Sanctioned requests are blocked with **403** even on the marketing
 site — no waitlist, no email capture. Strict liability does not allow
@@ -6691,7 +6897,6 @@ the "we will email you when we do" bridge.
 | `IS NO LI` | EEA / EFTA | Treated like EU for our purposes |
 | `CH` | Switzerland | FADP — high compliance burden |
 | `GB` | United Kingdom | UK GDPR + ICO + class actions |
-| `US CA` | United States / Canada | CCPA + state patchwork |
 | `CN` | China | PIPL + data localisation |
 | `IN` | India | DPDPA 2023 + criminal penalties for officers |
 
@@ -6852,6 +7057,50 @@ On a `Match` the response body is a generic 403 — the matched display
 name is **not** echoed to the client to avoid confirming the
 screening target.
 
+## Operator override — `NULLRUN_SANCTIONS_SCREENING_DISABLED`
+
+The screening is **ON by default**. The IP-level Fortress geo-block
+excludes sanctioned-country traffic before signup; name-based SDN
+screening is the secondary layer that catches designated persons
+who travel, use a non-sanctioned-country VPN, or register via
+OAuth from a non-sanctioned IP.
+
+To **disable** name-based screening entirely (the screening always
+returns `Clean`), set:
+
+```bash
+NULLRUN_SANCTIONS_SCREENING_DISABLED=1
+```
+
+There is no other accepted value — only `1` and the case-insensitive
+`true` disable the screening. Any other value (including `0`,
+`false`, or an unset variable) leaves screening ON.
+
+### Posture by environment
+
+| Environment | Default | Source |
+| --- | --- | --- |
+| Production (`infra/docker-compose.prod.yml`) | **ON** — env var not set | `sanctions.rs:325-328` (`unwrap_or(false)` ⇒ `disabled == false` ⇒ screening active) |
+| Local dev (`infra/docker-compose.local.yml`) | **OFF** — default `1` | Compose line 155: `NULLRUN_SANCTIONS_SCREENING_DISABLED: ${NULLRUN_SANCTIONS_SCREENING_DISABLED:-1}` |
+
+### When to keep it disabled
+
+The dev/local override exists because token-based name matching has
+a high false-positive rate at the pre-revenue / pre-customer stage
+— a perfectly innocent "Vladimir Petrov" may match an SDN surname
+token. With no customers to lose, the maintenance burden (weekly
+SDN list refresh, false-positive triage) outweighs the residual
+sanctions risk. The geo-block remains the always-on sanctions
+defence in every environment.
+
+### When to re-enable
+
+Remove the env var (or set it to `0`) as soon as the service has a
+meaningful customer base or accepts payments in volume. The
+recommended cutover is at first paying customer, not at first
+signup. A regulator's view of "acceptable false-positive cost" is
+sharper once money is in the picture.
+
 ## Known limitations
 
 - **Cyrillic / Latin homoglyphs are NOT collapsed.** A Cyrillic `а`
@@ -6898,13 +7147,20 @@ when it isn't.
 | Gateway unreachable, aggregate rate limit | **Fail-CLOSED** — 503 | `NullRunRateLimitRedisError` |
 | Workflow killed via dashboard | Raise at next `/gate` call (or at WS push receipt) | `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) |
 | Workflow paused via dashboard | Raise at next `/gate` call | `WorkflowPausedException` |
-| Missing `api_key` on `init()` | Raise at first SDK call | `NullRunAuthenticationError` |
+| Missing `NULLRUN_API_KEY` | Raise at first SDK call | `NullRunAuthenticationError` |
 | HMAC signature missing / stale | Reject the request (401) | `NullRunAuthenticationError` |
 | Plan monthly / per-dimension cap reached | Reject the request (422 `plan_limit_exceeded`; `details.resource` names the dimension) | `NullRunBlockedException` (HTTP 422 via `exc.status_code`) |
 | Consume over-budget on commit | Reject the `/track` commit (422; actual cost > reserved + ε) | `NullRunConsumeOverbudgetError` |
 | Per-minute rate cap reached | Reject the request (429 with `Retry-After`) | `RateLimitError` |
 | Chain expired (`max_chain_duration_seconds` exceeded) | 402 | `NullRunChainError` |
 | Protocol version too old | 400 | `NullRunProtocolError` |
+
+!!! note "Endpoint naming"
+    The canonical enforcement endpoint is **`POST /api/v1/gate`**
+    (returns a server-minted `execution_id` on `allow` decisions).
+    The legacy **`POST /api/v1/check`** returns `410 Gone` with
+    `replacement: /api/v1/gate`. All current SDKs call `/gate`
+    directly.
 
 > Critical paths refuse to run when the gateway is unreachable;
 > secondary signals may let calls through.
@@ -6925,12 +7181,12 @@ page.
 
 | Surface | What you observe during an outage | How to handle it |
 | --- | --- | --- |
-| **Active `/check` — budget gate** | Fail-CLOSED. SDK raises `NullRunBackendError`; the next `@protect`-wrapped call is refused. No implicit re-reserve. The reservation TTL eventually releases the cents. | Catch the exception; retry with exponential backoff. Long outages will exceed your tool timeout. The budget counter is never decremented by a call the gate never approved. |
-| **Active `/check` — sensitive-tool gate** | Fail-CLOSED. The sensitive tool body never runs. SDK raises `NullRunBackendError`. | Treat as **indeterminate** — don't retry the side-effect blindly. Surface the error to the user and let a human decide. This is the canonical reason `@sensitive` is the default for irreversible actions. |
-| **Active `/check` — per-key rate limit** | Fail-OPEN (secondary signal). SDK warns and the call proceeds. The budget gate remains the backstop. | No action required. The budget gate still applies on the next call. |
-| **Active `/check` — aggregate (per-org) rate limit** | Fail-CLOSED — 503 `NullRunRateLimitRedisError`. | Back off and retry with jitter. This is a true outage of the aggregator, not a transient blip. |
+| **Active `/gate` — budget gate** | Fail-CLOSED. SDK raises `NullRunBackendError`; the next `@protect`-wrapped call is refused. No implicit re-reserve. The reservation TTL eventually releases the cents. | Catch the exception; retry with exponential backoff. Long outages will exceed your tool timeout. The budget counter is never decremented by a call the gate never approved. |
+| **Active `/gate` — sensitive-tool gate** | Fail-CLOSED. The sensitive tool body never runs. SDK raises `NullRunBackendError`. | Treat as **indeterminate** — don't retry the side-effect blindly. Surface the error to the user and let a human decide. This is the canonical reason `@protect` is the default for irreversible actions (every `@protect` is gated, the SDK collects facts, the server decides what to do with them). |
+| **Active `/gate` — per-key rate limit** | Fail-OPEN (secondary signal). SDK warns and the call proceeds. The budget gate remains the backstop. | No action required. The budget gate still applies on the next call. |
+| **Active `/gate` — aggregate (per-org) rate limit** | Fail-CLOSED — 503 `NullRunRateLimitRedisError`. | Back off and retry with jitter. This is a true outage of the aggregator, not a transient blip. |
 | **Active `/track` — cost commit** | Returns 200 with the cost event queued in the SDK's local outbox. The inference already happened; blocking would lose the cost record. | None required. The SDK persists the event locally and the outbox drains when the gateway returns. **No cost record is lost during the outage window.** |
-| **Control plane (WebSocket)** | Connection drops. SDK reconnects with exponential backoff. The local snapshot of workflow status (active / paused / killed) survives. | No operator action — reconnect is automatic. Long outages mean no live kill/pause signals reach the SDK; the next `/check` call picks them up server-side. |
+| **Control plane (WebSocket)** | Connection drops. SDK reconnects with exponential backoff. The local snapshot of workflow status (active / paused / killed) survives. | No operator action — reconnect is automatic. Long outages mean no live kill/pause signals reach the SDK; the next `/gate` call picks them up server-side. |
 | **In-flight approval request** | Held server-side; not surfaced to operators until the gateway returns. The SDK continues to wait for an approval decision (subject to your approval timeout). | If your approval timeout is short, expect `NullRunApprovalTimeoutError`. The pending request is preserved server-side and reappears in the approvals inbox once the gateway recovers — operators can still answer it. |
 | **Dashboard UI** | Pages return 503; read paths may serve cached fragments where possible. The top banner shows "NullRun is currently unavailable." | Refresh once `GET /health/ready` returns 200. Read-only views (audit log, dashboards) resume first; writes (kill, approve, edit) resume once the gateway is fully ready. |
 | **HTTP API (programmatic)** | 502 / 503 / 504 on read and write paths. Writes are rejected — the server has no record of success, so there is no implicit retry. | Idempotent reads (`GET`) can be retried freely. Writes (`POST /kill`, `POST /approve`) should not be retried blindly — gate them behind your own idempotency keys if your client retries. |
@@ -6991,8 +7247,10 @@ Two usual suspects:
 - **Operator action** — open the workflow's detail page; the audit
   log shows the actor and timestamp.
 - **Plan or workflow limit** — `max_workflows_per_plan` was hit
-  (Lite 5, Starter 25, Growth 150, Scale 500), causing auto-pause.
-  Check the plan picker for your tier's cap.
+  (Lite 3, Starter 8, Growth 50, Scale 200, Enterprise unlimited),
+  causing auto-pause. Check the plan picker for your tier's cap — the
+  full per-tier table is in
+  [Billing & Plan → Per-tier caps](concepts/billing.md#per-tier-caps).
 
 ### "Why is the SDK raising `NullRunAuthenticationError`?"
 

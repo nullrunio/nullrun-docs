@@ -268,7 +268,7 @@ you don't care about the exact cause.
 | `NR-R001` | Per-workflow rate limit hit (gateway returned 429 with `Retry-After`) | 429 | `RateLimitError` (subclass of `NullRunTransportError` — infrastructure class despite the 429 status) |
 | `NR-R002` | Rate-limit Redis unavailable (aggregate per-org rate-limit fail-CLOSED) | 503 | `NullRunRateLimitRedisError` |
 | `NR-C000` | Misconfiguration (missing api_key, invalid setup) | n/a (raised) | `NullRunConfigError` (default) |
-| `NR-C004` | `nullrun.status()` called before `nullrun.init()` | n/a (raised) | `NullRunConfigError` (raised by `status()` when no runtime is bound) |
+| `NR-C004` | `nullrun.status()` called before the runtime is bound (no `@protect` / `init()` yet) | n/a (raised) | `NullRunConfigError` (raised by `status()` when no runtime is bound) |
 | `NR-A001` | Auth rejected by backend (general) | 401/403 | `NullRunAuthenticationError` (default) |
 | `NR-P001` | Wire-protocol version mismatch | 400 | `NullRunProtocolError` |
 
