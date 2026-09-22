@@ -33,6 +33,15 @@ when it isn't.
 | Chain expired (`max_chain_duration_seconds` exceeded) | 402 | `NullRunChainError` |
 | Protocol version too old | 400 | `NullRunProtocolError` |
 
+!!! note "Endpoint naming"
+    The canonical enforcement endpoint is **`POST /api/v1/gate`** (returns
+    a server-minted `execution_id` on `allow` decisions). The
+    legacy **`POST /api/v1/check`** was removed on **2026-06-28** —
+    it now returns `410 Gone` with `replacement: /api/v1/gate`
+    (`backend/src/proxy/http/gate/check.rs:39-72`). All SDKs ≥ T4
+    call `/gate` directly. T4-pre SDKs must upgrade to restore
+    dry-run admission functionality.
+
 > Critical paths refuse to run when the gateway is unreachable;
 > secondary signals may let calls through.
 
@@ -52,12 +61,12 @@ page.
 
 | Surface | What you observe during an outage | How to handle it |
 | --- | --- | --- |
-| **Active `/check` — budget gate** | Fail-CLOSED. SDK raises `NullRunBackendError`; the next `@protect`-wrapped call is refused. No implicit re-reserve. The reservation TTL eventually releases the cents. | Catch the exception; retry with exponential backoff. Long outages will exceed your tool timeout. The budget counter is never decremented by a call the gate never approved. |
-| **Active `/check` — sensitive-tool gate** | Fail-CLOSED. The sensitive tool body never runs. SDK raises `NullRunBackendError`. | Treat as **indeterminate** — don't retry the side-effect blindly. Surface the error to the user and let a human decide. This is the canonical reason `@sensitive` is the default for irreversible actions. |
-| **Active `/check` — per-key rate limit** | Fail-OPEN (secondary signal). SDK warns and the call proceeds. The budget gate remains the backstop. | No action required. The budget gate still applies on the next call. |
-| **Active `/check` — aggregate (per-org) rate limit** | Fail-CLOSED — 503 `NullRunRateLimitRedisError`. | Back off and retry with jitter. This is a true outage of the aggregator, not a transient blip. |
+| **Active `/gate` — budget gate** | Fail-CLOSED. SDK raises `NullRunBackendError`; the next `@protect`-wrapped call is refused. No implicit re-reserve. The reservation TTL eventually releases the cents. | Catch the exception; retry with exponential backoff. Long outages will exceed your tool timeout. The budget counter is never decremented by a call the gate never approved. |
+| **Active `/gate` — sensitive-tool gate** | Fail-CLOSED. The sensitive tool body never runs. SDK raises `NullRunBackendError`. | Treat as **indeterminate** — don't retry the side-effect blindly. Surface the error to the user and let a human decide. This is the canonical reason `@sensitive` is the default for irreversible actions. |
+| **Active `/gate` — per-key rate limit** | Fail-OPEN (secondary signal). SDK warns and the call proceeds. The budget gate remains the backstop. | No action required. The budget gate still applies on the next call. |
+| **Active `/gate` — aggregate (per-org) rate limit** | Fail-CLOSED — 503 `NullRunRateLimitRedisError`. | Back off and retry with jitter. This is a true outage of the aggregator, not a transient blip. |
 | **Active `/track` — cost commit** | Returns 200 with the cost event queued in the SDK's local outbox. The inference already happened; blocking would lose the cost record. | None required. The SDK persists the event locally and the outbox drains when the gateway returns. **No cost record is lost during the outage window.** |
-| **Control plane (WebSocket)** | Connection drops. SDK reconnects with exponential backoff. The local snapshot of workflow status (active / paused / killed) survives. | No operator action — reconnect is automatic. Long outages mean no live kill/pause signals reach the SDK; the next `/check` call picks them up server-side. |
+| **Control plane (WebSocket)** | Connection drops. SDK reconnects with exponential backoff. The local snapshot of workflow status (active / paused / killed) survives. | No operator action — reconnect is automatic. Long outages mean no live kill/pause signals reach the SDK; the next `/gate` call picks them up server-side. |
 | **In-flight approval request** | Held server-side; not surfaced to operators until the gateway returns. The SDK continues to wait for an approval decision (subject to your approval timeout). | If your approval timeout is short, expect `NullRunApprovalTimeoutError`. The pending request is preserved server-side and reappears in the approvals inbox once the gateway recovers — operators can still answer it. |
 | **Dashboard UI** | Pages return 503; read paths may serve cached fragments where possible. The top banner shows "NullRun is currently unavailable." | Refresh once `GET /health/ready` returns 200. Read-only views (audit log, dashboards) resume first; writes (kill, approve, edit) resume once the gateway is fully ready. |
 | **HTTP API (programmatic)** | 502 / 503 / 504 on read and write paths. Writes are rejected — the server has no record of success, so there is no implicit retry. | Idempotent reads (`GET`) can be retried freely. Writes (`POST /kill`, `POST /approve`) should not be retried blindly — gate them behind your own idempotency keys if your client retries. |
