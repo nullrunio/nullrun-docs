@@ -35,9 +35,9 @@ exception at the next yield boundary inside the agent's loop.
 ## How the signal reaches your SDK
 
 The dashboard pushes signals over a WebSocket connection that the SDK
-opens automatically when `init()` runs. The connection is
-authenticated with the same API key the SDK uses for `/gate` and
-`/track`, plus HMAC signature verification.
+opens automatically on the first `@protect` call (lazy init). The
+connection is authenticated with the same API key the SDK uses for
+`/gate` and `/track`, plus HMAC signature verification.
 
 The SDK keeps the connection alive with background heartbeats. If
 the WebSocket disconnects (network blip, firewall, gateway restart),
@@ -49,8 +49,8 @@ arrive on the next gate or yield boundary.
 The control-plane transport is auto-negotiated by the SDK — WS push
 in production traffic with HTTP-polling fallback when the WS
 connection drops repeatedly. You don't need to opt in or pass any
-flag to `init()`; the SDK handles both transports internally.
-For most agents this is invisible: `init()` opens the WS, and the
+flag; the SDK handles both transports internally. For most agents
+this is invisible: the first `@protect` call opens the WS, and the
 gateway's Pause / Kill / `approval_resolved` signals arrive in
 real time without any further setup.
 

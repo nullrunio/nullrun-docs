@@ -244,11 +244,32 @@ irreversible action.
 
 ---
 
-## `@guarded` and `with nullrun.handle():` — friendly-exit wrapper
+## `with nullrun.handle():` (and `@guarded`) — friendly-exit wrapper
 
-**Parameters: none (decorators and context managers).** Accept only
-a callable (for `@guarded`) or an optional `exit_code` keyword (for
-`handle`).
+The **canonical form is `with nullrun.handle():`** — it makes the
+scope explicit and prints the structured four-line developer report
+on any `NullRunError`. `@guarded` is the decorator equivalent for
+the same behaviour.
+
+**Parameters: none (decorators and context managers).** `handle()`
+accepts an optional `exit_code=` keyword (default `1`).
+
+```python title="handle_canonical.py"
+import nullrun
+from nullrun import protect
+
+@protect
+def my_agent(prompt: str) -> str:
+    return call_llm(prompt)
+
+
+if __name__ == "__main__":
+    with nullrun.handle():
+        print(my_agent("hello"))
+```
+
+For decorator-style usage, `@guarded` is the alternative — same
+behaviour, function-scoped:
 
 ```python title="guarded_basic.py"
 @nullrun.guarded
@@ -301,30 +322,16 @@ For **top-level entry points** in scripts and CLIs: instead of a
 raw traceback on `NullRunConfigError(NR-C001)` at the first gate
 call, the operator sees the structured four-line developer report
 and the process exits cleanly. In libraries and long-running
-services, prefer `try/except NullRunError` — `@guarded` / `handle()`
+services, prefer `try/except NullRunError` — `handle()` / `@guarded`
 exit the process, which isn't appropriate there.
 
 The context-manager form `with nullrun.handle():` is the
-**recommended form** for region-of-code scopes — it makes the
-scope explicit, accepts an `exit_code=` argument, and the four-line
-report is what it always renders:
-
-```python title="handle_context.py"
-import nullrun
-from nullrun import protect
-
-@protect
-def run_my_agent(prompt: str) -> str:
-    return call_llm(prompt)
-
-
-if __name__ == "__main__":
-    with nullrun.handle():
-        print(run_my_agent("hello"))
-    # ↑ if run_my_agent raised NullRunError, the four-line developer
-    #   report is printed (catalog headline + error_code + what +
-    #   where + why + how to fix) and the script exits 1.
-```
+**recommended form** for region-of-code scopes — see the example
+above. It makes the scope explicit, accepts an `exit_code=` argument,
+and the four-line report is what it always renders. If `run_my_agent`
+raises `NullRunError` inside the block, the four-line developer
+report is printed (catalog headline + error_code + what + where +
+why + how to fix) and the script exits 1.
 
 ### Zero-activity diagnostic
 
@@ -439,7 +446,7 @@ the tool-block check for that single function name.
 | Mark a money-moving tool for typed approval | `@nullrun.sensitive(impact=money_outflow(argument="amount_cents", currency="USD"))` |
 | Mark a tool where rule names ≠ arg names | `@nullrun.sensitive(impact=tool_params({"user_id": "uid"}))` |
 | Mark a tool where every kwarg is a secret | `@nullrun.sensitive(impact=tool_params(include_all=False))` |
-| Top-level script entry (friendly exit) | `@nullrun.guarded` or `with nullrun.handle():` (preferred) |
+| Top-level script entry (friendly exit) | `with nullrun.handle():` (preferred) — `@nullrun.guarded` is the decorator alternative for the same behaviour |
 | Multi-step agent run (cost + trace per workflow) | `with nullrun.workflow("agent-name"): ...` |
 | Per-call model name and tools for `/gate` | `nullrun.set_call_context(model=..., tools=[...])` inside `with workflow` |
 | Soft-mode budget (controlled overdrafts) | `with nullrun.chain(uuid.uuid4(), op="start"): ...` |
@@ -475,16 +482,25 @@ def orchestrator(q):
 def researcher(q):
     return get_current_span()         # parent's span_id == parent_span_id
 
-# ─── Top-level script entry with friendly exit ───
-@nullrun.guarded
-@nullrun.protect
+# ─── Top-level script entry with friendly exit (handle() preferred) ───
+import nullrun
+from nullrun import protect, shutdown
+
+@protect
 def main(prompt): ...
 
+if __name__ == "__main__":
+    try:
+        with nullrun.handle():               # canonical — 4-line report + exit 1
+            print(main("hello"))
+    finally:
+        shutdown()
+
 # ─── Full layering: chain → workflow → call context → @protect ───
+# No init() / init_or_die() — runtime is created lazily on the first
+# @protect call. NULLRUN_API_KEY must be set in the shell.
 import uuid
 import nullrun
-
-nullrun.init(api_key="nr_live_...")
 
 chain_id = str(uuid.uuid4())
 with nullrun.chain(chain_id, op="start"):           # soft-mode budget

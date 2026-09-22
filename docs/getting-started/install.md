@@ -17,6 +17,11 @@ Verify:
 python -c "from nullrun import protect; print('ok')"
 ```
 
+> **No manual initialization required.** Initialization is lazy,
+> process-wide, and triggered by the first `@protect` call. There is
+> no `init()` / `init_or_die()` boilerplate to add to your entry
+> point — see the mental-model diagram in [Quickstart](quickstart.md).
+
 > **No local mode.** If `NULLRUN_API_KEY` is missing when the first
 > `@protect` call hits the runtime, the SDK raises
 > `NullRunConfigError` (NR-C001) at the gate. There is no offline /
@@ -32,32 +37,36 @@ transparently obtains the HMAC secret via:
 POST /api/v1/auth/verify
 ```
 
-on first use, so you only need to pass the API key:
+on first use, so you only need to export the key as an environment
+variable:
 
-```python title="app.py"
-import nullrun
-nullrun.init(api_key="nr_live_...")
+```bash title="shell"
+export NULLRUN_API_KEY=nr_live_...
 ```
 
-The public `init()` surface takes `api_key` (and optionally `api_url`,
-`debug`). The HMAC secret is **not** a constructor argument — it is
-read from `NULLRUN_SECRET_KEY` or returned by `/api/v1/auth/verify`.
+The SDK reads `NULLRUN_API_KEY` on the first `@protect` call (no
+`init()` step). The HMAC secret is **not** a constructor argument —
+it is read from `NULLRUN_SECRET_KEY` or returned by `/api/v1/auth/verify`.
 
-> **Don't need `init()` at all?** The first `@protect` call creates
-> the runtime lazily from `NULLRUN_API_KEY`. Explicit `init()` is
-> optional and only needed if you want to fail-fast on a missing key
-> before the first gate call, or to bind an API key from a non-env
-> source. Most apps skip it.
+> **Optional: explicit `init()` / `init_or_die()`.** The first
+> `@protect` call creates the runtime lazily from `NULLRUN_API_KEY`.
+> Explicit `init()` is only needed if you want to fail-fast on a
+> missing key before the first gate call (CI / smoke tests), or to
+> bind an API key from a non-env source. Most apps skip it.
+> See [Reference → init / init_or_die](../reference/sdk-api.md#init--init_or_die-optional-early-fail-fast)
+> for the contract.
 
 For env-var setup (`NULLRUN_API_KEY`, `NULLRUN_SECRET_KEY`, and other
 runtime flags), see [Configuration](configuration.md).
 
 ## Auto-instrumentation
 
-The SDK's auto-instrumentation runs **lazily on the first `@protect`
-call**, not at import or `init()` time. The lazy trigger creates the
-runtime and patches every framework / transport hook it can detect in
-`sys.modules` in a single process-wide idempotent step.
+The SDK's auto-instrumentation runs **lazily on the first protected
+execution path**, not at import time or in any pre-`@protect` hook.
+The lazy trigger creates the runtime, reads `NULLRUN_API_KEY`, installs
+the HTTP instrumentation, and attaches every framework / transport
+hook it can detect in `sys.modules` in a single process-wide
+idempotent step.
 
 | Detected | Coverage |
 | --- | --- |

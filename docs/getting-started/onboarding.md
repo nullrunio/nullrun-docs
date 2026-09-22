@@ -57,8 +57,9 @@ from nullrun import protect, shutdown
 client = OpenAI()
 
 # @protect gates every call through NullRun before it runs.
-# The runtime is created lazily on the first call from
-# NULLRUN_API_KEY — no init() call needed.
+# No init() / init_or_die() call needed — the runtime is created
+# lazily on the first protected execution from NULLRUN_API_KEY,
+# the HTTP instrumentation is installed, and tracking starts.
 @protect
 def answer(prompt: str) -> str:
     response = client.chat.completions.create(

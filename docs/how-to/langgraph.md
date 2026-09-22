@@ -47,8 +47,8 @@ any LangChain `Runnable` and most LangGraph node types.
 > attach path in pre-0.18 SDKs. The auto-instrumentation above is now
 > the canonical route and covers every common case. `wrapper()` is
 > kept as an escape hatch for tests with custom runtimes, `Pregel`
-> imported before init, or manual callback control. It will be removed
-> in a future minor version.
+> imported before the first `@protect` call, or manual callback
+> control. It will be removed in a future minor version.
 
 If you need to attach the callback manually — e.g. inside a library
 that re-compiles graphs after the runtime was created — the explicit

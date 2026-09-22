@@ -5,12 +5,12 @@ description: Run multiple agents in one workflow, propagate parent_trace_id, and
 
 # Run multiple agents (multi-key / multi-process)
 
-NullRun's `init()` is intended to be called **once per process**.
 The SDK's runtime is a process-scoped singleton — transport pool,
-WebSocket subscription, and event batch buffer. If you call `init()`
-twice in the same process, behaviour depends on the runtime
-implementation; the supported pattern is one `init()` per process
-and one process per workflow key.
+WebSocket subscription, and event batch buffer — created lazily on
+the first `@protect` call. If you call `nullrun.init()` twice in the
+same process, behaviour depends on the runtime implementation; the
+supported pattern is one runtime per process and one process per
+workflow key.
 
 For everything beyond a single one-shot script, run **one process per
 key**. This page shows the three patterns that cover real workloads.
@@ -62,15 +62,16 @@ def fan_out(jobs: list[tuple[str, str]]) -> list[str]:
         return [r.get(timeout=120) for r in async_results]
 ```
 
-Each child gets its own copy of the SDK state, so each `init()` runs
-cleanly with no shutdown collisions. **Do not** call `init()` once at
-the parent and share the runtime across children — that's the
-multi-key-in-one-process anti-pattern and you'll get shutdown warnings
-the moment the first child finishes.
+Each child gets its own copy of the SDK state, so each runtime
+initializes lazily and cleanly with no shutdown collisions. **Do
+not** share a runtime across children — that's the multi-key-in-one-
+process anti-pattern and you'll get shutdown warnings the moment the
+first child finishes.
 
 Pick the pool start method that matches your platform (see the
 `multiprocessing` docs). The rule is the same regardless: each child
-is a fresh interpreter and runs its own `init()` independently.
+is a fresh interpreter and initializes its own runtime on the first
+`@protect` call.
 
 ## Pattern 3 — one entrypoint, multiple keys, hard process boundary
 
@@ -97,17 +98,19 @@ def run_workflow(key: str, prompt: str) -> str:
     return result.stdout
 ```
 
-The subprocess startup cost (~150 ms for `init()` + WebSocket connect)
-is the price for clean isolation. For high-throughput paths, see
-Pattern 2 — multiprocessing keeps workers warm in a pool.
+The subprocess startup cost (~150 ms for the lazy runtime init +
+WebSocket connect) is the price for clean isolation. For high-
+throughput paths, see Pattern 2 — multiprocessing keeps workers warm
+in a pool.
 
 ## What doesn't work
 
-Calling `init()` more than once in the same process is not a
-supported pattern. The runtime singleton is process-scoped, and
-mixing multiple keys in one process leads to interleaved events
-on the wrong workflow. The supported alternative is one process per
-key (Pattern 1) or one subprocess per request (Pattern 3).
+Calling `nullrun.init()` more than once in the same process to swap
+keys is not a supported pattern. The runtime singleton is
+process-scoped, and mixing multiple keys in one process leads to
+interleaved events on the wrong workflow. The supported alternative
+is one process per key (Pattern 1) or one subprocess per request
+(Pattern 3).
 
 ## What if I want a single dashboard view across all my processes?
 

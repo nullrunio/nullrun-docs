@@ -15,8 +15,8 @@ pip install "nullrun[all]"     # every optional extra
 ```
 
 Auto-instrumentation for httpx-based libraries (`openai`,
-`anthropic`, `openai-agents`, …) is on by default once `init()` runs —
-see [Auto-instrumentation](../getting-started/install.md#auto-instrumentation).
+`anthropic`, `openai-agents`, …) attaches lazily on the first
+`@protect` call — see [Auto-instrumentation](../getting-started/install.md#auto-instrumentation).
 
 ## Top-level
 
@@ -24,21 +24,27 @@ see [Auto-instrumentation](../getting-started/install.md#auto-instrumentation).
 from nullrun import init, init_or_die, protect, workflow, span, agent, chain, track_llm, track_tool, track_event
 ```
 
-### `init()` vs `init_or_die()` — which one to use
+### `init` / `init_or_die`: optional early fail-fast {#init--init_or_die-optional-early-fail-fast}
+
+> **Optional.** The runtime is created lazily on the first `@protect`
+> call — most apps skip `init()` entirely. These helpers exist for
+> the cases where you need early fail-fast before any `@protect` call
+> runs (CI / smoke tests, pre-flight validation, library authors
+> wiring keys from a non-env source).
 
 | Helper | Behaviour | Use when |
 |---|---|---|
-| `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI) |
-| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Catches the `NullRunAuthenticationError` exception, prints the catalog user-message to stderr, calls `sys.exit(exit_code)`. Returns the runtime otherwise. | One-shot scripts, CLI tools, examples, anything where a missing key is a hard error |
+| `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI). Library authors wiring an SDK key from a non-env source. |
+| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Catches the `NullRunAuthenticationError` exception, prints the catalog user-message to stderr, calls `sys.exit(exit_code)`. Returns the runtime otherwise. | One-shot scripts, CLI tools, smoke tests — anywhere a missing key is a hard error and you want a clean exit instead of a traceback. |
 
-`init_or_die` is `init` plus an `try/except NullRunAuthenticationError → sys.exit(1)`. The chain `@guarded` decorator does the same for callsite-level errors.
+`init_or_die` is `init` plus a `try/except NullRunAuthenticationError → sys.exit(1)`. The chain `@guarded` decorator does the same for callsite-level errors. Both helpers are also idempotent — calling `init()` twice returns the same singleton without re-running the lazy trigger.
 
 || Symbol | Purpose | In `__all__` |
 |---|---|---|---|
-| `init(api_key=None, api_url=None, debug=False)` | Initialise the SDK singleton. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
-| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Like `init` but exits cleanly with `exit_code` (default 1) if no API key is configured. See the table above. | ✅ |
+| `init(api_key=None, api_url=None, debug=False)` | **Optional.** Eagerly initialise the runtime — usually skipped because the runtime is created lazily on the first `@protect` call. Use `init()` when you want early fail-fast on a missing key, or to bind a key from a non-env source. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
+| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | **Optional.** Like `init` but exits cleanly with `exit_code` (default 1) if no API key is configured. See the table above. | ✅ |
 | `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. Pair with `with nullrun.handle():` for the structured 4-line dev report on failure. | ✅ |
-| `@sensitive` | Parameterless decorator. Marks a function as a sensitive tool — `@protect` will pre-check before the body runs. If the gate is unreachable, the call is rejected. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
+| `@sensitive` | Marks a function as a sensitive tool for Approval Rules. The bare form auto-attaches a `ToolParamsExtractor(include_all=True)` so every kwarg reaches the operator (use `@sensitive(impact=tool_params({...}))` for an explicit rename map, or `@sensitive(impact=money_outflow(...))` for the Phase 1 Money variant). Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
 | `@guarded` | Decorator equivalent of `with nullrun.handle():` — wraps a function so any `NullRunError` raised inside is converted to the structured 4-line dev report on stderr and `sys.exit(1)`. Use the un-`@guarded` `protect()` form if you need to handle kill distinctly. | ✅ |
 | `with nullrun.handle(*, exit_code=1):` | Context manager form of `@guarded` — apply to a region of code rather than a single function. **Recommended** for the structured 4-line developer report. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
@@ -173,14 +179,17 @@ hierarchy diagram.
 
 ```python title="catch_all_pattern.py"
 import nullrun
-from nullrun import WorkflowKilledInterrupt, init, protect
+from nullrun import WorkflowKilledInterrupt, protect
 from nullrun.breaker.exceptions import (
     NullRunBlockedException,
     RateLimitError,
     WorkflowPausedException,
 )
 
-init(api_key="nr_live_...")
+# init() is OPTIONAL — the first protect(...) below creates the
+# runtime lazily from NULLRUN_API_KEY. Use init() here only if you
+# want early fail-fast on a missing key (CI / smoke tests). See
+# init / init_or_die above.
 
 try:
     step()

@@ -153,9 +153,9 @@ hook, filter on `error_code` (`"NR-W002"`).
 ## Layer 3 — `with nullrun.handle():` and `format_user_message`
 
 For scripts that just want "run the agent and print a friendly
-message on failure", use the zero-boilerplate helpers. The first
-`@protect` call lazily creates the runtime, so there is no `init()`
-line:
+message on failure", use the no-boilerplate helpers. The first
+`@protect` call lazily creates the runtime, so there is no
+`init()` / `init_or_die()` line:
 
 ```python
 from nullrun import protect, shutdown
@@ -209,7 +209,8 @@ long-running services you want explicit handling — see
 
 If you want your own error messages (e.g. "You've used all your
 support credits" instead of the default wording), call
-`set_user_message` once at startup:
+`set_user_message` once at the top of your entry point (or register
+it via `atexit`):
 
 ```python
 import nullrun

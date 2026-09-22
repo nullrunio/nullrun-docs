@@ -156,7 +156,8 @@ response is returned.
 ## Per-deployment wording overrides
 
 To brand the wording for a single deployment, call
-`nullrun.set_user_message(...)` once at startup:
+`nullrun.set_user_message(...)` once at the top of your entry point
+(or register via `atexit`):
 
 ```python
 nullrun.set_user_message(

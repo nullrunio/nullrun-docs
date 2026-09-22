@@ -5,16 +5,19 @@ description: Every NullRun SDK environment variable, transport option, and fail-
 
 # Configuration
 
-NullRun reads configuration from environment variables. `nullrun.init()`
-only needs the API key — everything else has sensible defaults.
+NullRun reads configuration from environment variables. The runtime
+is created lazily on the first protected execution — there is no
+`init()` step in the user-facing path. Only `NULLRUN_API_KEY` is
+required; everything else has sensible defaults.
 
-Variables are read by the Python SDK process. The gateway is operated
-by the NullRun team and exposes no user-facing runtime flags.
+Variables are read by the Python SDK process on the first `@protect`
+call. The gateway is operated by the NullRun team and exposes no
+user-facing runtime flags.
 
 ## SDK env vars
 
-Read by `nullrun.init` and the SDK transport. None of these affect the
-gateway.
+Read by the SDK transport when the runtime is created on the first
+`@protect` call. None of these affect the gateway.
 
 | Variable | Default | Description |
 | --- | --- | --- |
