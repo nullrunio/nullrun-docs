@@ -192,8 +192,6 @@ The SDK accepts configuration through a combination of constructor arguments and
 | `NULLRUN_API_KEY` | API key (`nr_live_...`) | *none — required* |
 | `NULLRUN_SECRET_KEY` | HMAC secret (returned by `/api/v1/auth/verify`) | *fetched automatically* |
 | `NULLRUN_API_URL` | Gateway base URL | `https://api.nullrun.io` |
-| `NULLRUN_DEBUG` | Verbose logging | `0` (off) |
-| `NULLRUN_LOG_LEVEL` | Log level (`debug` / `info` / `warn` / `error`) | `info` |
 
 ### Programmatic configuration
 

@@ -95,10 +95,10 @@ There is no other accepted value — only `1` and the case-insensitive
 
 ### Posture by environment
 
-| Environment | Default | Source |
-| --- | --- | --- |
-| Production (`infra/docker-compose.prod.yml`) | **ON** — env var not set | `sanctions.rs:325-328` (`unwrap_or(false)` ⇒ `disabled == false` ⇒ screening active) |
-| Local dev (`infra/docker-compose.local.yml`) | **OFF** — default `1` | Compose line 155: `NULLRUN_SANCTIONS_SCREENING_DISABLED: ${NULLRUN_SANCTIONS_SCREENING_DISABLED:-1}` |
+| Environment | Default |
+| --- | --- |
+| Production | **ON** — screening active |
+| Local dev / sandbox | **OFF** by default — set the override above |
 
 ### When to keep it disabled
 

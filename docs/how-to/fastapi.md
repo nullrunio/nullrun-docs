@@ -60,13 +60,13 @@ install time.
 
 | `error_code` | Category | HTTP | Notes |
 | --- | --- | --- | --- |
-| `NR-B004` | decision | `429` | `retryable: false`. Covers `BUDGET_HARD_BLOCKED`, `BUDGET_SOFT_BLOCKED`, `BUDGET_OVERDRAFT_EXCEEDED`, `BUDGET_ANTI_DOS_RESERVED_CAP`, `BUDGET_PERIOD_NOT_STARTED`. Per `_DECISION_STATUS["NR-B004"]`. |
-| `NR-R001` | infrastructure | `503` | `Retry-After` from `.retry_after`. Class is `RateLimitError(NullRunTransportError)` so it lands on the infrastructure handler despite the `_DECISION_STATUS["NR-R001"]=429` entry being unreachable in practice. |
-| `NR-R002` | infrastructure | `503` | `retryable: true` — Redis unavailable for aggregate rate limit (fail-CLOSED). Class is `NullRunRateLimitRedisError(NullRunInfrastructureError)`. |
+| `NR-B004` | decision | `429` | `retryable: false`. Covers all budget-exhausted outcomes. |
+| `NR-R001` | infrastructure | `503` | `Retry-After` from `.retry_after`. Rate-limit window hit. |
+| `NR-R002` | infrastructure | `503` | `retryable: true` — rate-limit aggregate unavailable (fail-CLOSED). |
 | `NR-T001` | decision | `403` | The action itself is forbidden |
-| `NR-W004` | decision | `429` | Workflow soft-deleted or killed (`NullRunWorkflowInactiveError`). No `_DECISION_STATUS` entry → falls through to `_DEFAULT_DECISION_STATUS=429`. |
-| `NR-W003` | decision | `503` | Workflow paused (`WorkflowPausedException`) — override default to signal server-driven resume |
-| `NR-CH001` | decision | `429` | Chain context invalid (chain_id / parent_execution_id). No `_DECISION_STATUS` entry → default 429. |
+| `NR-W004` | decision | `429` | Workflow soft-deleted or killed. |
+| `NR-W003` | decision | `503` | Workflow paused — override default to signal server-driven resume |
+| `NR-CH001` | decision | `429` | Chain context invalid. |
 | `NR-X001` | decision | `403` | Generic block (catch-all decision) |
 
 `WorkflowKilledInterrupt` always maps to `503` (caught by the ASGI
