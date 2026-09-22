@@ -74,6 +74,50 @@ On a `Match` the response body is a generic 403 — the matched display
 name is **not** echoed to the client to avoid confirming the
 screening target.
 
+## Operator override — `NULLRUN_SANCTIONS_SCREENING_DISABLED`
+
+The screening is **ON by default**. The IP-level Fortress geo-block
+excludes sanctioned-country traffic before signup; name-based SDN
+screening is the secondary layer that catches designated persons
+who travel, use a non-sanctioned-country VPN, or register via
+OAuth from a non-sanctioned IP.
+
+To **disable** name-based screening entirely (the screening always
+returns `Clean`), set:
+
+```bash
+NULLRUN_SANCTIONS_SCREENING_DISABLED=1
+```
+
+There is no other accepted value — only `1` and the case-insensitive
+`true` disable the screening. Any other value (including `0`,
+`false`, or an unset variable) leaves screening ON.
+
+### Posture by environment
+
+| Environment | Default | Source |
+| --- | --- | --- |
+| Production (`infra/docker-compose.prod.yml`) | **ON** — env var not set | `sanctions.rs:325-328` (`unwrap_or(false)` ⇒ `disabled == false` ⇒ screening active) |
+| Local dev (`infra/docker-compose.local.yml`) | **OFF** — default `1` | Compose line 155: `NULLRUN_SANCTIONS_SCREENING_DISABLED: ${NULLRUN_SANCTIONS_SCREENING_DISABLED:-1}` |
+
+### When to keep it disabled
+
+The dev/local override exists because token-based name matching has
+a high false-positive rate at the pre-revenue / pre-customer stage
+— a perfectly innocent "Vladimir Petrov" may match an SDN surname
+token. With no customers to lose, the maintenance burden (weekly
+SDN list refresh, false-positive triage) outweighs the residual
+sanctions risk. The geo-block remains the always-on sanctions
+defence in every environment.
+
+### When to re-enable
+
+Remove the env var (or set it to `0`) as soon as the service has a
+meaningful customer base or accepts payments in volume. The
+recommended cutover is at first paying customer, not at first
+signup. A regulator's view of "acceptable false-positive cost" is
+sharper once money is in the picture.
+
 ## Known limitations
 
 - **Cyrillic / Latin homoglyphs are NOT collapsed.** A Cyrillic `а`
