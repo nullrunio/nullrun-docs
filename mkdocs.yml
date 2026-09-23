@@ -159,6 +159,8 @@ nav:
       - 5.2. Geographic restrictions: compliance/geo-restrictions.md
       - 5.3. Sanctions screening: compliance/sanctions-screening.md
   - 6. Troubleshooting: troubleshooting.md
+  - 7. Operations:
+      - 7.1. Performance & limits: operations/performance.md
 
 # No announcement banner — banner removed on 2026-08-30 per design
 # decision. (Old: Plan-rebalance 2026-06-24 dismissible banner. Removed.)
