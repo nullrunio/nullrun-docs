@@ -158,6 +158,7 @@ nav:
       - 5.1. Overview: compliance/index.md
       - 5.2. Geographic restrictions: compliance/geo-restrictions.md
       - 5.3. Sanctions screening: compliance/sanctions-screening.md
+      - 5.4. Data handling & vendor review: compliance/data-handling.md
   - 6. Troubleshooting: troubleshooting.md
   - 7. Operations:
       - 7.1. Performance & limits: operations/performance.md
