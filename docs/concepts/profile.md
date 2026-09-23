@@ -117,3 +117,129 @@ window.
   (different from this per-user page).
 - [Audit log](error-handling.md#audit-trail) — every profile
   change (password / 2FA / email / sessions) leaves a row.
+
+## Deep dive
+
+### Mechanism
+
+Per-user surface distinct from per-org Organization. Reads actor
+from session cookie `__Host-nullrun_session` (prod) /
+`nullrun_session` (dev) or `Authorization: Bearer
+<session_token>`. Cookie name resolution is
+`auth/cookies.rs::CookieEnv::current()` — fail-CLOSED on missing
+env (defaults to `Prod`, the `__Host-` prefix + `Secure` flag);
+the dev override requires `NULLRUN_DEV_MODE=true` AND
+`NODE_ENV != "production"`. The `OnceLock<CookieEnv>` is cached
+at first call so a missing or late-loaded `.env.prod` cannot
+flip a prod pod to Dev (a regression found 2026-07-15).
+
+2FA setup (`user_security.rs`) generates a 20-byte TOTP secret
+(RFC 4226 §4 R1), renders a base32-encoded `otpauth://` URI plus
+a QR SVG, and waits for the first 6-digit code to confirm before
+promoting from pending to active. Setup requires current password
+(`requireCurrentPassword`). Recovery codes are 10 × 80-bit
+random strings, shown ONCE at promotion, then stored as
+`Argon2(password_hash, recovery_code)` pairs on the user row.
+
+Pending 2FA challenges (login → 2FA → verify) live in Redis
+(`PENDING_2FA` TTL 300s) since GROWTH-4 — the
+`TwoFaStore::with_redis` variant persists them so a user who
+hits pod B right after the challenge was issued by pod A still
+sees a valid token. Pre-GROWTH-4 in-memory storage meant the
+user would see `Invalid 2FA token` until they re-issued.
+
+Account deletion is `DELETE /api/v1/auth/account` (NOT
+`/api/v1/me`) — wired in `proxy/http/routes.rs:1055`. Body shape
+(`DeleteAccountRequest`, ADR-048): typed `confirmation` (exact
+name match), optional `current_password` (iff `has_password`),
+optional `totp_code` (iff 2FA enabled), and `ownership_decisions:
+HashMap<OrgUuid, OwnershipDecision>` where the enum is
+`#[serde(tag = "action", rename_all = "snake_case")]` with
+`Transfer { to_user_id }` or `DeleteAndNotify`. Missing decisions
+for co-member owned orgs return
+`400 OWNERSHIP_DECISION_REQUIRED` with the full member roster.
+
+Session termination: `SessionManager::revoke_all_user_sessions`
+clears every `session:sess_*` whose data `user_id` matches, then
+follows with the per-token `session_org:{token}:*` SCAN (B1 fix
+— without this, the org-consistency cache would survive revoke
+for up to 60s and let a revoked token re-enter).
+
+### Guarantees
+
+- Tombstoned user re-login returns `USER_NOT_FOUND` (ADR-041,
+  `isTombstonedAuthResponse` in
+  `frontend/lib/post-auth-redirect.ts`) — five BFF entry-points
+  honour it (login, login-2fa, register, github callback,
+  google callback).
+- `DeleteAndNotify` arm is fail-CLOSED on Redis hiccup
+  (ADR-048 §5): if ANY co-member's session-revoke returns an
+  error, the handler aborts with `503 SERVICE_UNAVAILABLE` and
+  the org is NOT soft-deleted — the user's account is also not
+  deleted. Two reasons: audit retention (no dangling session keys
+  past TTL) and notification integrity (no unread "owner deleted
+  the org" email + still-usable session).
+- `Transfer` arm does NOT revoke the new owner's session (they
+  are now the owner); `DeleteAndNotify` does NOT revoke the
+  departing owner's session (they're leaving anyway).
+- TOTP secret is encrypted at rest with `APP_ENCRYPTION_KEY`;
+  decryption failure surfaces as `APP_ENCRYPTION_KEY drift`
+  (audit trail marker).
+- `revoke_all_user_sessions` clears BOTH the session key and the
+  derived `session_org:{token}:*` cache — single SCAN per org,
+  no stale-window bypass.
+- FKs on user-owned rows go to NULL on user delete (migration
+  203: `organization_api_keys.created_by_user_id`; migration 204:
+  `admin_audit_log.actor_user_id`) so account delete is not
+  blocked by 23503.
+- Audit rows authored by a deleted user stay in the org's audit
+  log (`decided_by` UUID preserved) — forensic story is intact
+  for the retention window.
+
+### Patterns
+
+- Per-action audit emission via
+  `audit::persistence::record_security_audit_event` — every
+  profile mutation (password / 2FA / email / sessions) goes
+  through the typed wrapper so the policy-gated persistence
+  classes (`AuditPersistenceClass::SecurityEvidence`) are
+  uniformly enforced.
+- Ownership cascade is single-pass per owned org: iterate, decide,
+  execute. No remediation round-trips (ADR-048 §4 — the
+  earlier "POST then DELETE" anti-pattern was rejected for race
+  window + partial-failure UX).
+- `revoke_user_org_sessions(member_uuid, org_uuid)` (single
+  member, single org) is used by `remove_member_handler` so
+  member removal does not require `revoke_all_user_sessions`.
+
+### Approaches
+
+- Considered per-org POST/DELETE round-trip per conflict.
+  Rejected (ADR-048 §4): race window between two parallel
+  round-trips, partial-failure UX, PUT-on-DELETE semantic smell.
+- Considered mandatory transfer (drop `delete_and_notify`).
+  Rejected: spec'd case-2 ("if no one is selected for transfer →
+  org deleted, all members kicked out") and the last-active-owner
+  scenario where closing is the only viable action.
+- Considered drop co-member support. Rejected: forces the user
+  out of the deletion flow to do prerequisite work in another
+  part of the app.
+- Considered in-memory 2FA store. Reverted to Redis-backed after
+  GROWTH-4 surfaced the cross-pod challenge-loss bug.
+
+### Limitations
+
+- Wire change is a hard cutover — no protocol bump. The
+  `X-NULLRUN-PROTOCOL` header is bound to `/check` / `/execute` /
+  `/track` (ADR-013), not user-management endpoints. Older
+  clients without `ownership_decisions` fall into the 400 path;
+  the modal retries with decisions automatically.
+- Browser-only surface — no third-party SDK consumes
+  `DeleteAccountRequest`, so the body shape change is safe.
+- `APP_ENCRYPTION_KEY` rotation requires a runbook — breaks 2FA
+  + Slack (the encrypted TOTP secrets and webhook signing keys
+  are pinned to the old key).
+- `revoke_all_user_sessions` SCAN cost is bounded by
+  `session:sess_*` cardinality on Redis; for very large pods,
+  the count of revoked tokens is bounded by the user's own
+  session history.
