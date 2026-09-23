@@ -186,14 +186,14 @@ a call you think should be allowed:
 ### Mechanism
 
 ToolBlock policies flow through `check_tool_block`
-(`backend/src/proxy/http/gate/orchestrator.rs:2522`). The function
+(`backend/src/proxy/http/gate/orchestrator.rs`). The function
 resolves the canonical tool list as `effective_tools = req.tools ++
 req.tool` (TB-1/TB-2/TB-3/TB-4 fail-CLOSED trajectory) — singular
 `tool` is treated as the primary tool when `tools` is absent or
 empty. It looks up the per-key `KeyPolicy.tool_patterns` (set by the
 aggregator at `aggregate_policies` walking the canonical
 `tool_pattern` / `blocked_tools` / `tools` keys) and runs `glob_match`
-(orchestrator.rs:2320) for every entry. `glob_match_single` handles
+(orchestrator.rs) for every entry. `glob_match_single` handles
 single-`*` patterns; `glob_match_multi` (line 2397) splits on every
 `*` and requires each non-empty literal segment to appear in order
 (v3.39 / DEF-POLFLOW-TB-06). On match, the orchestrator returns
@@ -212,7 +212,7 @@ ToolBlock is ALWAYS Hard, regardless of `enforcement_mode` (CLAUDE.md
 blocked tool never gets a budget envelope minted — the agent never
 runs an unverified sensitive operation. Pattern length is capped at
 **4096 bytes per entry** (`MAX_POLICY_PATTERN_BYTES`,
-`backend/src/proxy/http/validation.rs:1676`); the cap exists because
+`backend/src/proxy/http/validation.rs`); the cap exists because
 the matcher scans every pattern on every gate call. Validator rejects
 four fail-OPEN traps at policy creation:
 `tool_pattern: ""` (DEF-POLBIZ-06-02),
@@ -231,7 +231,7 @@ Glob variants: `*` alone = match everything; `bash.*` smart-matches
 `send_*` matches anything starting with `send_`; `*.drop_*` matches
 `s3.drop_table` because the multi-`*` matcher takes literal segments
 in order. Alternation via `|`: `bash|sh|shell` collapses three
-patterns into one entry (orchestrator.rs:2324). No `**`, no `?`, no
+patterns into one entry (orchestrator.rs). No `**`, no `?`, no
 character classes — those are rejected as literals. The aggregator
 HashSet-dedups trimmed entries (TB-H2 closure, 2026-08-12) so
 `"bash"` and `"bash "` (trailing space) collapse to one — purely a
@@ -248,7 +248,7 @@ proceeded to the budget reserve; the fix made the absent-`tools` path
 fail-CLOSED whenever `tool_patterns` is non-empty. (2) **Globbing the
 JSON config's argument bag** — the matcher operates on the canonical
 tool name only (`glob_match_does_not_look_at_tool_arguments`,
-orchestrator.rs:4896) — operators do NOT write JSONPath rules over
+orchestrator.rs) — operators do NOT write JSONPath rules over
 tool payloads (CLAUDE.md §"What is NOT stored"). Per-policy
 `action = require_approval` was rejected because the two rule types
 have distinct config shapes; a ToolBlock policy never produces

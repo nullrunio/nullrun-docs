@@ -166,7 +166,7 @@ and on every reconnect.
 ### Mechanism
 
 The control plane is a WebSocket at `GET /ws/control/:organization_id`
-(`backend/src/proxy/http/ws_control.rs:631-691`,
+(`backend/src/proxy/http/ws_control.rs`,
 `ws_control_handler`). Auth is the same `X-API-Key` / `Authorization:
 Bearer` used on `/gate` / `/track`; SEC-7 explicitly rejects API keys
 in query strings (line 651-657) because query params are routinely
@@ -184,20 +184,20 @@ HMAC-signed per-org via `SignedWsMessage::new` (`:75-91`) using the
 canonical-serialize (RFC 8785 JCS subset, `:115-`) bytes for the
 signing input. The HTTP-poll fallback lives at
 `GET /api/v1/status/:workflow_id`
-(`backend/src/proxy/handlers.rs:13621-13670`, `status_handler`) — it
+(`backend/src/proxy/handlers.rs`, `status_handler`) — it
 emits `state` as PascalCase (`State::as_pascal_case`) so the SDK's
 `check_control_plane` matches without casing drift.
 
 ### Guarantees
 
 State transitions are validated at the source via
-`State::validate_transition` (`backend/src/decision/mod.rs:177-214`):
+`State::validate_transition` (`backend/src/decision/mod.rs`):
 `Killed → *` is terminal — no transitions out, ever. The WS frame
 carries a `version` field per `EventMetadata.sequence`
-(`event_bus.rs:382-391`) so a re-syncing SDK can detect missed events;
+(`event_bus.rs`) so a re-syncing SDK can detect missed events;
 the SDK calls `WsMessage::ResyncRequired` to ask for a full
 re-fetch. Cross-org envelope leakage is blocked at the converter
-(`ws_control.rs:1197-1208`, NR-094): the `expected_org_id` parameter
+(`ws_control.rs`, NR-094): the `expected_org_id` parameter
 must match the payload's `organization_id` for the four variants
 that carry it (`StateChanged` / `PolicyInvalidated` / `KeyRotated` /
 `ApprovalResolved`); a mismatch drops the event with a `tracing::warn!`
@@ -214,7 +214,7 @@ via `record_audit_event_simple` on the kill handler.
 The push flow on a kill: `kill_workflow_handler` →
 `service.kill_workflow` (DB lifecycle UPDATE) →
 `record_audit_event_simple("workflow.killed")` (P0-19 audit breadcrumb,
-`workflows.rs:3120-3140`) → `EventBus::publish(StateChanged {
+`workflows.rs`) → `EventBus::publish(StateChanged {
 new_state: "killed" })` → `ws_control_socket` subscriber →
 `convert_envelope_to_ws_message` → `WsMessage::StateChange {
 state: WsWorkflowState::Killed, message_id }` → SDK raises
@@ -269,7 +269,7 @@ so the on-call sees the rotation signal. The
 `WsMessage::ApprovalResolved` push is opt-in via
 `?wait_for_approval=true` on the upgrade; without that flag the
 SDK falls back to legacy poll-based resume (deprecated, removed in
-a future release per `ws_control.rs:494-498`). Cross-replica
+a future release per `ws_control.rs`). Cross-replica
 fan-out for approval events is best-effort Redis pub/sub — a
 publish failure logs and is recovered by the next
 `/approval-state/reconcile` (P1-4) tick. The `Killed` terminal

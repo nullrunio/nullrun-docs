@@ -40,11 +40,11 @@ derived/inferred from code + ADR · `[N]` = not attested in repo.
 
 ### 1.1 SDK → backend `/api/v1/gate`
 
-Wire schema (`backend/src/proxy/http/gate/schemas.rs:28-93`):
+Wire schema (`backend/src/proxy/http/gate/schemas.rs`):
 
 | Field | Source | Notes |
 |---|---|---|
-| `execution_id` | SDK-supplied | Server **mints a UUIDv7** and echoes it back (`gate.rs:151-199`). Client-supplied IDs are not honoured for ownership — see ADR-003. |
+| `execution_id` | SDK-supplied | Server **mints a UUIDv7** and echoes it back (`gate.rs`). Client-supplied IDs are not honoured for ownership — see ADR-003. |
 | `trace_id`, `tool`, `mode`, `operation_id` | SDK-supplied | Standard envelope. |
 | `business_impact {Money{direction, amount_minor, currency}}` | SDK-supplied | Optional; only required for typed approval rules. |
 | `action_digest` | SDK-supplied | SHA-256 hex of canonicalised payload. Verified at `/execute` time per ADR-006. |
@@ -53,13 +53,13 @@ Wire schema (`backend/src/proxy/http/gate/schemas.rs:28-93`):
 
 **Org-mismatch guard (IDOR, P0-01):** body `organization_id` must match
 authenticated context. Mismatch returns `OrgMismatch` block
-(`gate.rs:170-199`).
+(`gate.rs`).
 
 **No email / no actor name** is sent by the SDK.
 
 ### 1.2 SDK → backend `/api/v1/track`
 
-`TrackRequestRaw` (`backend/src/proxy/handlers.rs:2097-2273`): `event_id`,
+`TrackRequestRaw` (`backend/src/proxy/handlers.rs`): `event_id`,
 `workflow_id` (required), `tokens`, `cost_cents` (accepted int/float/string
 but **not trusted for enforcement** — server overwrites via 5%-delta rule;
 "don't trust client-supplied execution_id or cost_cents" — CLAUDE.md
@@ -74,7 +74,7 @@ invariant), `tool_name`, `is_retry`, `operation_name`, `client_created_at`,
 
 ### 1.3 Backend → SDK gate response
 
-`backend/src/proxy/http/gate/schemas.rs:119-200`: `decision`,
+`backend/src/proxy/http/gate/schemas.rs`: `decision`,
 `decision_source`, `explanation`, `approval_id`,
 `approval_timeout_seconds`, server-minted `execution_id`,
 `action_digest` echo, `policy_hash` (reserved), `idempotent_replayed: bool`.
@@ -85,13 +85,13 @@ No email, no org name, no actor identifier echoed. `[V]`
 ### 1.4 Backend ↔ upstream LLM provider
 
 - `ProxyRequest` / `ProxyResponse` types and `proxy_handler` /
-  `streaming_proxy_handler` exist at `backend/src/proxy/http/proxy.rs:30-238`.
-- Provider enum covers OpenAI / Anthropic / Google / Azure (`provider/mod.rs:22-27`).
+  `streaming_proxy_handler` exist at `backend/src/proxy/http/proxy.rs`.
+- Provider enum covers OpenAI / Anthropic / Google / Azure (`provider/mod.rs`).
 - **The route is NOT wired into the live router** — NULLRUN does not
   currently proxy LLM calls. The SDK talks to providers directly with
   the customer's own API keys. `[D]`
 - **Vault invariant:** SDK never sees raw provider API keys; credentials
-  would be resolved server-side. Per `backend/src/security/vault.rs:6-10`.
+  would be resolved server-side. Per `backend/src/security/vault.rs`.
 
 ### 1.5 WebSocket control plane
 
@@ -100,25 +100,25 @@ No email, no org name, no actor identifier echoed. `[V]`
   by per-API-key secret.
 - Wire is signed; the receiver verifies against
   `bytes::from_hex(signed_payload)` — never against full wire bytes.
-- Source: `backend/src/proxy/http/ws_control.rs:30-72`. `[V]`
+- Source: `backend/src/proxy/http/ws_control.rs`. `[V]`
 
 ### 1.6 Webhooks received
 
 | Webhook | Verification | Source |
 |---|---|---|
-| **Polar** (billing) | HMAC-SHA256 verified BEFORE any processing. Accepts Standard Webhooks headers (`webhook-id`, `webhook-timestamp`, `webhook-signature: v1,<base64>`) and legacy `polar-signature: t=…,v1=…`. Sandbox bypass removed (2026 audit). | `backend/src/proxy/http/webhooks.rs:29-170` |
-| **Slack events** | Signing-secret validation; bot tokens stored via pgcrypto encryption. | `slack_oauth.rs:96-100`, `crypto.rs` |
-| **Geo-block** | IP allow/deny via MaxMind `GeoLite2-Country.mmdb` (operator-managed file). Fail-CLOSED (503) when DB unloadable. | `proxy/middleware/geo_block.rs:50-200` |
+| **Polar** (billing) | HMAC-SHA256 verified BEFORE any processing. Accepts Standard Webhooks headers (`webhook-id`, `webhook-timestamp`, `webhook-signature: v1,<base64>`) and legacy `polar-signature: t=…,v1=…`. Sandbox bypass removed (2026 audit). | `backend/src/proxy/http/webhooks.rs` |
+| **Slack events** | Signing-secret validation; bot tokens stored via pgcrypto encryption. | `slack_oauth.rs`, `crypto.rs` |
+| **Geo-block** | IP allow/deny via MaxMind `GeoLite2-Country.mmdb` (operator-managed file). Fail-CLOSED (503) when DB unloadable. | `proxy/middleware/geo_block.rs` |
 
 ### 1.7 Email
 
 - **Sub-processor:** Brevo (Sendinblue GmbH, **DE**). SMTP via
   `BREVO_SMTP_HOST` / `BREVO_SMTP_LOGIN` / `BREVO_SMTP_PASSWORD`.
-  `backend/src/email.rs:38-88`. `[V]`
+  `backend/src/email.rs`. `[V]`
 - **Email types:** invitation, invite-declined, 2FA recovery, password
   reset, verification, data-export-ready notification.
 - **PII redaction in logs:** `EmailHash` Display renders a 12-char
-  sha256 prefix, never plaintext. `backend/src/pii.rs:23-94`. `[V]`
+  sha256 prefix, never plaintext. `backend/src/pii.rs`. `[V]`
 
 ## 2. Data stored — Postgres
 
@@ -141,18 +141,18 @@ No email, no org name, no actor identifier echoed. `[V]`
 This is the SOC2 control surface:
 
 1. Row-level `BEFORE UPDATE / DELETE` triggers raise `P0001`
-   unconditionally. `db/mod.rs:4775-4792` (migration 149).
+   unconditionally. `db/mod.rs` (migration 149).
 2. DDL event trigger `prevent_audit_ddl` blocks `ALTER / CREATE / DROP`
    on `audit_events` and `audit_exports`.
 3. `REVOKE DELETE / TRUNCATE` on `audit_exports` from app role.
 4. `ENABLE ALWAYS TRIGGER` hardening (migration 344, 2026-09-18) closes
    the `session_replication_role = 'replica'` bypass. **Closes
    DEF-PENTEST-001 P0** discovered in the 2026-09-18 internal pentest.
-   `db/mod.rs:14272-14596`.
+   `db/mod.rs`.
 
 ### Column-level encryption
 
-`backend/src/crypto.rs:50-58` provides `encrypt_to_hex` /
+`backend/src/crypto.rs` provides `encrypt_to_hex` /
 `decrypt_from_hex` using pgcrypto AES. Used today for **Slack OAuth bot
 tokens** (`slack_oauth.rs`). Threat model: stolen disk image OR
 read-only DB dump yields ciphertext; plaintext requires DB +
@@ -162,7 +162,7 @@ read-only DB dump yields ciphertext; plaintext requires DB +
 
 | Key pattern | Purpose | PII | TTL | Source |
 |---|---|---|---|---|
-| `bp:{ts}:cost_cents` | Period-bound budget counter (cents). **Authoritative for enforcement.** | No (integer only) | `period_end_ts - now()`, capped `PERIOD_BUDGET = 35d` | `redis/mod.rs:354-360` |
+| `bp:{ts}:cost_cents` | Period-bound budget counter (cents). **Authoritative for enforcement.** | No (integer only) | `period_end_ts - now()`, capped `PERIOD_BUDGET = 35d` | `redis/mod.rs` |
 | `bp:{ts}:executions` | Period-bound execution rate counter | No | Same TTL | `:362-368` |
 | `execution:{execution_id}` | Hash binding (org_id, api_key_id). Anti-replay for `/track`, `/heartbeat` | No | `EXECUTION_BINDING = 24h` | `:283-291` |
 | `rate_limit:{org_id}:{minute}` | Per-org rate-limit counter | No | `RATE_LIMIT = 120s` | `:45-48` |
@@ -176,7 +176,7 @@ read-only DB dump yields ciphertext; plaintext requires DB +
 | `in_flight:{org_id}:{api_key_id}` | In-flight counter for two-phase revoke drain (ADR-010) | No | 300s (KEEPTTL on decrement) | `:310-324` |
 | `chain:{org_id}:{chain_id}` | Chain state-machine hash | No | `CHAIN_IDLE = 300s` | `:326-342` |
 | `audit_hash:{organization_id}` | Last event's `content_hash` for chain fast-path | No | No TTL (cleanup-on-delete) | `:236-240` |
-| `session:{token}` | Session token → user lookup | user_id | 7d (`SESSION_MAX_AGE_SECS`) | `auth/cookies.rs:52` |
+| `session:{token}` | Session token → user lookup | user_id | 7d (`SESSION_MAX_AGE_SECS`) | `auth/cookies.rs` |
 
 **No PII** is stored in any of the above keys. Token keys, user indexes,
 and approval metadata carry only opaque IDs (UUIDs).
@@ -195,7 +195,7 @@ and approval metadata carry only opaque IDs (UUIDs).
 
 ### Container hardening
 
-Per `infra/docker-compose.prod.yml:99-142`:
+Per `infra/docker-compose.prod.yml`:
 
 - `read_only: true` root FS
 - `cap_drop: [ALL]`
@@ -209,13 +209,13 @@ Per `infra/docker-compose.prod.yml:99-142`:
 - Mozilla "intermediate" cipher list (2024)
 - HSTS preload candidate, `Strict-Transport-Security: max-age=31536000; includeSubDomains`
 - Certbot-managed Let's Encrypt at `/etc/letsencrypt/live/nullrun.io/`
-- Source: `infra/nginx/nginx-vps.conf:177-200`. `[V]`
+- Source: `infra/nginx/nginx-vps.conf`. `[V]`
 
 ## 5. Access controls
 
 ### 5.1 RBAC
 
-4-level hierarchy. `backend/src/auth/rbac.rs:21-28`:
+4-level hierarchy. `backend/src/auth/rbac.rs`:
 
 | Role | Level | Used for |
 |---|---|---|
@@ -226,21 +226,21 @@ Per `infra/docker-compose.prod.yml:99-142`:
 
 **Storage-layer role** (`OrganizationRole`) is parallel but not
 isomorphic: `Viewer / Member / Admin / Owner`. Conversion documented
-at `auth/rbac.rs:51-83`.
+at `auth/rbac.rs`.
 
 **Machine API keys** carry `role = None` denotationally (ADR-053).
 RBAC-protected mutations require user-bound key
 (`RbacError::UserBindingRequired` at `:117-120`).
 
 **Platform admin** additionally requires TOTP enabled + Owner role
-(`auth/admin.rs:71-87`); fail-CLOSED on TOTP-lookup error.
+(`auth/admin.rs`); fail-CLOSED on TOTP-lookup error.
 
 ### 5.2 Auth methods
 
 | Method | Wire | Source |
 |---|---|---|
-| Session cookies (browser) | `__Host-nullrun_session` (prod) / `nullrun_session` (dev). `__Host-` prefix requires Secure + Path=/ + no Domain. HttpOnly, SameSite=Lax, 7-day TTL. Defaults fail-CLOSED to prod (not dev) per 2026-07-15 hardening | `auth/cookies.rs:29-201` |
-| API keys (machine) | `nr_live_*` prefix; HMAC-SHA256 over `timestamp + ":" + api_key + ":" + body_hash`. `HmacKeyStore` supports versioned rotation + Redis pub/sub fan-out (`nullrun:hmac:keys` channel). Constant-time comparison via `subtle::ConstantTimeEq` | `backend/src/auth/hmac.rs:1-200+` |
+| Session cookies (browser) | `__Host-nullrun_session` (prod) / `nullrun_session` (dev). `__Host-` prefix requires Secure + Path=/ + no Domain. HttpOnly, SameSite=Lax, 7-day TTL. Defaults fail-CLOSED to prod (not dev) per 2026-07-15 hardening | `auth/cookies.rs` |
+| API keys (machine) | `nr_live_*` prefix; HMAC-SHA256 over `timestamp + ":" + api_key + ":" + body_hash`. `HmacKeyStore` supports versioned rotation + Redis pub/sub fan-out (`nullrun:hmac:keys` channel). Constant-time comparison via `subtle::ConstantTimeEq` | `backend/src/auth/hmac.rs+` |
 | OAuth (identity) | GitHub + Google OAuth 2.0 redirect | `auth/github.rs`, `google.rs` |
 | SSO | SAML/SSO labelled `DISABLED_IN_PROD` in repo instructions (`CLAUDE.md` "OAuth") | `[D]` |
 
@@ -252,12 +252,12 @@ RBAC-protected mutations require user-bound key
 - **Platform admin endpoints** require TOTP-enabled user.
 - **Recovery tokens** for OAuth users disabling 2FA: 24h TTL via
   `recovery_2fa:{token}` (Redis); single-use `GETDEL`.
-- Source: `backend/src/proxy/http/user_security.rs:62-150`. `[V]`
+- Source: `backend/src/proxy/http/user_security.rs`. `[V]`
 
 ### 5.4 API key scopes
 
 - `SCOPE_ADMIN` required for non-Owner admins on `/admin/*` paths
-  (`backend/src/auth/admin.rs:195-205`).
+  (`backend/src/auth/admin.rs`).
 - Workflow binding: API keys carry `workflow_id` (Phase 139); body
   `workflow_id` MUST match authenticated key's workflow, else
   `400 WORKFLOW_ID_BODY_MISMATCH` (WF-ID-01).
@@ -272,7 +272,7 @@ RBAC-protected mutations require user-bound key
   `app.current_org_id` GUC.
 - **Plan tier retention:** `plan.history_days` controls
   `UserVisibleHistory` retention; `-1` = unlimited
-  (`audit/kind.rs:99-106`).
+  (`audit/kind.rs`).
 
 ### 5.6 Operator access to production
 
@@ -287,21 +287,21 @@ RBAC-protected mutations require user-bound key
 
 | Layer | Mechanism | Source |
 |---|---|---|
-| **In transit — server edge** | TLS 1.2 / 1.3, Mozilla intermediate ciphers, HSTS preload candidate | `infra/nginx/nginx-vps.conf:177-200` |
-| **In transit — WebSocket** | HMAC-SHA256 over canonical JSON, replay window 300 s | `ws_control.rs:30-72` |
-| **At rest — Postgres (column)** | pgcrypto AES via `crypto::encrypt_to_hex` / `decrypt_from_hex`. Used for Slack OAuth bot tokens. Threat model: stolen DB dump + missing `APP_ENCRYPTION_KEY` = ciphertext | `crypto.rs:50-58` |
+| **In transit — server edge** | TLS 1.2 / 1.3, Mozilla intermediate ciphers, HSTS preload candidate | `infra/nginx/nginx-vps.conf` |
+| **In transit — WebSocket** | HMAC-SHA256 over canonical JSON, replay window 300 s | `ws_control.rs` |
+| **At rest — Postgres (column)** | pgcrypto AES via `crypto::encrypt_to_hex` / `decrypt_from_hex`. Used for Slack OAuth bot tokens. Threat model: stolen DB dump + missing `APP_ENCRYPTION_KEY` = ciphertext | `crypto.rs` |
 | **At rest — Postgres (disk)** | **Not attested** in repo; relies on DigitalOcean droplet disk encryption | `[N]` |
 | **At rest — Redis** | **Not attested** in repo; bind-mounted AOF/RDB volumes rely on host disk encryption | `[N]` |
 | **At rest — S3 / object storage** | `S3Client` writes via `BACKUP_S3_BUCKET`. Bucket-side encryption (SSE-S3 / SSE-KMS) configuration is **not exposed in repo** | `[D]` |
 | **KMS / key management** | `APP_ENCRYPTION_KEY` env var drives pgcrypto AES. No AWS KMS / GCP KMS / HashiCorp Vault integration visible. Rotation requires manual runbook (breaks 2FA + Slack per `CLAUDE.md`) | `[D]` |
-| **HMAC for request signing** | `NULLRUN_GATEWAY_SIGNING_KEY` (≥32 bytes, never auto-generated), used for HMAC-SHA256 of gate/execute/track bodies. `config.rs:25-46` | `[V]` |
+| **HMAC for request signing** | `NULLRUN_GATEWAY_SIGNING_KEY` (≥32 bytes, never auto-generated), used for HMAC-SHA256 of gate/execute/track bodies. `config.rs` | `[V]` |
 | **API keys at rest** | `key_hash` SHA-256 stored; `secret_key` plaintext stored (HMAC hot-path requirement). Key prefix / suffix surfaced for UI display | `[V]` |
 | **Cookie security flags** | `__Host-` prefix, Secure, HttpOnly (session), SameSite=Lax, Path=/, 7-day Max-Age. CSRF cookie NOT HttpOnly (SPA reads it). Production = fail-CLOSED default | `auth/cookies.rs` |
-| **Audit export signing** | Per-export HMAC-SHA256 sidecar via `NULLRUN_AUDIT_EXPORT_SECRET` (or per-org secret). Fail-CLOSED in prod (no dev fallback) | `proxy/http/audit.rs:94-118` |
+| **Audit export signing** | Per-export HMAC-SHA256 sidecar via `NULLRUN_AUDIT_EXPORT_SECRET` (or per-org secret). Fail-CLOSED in prod (no dev fallback) | `proxy/http/audit.rs` |
 
 ## 7. Sub-processors
 
-Canonical list (`backend/src/proxy/http/dpa.rs:103-177`) and
+Canonical list (`backend/src/proxy/http/dpa.rs`) and
 `SUBPROCESSOR_LIST_VERSION = 2026-06-25`. Public endpoint:
 `GET /api/v1/subprocessors` (ETag-cached).
 
@@ -334,7 +334,7 @@ tar encrypted with GPG before upload.
 
 ### 8.1 Organization deletion
 
-**Soft-delete path** (`db/mod.rs:22351-…`):
+**Soft-delete path** (`db/mod.rs-…`):
 
 - `UPDATE organizations SET deleted_at = NOW(), audit_purge_after = NOW() + 60 days`
 - Audit rows **intentionally retained** during grace for SOC2 immutability.
@@ -344,7 +344,7 @@ tar encrypted with GPG before upload.
 - Child-table cascade (api_keys, policies, workflows, invites) updated
   in the same tx.
 
-**Hard purge path** (`purge_soft_deleted_org`, `db/mod.rs:22834-…`):
+**Hard purge path** (`purge_soft_deleted_org`, `db/mod.rs-…`):
 
 - Runs hourly after `audit_purge_after`.
 - Calls `purge_organization_data` (scrubs `audit_events`,
@@ -391,10 +391,10 @@ Source: `backend/src/redis/in_flight.rs`,
 
 | Right | Implementation | Source |
 |---|---|---|
-| **Art. 15 — right of access** | `POST /api/v1/auth/data-export` per-user job+worker pattern. 7-day download TTL, 100k-record cap per section | `data_export.rs:36-200` |
+| **Art. 15 — right of access** | `POST /api/v1/auth/data-export` per-user job+worker pattern. 7-day download TTL, 100k-record cap per section | `data_export.rs` |
 | **Art. 17 — right to erasure** | `purge_organization_data` scrubs tenant-scoped data; triggered automatically 60 days after org soft-delete. No manual kickoff path documented for self-serve | `[V]` |
 | **Audit retention on erasure** | Audit rows physically deleted when org is purged (after 60-day grace). Pre-purge, retained even on soft-delete (intentional — SOC2) | `[V]` |
-| **Drift guard** | A-C-2 pin test prevents payloads from accumulating PII (e.g., email) that would later need GDPR erasure to scrub | `audit/drift_tests.rs:3959-3993` |
+| **Drift guard** | A-C-2 pin test prevents payloads from accumulating PII (e.g., email) that would later need GDPR erasure to scrub | `audit/drift_tests.rs` |
 
 ## 9. Data residency & sovereignty
 
@@ -402,7 +402,7 @@ Source: `backend/src/redis/in_flight.rs`,
   signup: customers who pick EU get EU-resident Postgres / Redis.
 - **Cross-region replication:** **Not attested** in repo. Single-region
   deployment posture.
-- **Cross-border transfers** (per `dpa.rs:103-176`):
+- **Cross-border transfers** (per `dpa.rs`):
   - US sub-processors (DO US regions, Slack, GitHub, Google) →
     **EU SCCs (Decision 2021/914) Module 2/3**.
   - EU sub-processors (Brevo DE, Polar SE, DO EU) → adequacy decision
@@ -410,7 +410,7 @@ Source: `backend/src/redis/in_flight.rs`,
 - **In-product region enforcement:** customers who select EU residency
   at signup have data physically in EU. Wire transfers: EU SCCs for US
   endpoints; otherwise data never leaves EU. `[D]`
-- **Customer-side region selection:** stated in `dpa.rs:111-115`
+- **Customer-side region selection:** stated in `dpa.rs`
   ("EU residency available (default for customers who select the EU
   region)"); the signup-time selection mechanism is not directly exposed
   in the visible code. `[D]`
@@ -419,12 +419,12 @@ Source: `backend/src/redis/in_flight.rs`,
 
 | Item | Status | Source |
 |---|---|---|
-| **DPA** | Available. `GET /api/v1/orgs/{org}/dpa` returns accepted-version + history; `POST /api/v1/orgs/{org}/dpa/accept` is idempotent on `(org_id, dpa_version)`. Acceptance recorded as `compliance.dpa.accepted` audit row. | `backend/src/proxy/http/dpa.rs:1-200+` |
+| **DPA** | Available. `GET /api/v1/orgs/{org}/dpa` returns accepted-version + history; `POST /api/v1/orgs/{org}/dpa/accept` is idempotent on `(org_id, dpa_version)`. Acceptance recorded as `compliance.dpa.accepted` audit row. | `backend/src/proxy/http/dpa.rs+` |
 | **DPA text version** | `2026-09-16`. Sub-processor list snapshot: `2026-06-25`. | same |
-| **Sub-processor endpoint** | `GET /api/v1/subprocessors` (public, ETag-cached) | `dpa.rs:181-200` |
+| **Sub-processor endpoint** | `GET /api/v1/subprocessors` (public, ETag-cached) | `dpa.rs` |
 | **GDPR Art. 15** | Per-user export implemented (`data_export.rs`) | `[V]` |
 | **GDPR Art. 17** | Right-to-erasure via `purge_organization_data` (60-day grace) | `[V]` |
-| **SOC 2** | Code references "SOC2 immutability" repeatedly (`db/mod.rs:4774-4783`, `:22334`). The `audit_events` immutability guarantee is the SOC2 control surface. **No SOC 2 Type II report attestation in repo.** | `[D]` |
+| **SOC 2** | Code references "SOC2 immutability" repeatedly (`db/mod.rs`, `:22334`). The `audit_events` immutability guarantee is the SOC2 control surface. **No SOC 2 Type II report attestation in repo.** | `[D]` |
 | **ISO 27001** | **Not claimed** in any file or doc found | `[N]` |
 | **HIPAA** | **Not claimed** in any file or doc found | `[N]` |
 | **CCPA** | **Not claimed** in any file or doc found | `[N]` |
@@ -447,7 +447,7 @@ Source: `backend/src/redis/in_flight.rs`,
 | Item | Status |
 |---|---|
 | **Internal pentest** | "Comprehensive pentest profile plan" exists at `explotarory testing/NULLRUN_comprehensive_pentest_profile_plan.md`. RUN_ID-scoped phases (`FULLSESSION-20260918T1430-pentest-phase1-*`, `phase2-*`, `phase3-*`) executed 2026-09-18 against local docker stack |
-| **Findings materialised in code** | Migration 344 (`tgenabled = 'A'` hardening) closed **DEF-PENTEST-001 P0** — audit-event immutability bypass via `session_replication_role='replica'`. `db/mod.rs:14272-14596` |
+| **Findings materialised in code** | Migration 344 (`tgenabled = 'A'` hardening) closed **DEF-PENTEST-001 P0** — audit-event immutability bypass via `session_replication_role='replica'`. `db/mod.rs` |
 | **External pentest report** | **Not in repo** |
 | **Bug bounty program** | **Not advertised** in repo |
 
@@ -457,7 +457,7 @@ Source: `backend/src/redis/in_flight.rs`,
   enforced in production. Missing / invalid → reject before enforcement.
 - **Protocol header required.** `X-NULLRUN-PROTOCOL` on every gate
   request; `/health` returns min/max (currently min=2, max=4,
-  current=4). `protocol.rs:67-71`.
+  current=4). `protocol.rs`.
 - **Fail-CLOSED on enforcement paths.** Budget path (Redis down → 402
   `REDIS_UNAVAILABLE`); geo-block (MaxMind unloadable → 503). Per
   `CLAUDE.md` "Five load-bearing invariants".

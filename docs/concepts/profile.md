@@ -149,7 +149,7 @@ sees a valid token. Pre-GROWTH-4 in-memory storage meant the
 user would see `Invalid 2FA token` until they re-issued.
 
 Account deletion is `DELETE /api/v1/auth/account` (NOT
-`/api/v1/me`) — wired in `proxy/http/routes.rs:1055`. Body shape
+`/api/v1/me`) — wired in `proxy/http/routes.rs`. Body shape
 (`DeleteAccountRequest`, ADR-048): typed `confirmation` (exact
 name match), optional `current_password` (iff `has_password`),
 optional `totp_code` (iff 2FA enabled), and `ownership_decisions:

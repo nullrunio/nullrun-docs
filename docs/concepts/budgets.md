@@ -200,7 +200,7 @@ and returns `CONSUME_OVERBUDGET` (HTTP 422). The 4-table audit
 separation (ADR-009) keeps the period counter in Redis for fast
 enforcement while `cost_events` flows through the Postgres outbox for
 durable history. The `ApproximateBudget` endpoint at
-`backend/src/proxy/http/budget.rs:152` walks Redis → Postgres outbox →
+`backend/src/proxy/http/budget.rs` walks Redis → Postgres outbox →
 last-known cache; when all three miss, it returns 503
 `BUDGET_DATA_UNAVAILABLE` with a 5s `Retry-After`.
 
@@ -209,11 +209,11 @@ last-known cache; when all three miss, it returns 503
 `Consume ≤ Reserve + ε_cents` (ADR-005). Fixed cents, never percentage
 — a percentage ε would let a $100 reserve accept $110 actual, while
 fixed 1¢ bounds the drift regardless of reserve size. The reserve /
-consume pair is atomic in Lua: `reserve_v3.lua:1042-1053` HSETs
+consume pair is atomic in Lua: `reserve_v3.lua` HSETs
 `reserved_cents` on the binding before the period INCRBY so a retry
 between Lua return and Rust outbox commit sees `status='reserved'`
 and returns `{prior_cents, "OK", "REPLAY"}` instead of double-INCRBY
-(AUDIT P0-05). Idempotency on `/track` (consume_v3.lua:267-292)
+(AUDIT P0-05). Idempotency on `/track` (consume_v3.lua)
 keys on the binding's `status` field: `consumed` → `IDEMPOTENT_REPLAY`
 (OK replay); `overage` → `CONSUME_OVERBUDGET` with the same 5-tuple
 the first call produced. The reservation envelope's TTL is 300s idle

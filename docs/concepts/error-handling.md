@@ -347,17 +347,17 @@ canonical HTTP 4xx status — pre-fix `/execute` hardcoded `Json(response)
 .into_response()` (defaults to 200) which silently fail-OPEN'd
 sensitive execute paths to SDKs that branch on HTTP status first
 (httpx `raise_for_status`). The kill path: `kill_workflow_handler`
-(`backend/src/proxy/handlers.rs:14895`) → `kill_legacy` →
+(`backend/src/proxy/handlers.rs`) → `kill_legacy` →
 `kill_execution` validates the `State::Killed` transition (ADR-007),
 publishes `WorkflowEventPayload::StateChanged` to the EventBus, and
-the WS control plane (`ws_control.rs:1210`) pushes
+the WS control plane (`ws_control.rs`) pushes
 `WsMessage::StateChange` with `WsWorkflowState::Killed` to the SDK —
 which raises `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`).
 
 ### Guarantees
 
 Every gate rejection is fail-CLOSED. The orchestrator at
-`run_gate_orchestrator` (`orchestrator.rs:185`) runs the steps in
+`run_gate_orchestrator` (`orchestrator.rs`) runs the steps in
 priority order (`Block > RequireApproval > Allow`, ADR-011 §"Decision
 priority") and short-circuits on the first non-Allow — the SDK sees a
 4xx block before any budget envelope is minted. Lua `RESERVE_SCRIPT`

@@ -179,9 +179,9 @@ is bound to the exact action payload the SDK sent on `/gate`. See
 ### Mechanism
 
 ToolBlock lives as Step 3 of the gate orchestrator's 10-step priority
-list (`backend/src/proxy/http/gate/orchestrator.rs:34-47`,
+list (`backend/src/proxy/http/gate/orchestrator.rs`,
 ADR-011). The `check_tool_block` helper at
-`orchestrator.rs:2259-2515` reads the per-key `KeyPolicy.tool_patterns`
+`orchestrator.rs` reads the per-key `KeyPolicy.tool_patterns`
 cache (populated by `policy_cache::aggregate_policies`), then matches
 each pattern against the request's tool list using
 `glob_match` / `glob_match_single` / `glob_match_multi`. The matcher
@@ -192,7 +192,7 @@ patterns split on every `*` and require each non-empty literal
 segment to appear as a substring of `value` in order (the
 DEF-POLFLOW-TB-06 fix). When the SDK supplies `BusinessImpact` on
 `/check`, Step 4 (`business_impact_validate`,
-`orchestrator.rs:487-508`) validates the envelope first; malformed
+`orchestrator.rs`) validates the envelope first; malformed
 payloads return `BUSINESS_IMPACT_INVALID` before any approval-rule
 evaluation or budget reservation. The `@sensitive(impact=...)`
 factory form on the SDK side stamps a typed extractor
@@ -212,7 +212,7 @@ wire shape pre- and post-v3.56. The orchestrator's policy_cache_miss
 path (line 946) returns `TOOL_BLOCKED` if the policy cache has no
 entry for the key — fail-CLOSED, never fail-OPEN. The
 `dispatch_policy_violation_alert` bridge fires on every authoritative
-block (orchestrator.rs:451-462) so the operator's configured
+block (orchestrator.rs) so the operator's configured
 notification channels actually see real blocks (the "6 decorative
 toggles" audit fixed the dead bridge). The tool_patterns aggregate
 honors the per-policy scope: ToolBlock rows with

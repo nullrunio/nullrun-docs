@@ -138,13 +138,13 @@ period-bound counter check, all in one `EVAL`. On overflow the binding
 status flips to `blocked` (ADR-016 §2.6) and the gate returns a 5-tuple
 diagnostic `{spent, budget, projected}` to the orchestrator. **Tool
 block** is enforced by `check_tool_block` in
-`backend/src/proxy/http/gate/orchestrator.rs:2522` — it resolves the
+`backend/src/proxy/http/gate/orchestrator.rs` — it resolves the
 canonical tool list from `req.tools ++ req.tool` (TB-1/TB-4 fail-CLOSED
 fixes), looks up the per-key `KeyPolicy.tool_patterns`, and runs
 `glob_match` (line 2320) against every pattern. **Operator kill**
-flows: `kill_workflow_handler` (`backend/src/proxy/handlers.rs:14895`)
+flows: `kill_workflow_handler` (`backend/src/proxy/handlers.rs`)
 verifies API-key ownership of the workflow, calls
-`CircuitBreaker::kill_legacy` (`backend/src/decision/mod.rs:1424`),
+`CircuitBreaker::kill_legacy` (`backend/src/decision/mod.rs`),
 which validates the `State::Killed` transition per ADR-007, flips
 state, and publishes a `WorkflowEventPayload::StateChanged { new_state:
 "killed" }` to the EventBus. `ws_control.rs` consumes that envelope
@@ -159,7 +159,7 @@ partition now short-circuits sub-100ms instead of hanging 5–10s on
 ### Guarantees
 
 Every rejection on the budget and ToolBlock paths is fail-CLOSED.
-`reserve_v3.lua:295-316` rejects `EXECUTION_NOT_BOUND` /
+`reserve_v3.lua` rejects `EXECUTION_NOT_BOUND` /
 `EXECUTION_ORG_MISMATCH` / `EXECUTION_KEY_MISMATCH` before touching any
 counter; `check_tool_block`'s TB-1 / TB-4 branches reject when `tools`
 is absent while `tool_patterns` is non-empty or when the policy cache
@@ -185,7 +185,7 @@ plural `tools[]` array (DEF-SDKT-002). ToolBlock patterns use the
 matches `prefix` AND `prefix.anything`; multi-`*` patterns split on
 every star and require literal segments in order — `*.drop_*` matches
 `s3.drop_table` (v3.39 / DEF-POLFLOW-TB-06). The orchestrator at
-`run_gate_orchestrator` (`orchestrator.rs:185`) runs in priority
+`run_gate_orchestrator` (`orchestrator.rs`) runs in priority
 order: workflow_active → parent_ownership → cycle_depth_check →
 tool_block → business_impact_validate → rate_limit → budget_reserve.
 The first non-`Allow` decision wins (`Block > RequireApproval > Allow`

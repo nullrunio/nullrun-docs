@@ -200,7 +200,7 @@ the standard OpenAI / Anthropic / Gemini / Cohere clients.
 
 ### Mechanism
 
-The trace ingest path is `proxy/middleware/tracing.rs:64-132`
+The trace ingest path is `proxy/middleware/tracing.rs`
 (`trace_middleware`). On every inbound request the middleware reads
 the `traceparent` header (W3C Trace Context format:
 `version-trace_id-span_id-flags`), parses it via
@@ -211,15 +211,15 @@ the trace ingest at `proxy/handlers.rs:process_span_events_batch`
 (ADR-014) where `traces.w3c_trace_id` and `spans.w3c_parent_span_id`
 get populated as sibling columns — the SDK-minted UUID remains the
 primary key (`TraceRow.w3c_trace_id` is nullable,
-`backend/src/db/mod.rs:454-458`). The read path is
-`backend/src/proxy/http/traces.rs:1-` — the org-scoped list endpoint
+`backend/src/db/mod.rs`). The read path is
+`backend/src/proxy/http/traces.rs-` — the org-scoped list endpoint
 fetches trace summaries plus per-trace span batches (capped by
 `MAX_SPANS_PER_TRACE`, default `DEFAULT_SPANS_PER_TRACE = 10`,
 `:81`) and redacts PII via `proxy::redaction::Redactor` before
 serialization. The single-trace endpoint
 (`GET /api/v1/orgs/:org_id/traces/:trace_id`) reconstructs the
 waterfall tree from `spans.parent_span_id` (DB schema migration
-141 at `db/mod.rs:4506-4532`).
+141 at `db/mod.rs`).
 
 ### Guarantees
 
@@ -235,7 +235,7 @@ retention is enforced by `backend/src/workers/decision_history_retention.rs`
 which reads `plans.features.history_days` live from the DB; the
 canonical values are 3 (Lite), 7 (Starter), 30 (Growth), 90
 (Scale), -1 unlimited (Enterprise) — pinned by migration 002 and
-the inline `plans` table seeding at `db/mod.rs:1994-2011`. Span
+the inline `plans` table seeding at `db/mod.rs`. Span
 rows carry a typed `verdict` column (`'allow'` / `'flag'` /
 `'block'` / `'chain'`, migration 274) that replaced the
 3-tier frontend heuristic; DB CHECK constraint enforces the
@@ -283,7 +283,7 @@ trade-offs.
 
 Retention is independent of the trace *generation* caps — Lite
 throttles at 10 000 tokens/hour and 75 000 executions/month
-(`db/mod.rs:1994` features payload), so traces stop accumulating
+(`db/mod.rs` features payload), so traces stop accumulating
 well before the 3-day window applies. After the retention window
 expires, the trace is removed from the dashboard; the aggregated
 cost information is summarized per workflow per period and

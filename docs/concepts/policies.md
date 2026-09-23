@@ -191,7 +191,7 @@ see the exact request that triggered the decision.
 
 ### Mechanism
 
-`aggregate_policies` at `backend/src/proxy/policy_cache.rs:959` is
+`aggregate_policies` at `backend/src/proxy/policy_cache.rs` is
 the single source of truth for the gate's merged view. It iterates
 the `policies` table once, applies per-type reduction: `BudgetLimit`
 → `min()` on `config.budget_cents` (split by scope into
@@ -201,7 +201,7 @@ the `policies` table once, applies per-type reduction: `BudgetLimit`
 dedup, O(M+N) amortized since v3.52). The result lands on a
 `KeyPolicy` per `(org_id, api_key_id)` and is read on every gate call.
 ADR-011 §"Decision priority" orders the orchestrator at
-`run_gate_orchestrator` (`backend/src/proxy/http/gate/orchestrator.rs:185`)
+`run_gate_orchestrator` (`backend/src/proxy/http/gate/orchestrator.rs`)
 as `Block > RequireApproval > Allow`: workflow_active → parent_ownership
 → cycle_depth_check (ADR-036) → tool_block (TB-1/TB-4 fail-CLOSED) →
 business_impact_validate → rate_limit → budget_reserve. The first

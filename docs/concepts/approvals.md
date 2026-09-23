@@ -174,14 +174,14 @@ binding, and the digest-mismatch drift cases (`NR-A013` /
 ### Mechanism
 
 Every approval decision flows through
-`backend/src/proxy/http/approvals.rs:1062-1241` (`approve_handler`)
+`backend/src/proxy/http/approvals.rs` (`approve_handler`)
 and `:1242-1415` (`deny_handler`). Both extract the operator
 identity via `extract_session_user_id` (P0-19 / DEF-ARFLOW-DECIDED-BY-01),
 then call `ApprovalService::approve_with_method` or `approve` on
 `SqlxApprovalRepository`. On success, `approve_handler` releases
 the Redis envelope + decrements the pending-approval counter
 (`compensate_envelope_and_counter`, line 1174), then publishes
-`EventBus::publish_approval_resolved` (`event_bus.rs:543-650`). The
+`EventBus::publish_approval_resolved` (`event_bus.rs`). The
 publish fans out via both in-process broadcast (subscriber on the
 same replica) and Redis pub/sub on `event_bus:approval_resolved`
 (cross-replica fan-out, ADR-023 P0-3). On the receiving side,
@@ -189,7 +189,7 @@ same replica) and Redis pub/sub on `event_bus:approval_resolved`
 the envelope to `WsMessage::ApprovalResolved { outcome, note, ... }`
 and pushes it to the parked SDK agent. The auto-consume path
 (ADR-047) lives at
-`backend/src/proxy/http/approvals.rs:1463-1547`
+`backend/src/proxy/http/approvals.rs`
 (`consume_approval_handler`) — it accepts an `approval_id` and
 `organization_id` from the body, runs the atomic
 `consume_approved_by_id_only` SQL UPDATE, and returns one of
@@ -204,9 +204,9 @@ rows to the new `REVOKED` status (ADR-056).
 
 The approval row's `expires_at` is set at creation time from the
 matched rule's `expires_in_seconds` (default 300s, per-rule
-override at `db/mod.rs:8069`) — backend is the source of truth, SDK
+override at `db/mod.rs`) — backend is the source of truth, SDK
 reads `approval_timeout_seconds` off the `/check` response
-(`backend/src/enforcement/gate_wire_adapter.rs:233-285`). The
+(`backend/src/enforcement/gate_wire_adapter.rs`). The
 approve handler's atomic UPDATE mirrors the legacy NR-001 audit fix:
 status + `consumed_at` flip in a single SQL statement so the
 `chk_consumed_at_status` constraint never observes a half-stamped
@@ -215,23 +215,23 @@ row. Cross-org IDOR is blocked at the SQL layer
 repo returns `None` on cross-org and the handler 404s with no
 existence leak. Decision emission through `governance audit` is
 best-effort fire-and-forget (`emit_approval_decision_audit`,
-`approvals.rs:38-94`); a transient DB blip never blocks the HTTP
+`approvals.rs`); a transient DB blip never blocks the HTTP
 204. The `decision` field on the audit row is one of the typed
 `GovernanceDecision` variants (`Approved` / `Denied`) — never a
 free-text string. WS push is best-effort with the
 `/approval-state/reconcile` fallback (P1-4) recovering missed
 events on the next reconcile tick. Denial is terminal — the SDK
 raises `WorkflowKilledInterrupt` (denial = kill for the originating
-execution, `ws_control.rs:487-492`).
+execution, `ws_control.rs`).
 
 ### Patterns
 
 The terminal-feed UI reads from
 `GET /api/v1/orgs/:org_id/approvals`
-(`backend/src/proxy/http/approvals.rs:718-`) which renders rows in
+(`backend/src/proxy/http/approvals.rs-`) which renders rows in
 the new `ApprovalStatusWire` enum (`Pending` / `Approved` /
 `Denied` / `Expired` / `Consumed` / `Revoked`,
-`approvals.rs:123-141`). The status enum's wire-collapse bug
+`approvals.rs`). The status enum's wire-collapse bug
 (DEF-APPROVAL-CONSUMED-WIRE-COLLAPSE) is closed: pre-fix the
 `From<ApprovalStatus>` impl collapsed `Consumed → Expired`, hiding
 whether the SDK reused an approved grant vs. the sweeper closed it.
@@ -252,7 +252,7 @@ alternative of "operator pre-approves a tool pattern" — the
 alternative would have made approvals policy-shaped (no per-action
 review). `action_digest` (ADR-006) binds every approval row to a
 SHA-256 of the `BusinessImpact` payload
-(`backend/src/proxy/gate/business_impact.rs:445-459`,
+(`backend/src/proxy/gate/business_impact.rs`,
 prefixed with `b"nullrun/v1/business_impact:"`); the `/execute`
 re-check refuses any call whose recomputed digest doesn't match.
 The auto-consume endpoint (ADR-047) was added over the alternative
@@ -274,13 +274,13 @@ org-less `/api/v1/approvals/{approval_id}/consume` path because org
 identity is derived from the API key (no `{org_id}` segment, unlike
 `/approve` / `/deny`). `confirmation_method` is an unauthenticated
 audit-trail field — the server rejects control characters at the
-handler edge (`reject_control_chars_or_err`, `approvals.rs:1099-1105`)
+handler edge (`reject_control_chars_or_err`, `approvals.rs`)
 to close the audit-pollution class on the approval surface. The
 expiry sweeper has two cycles per tick (PENDING → EXPIRED and
 APPROVED+stale → REVOKED); the §10.1 retraction guarantees
 `decided_by` / `decided_at` are never overwritten on REVOKED. The
 WS push is opt-in via `?wait_for_approval=true` on the upgrade
-(`ws_control.rs:494-498`); without that flag the SDK falls back to
+(`ws_control.rs`); without that flag the SDK falls back to
 the legacy poll-based resume path. Cross-replica fan-out is
 best-effort Redis pub/sub — a publish failure logs and is recovered
 by the next periodic reconcile, but the originating replica's

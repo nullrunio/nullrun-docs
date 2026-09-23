@@ -192,7 +192,7 @@ has a `verification` block (operator-registered
 
 The list endpoint is
 `GET /api/v1/orgs/:org_id/action-sources`
-(`proxy/http/routes.rs:400-403`, ADR-007), wired to
+(`proxy/http/routes.rs`, ADR-007), wired to
 `list_active_action_sources_handler` in
 `proxy/http/mcp/active_action_sources.rs`. The SQL is one INNER
 + LEFT JOIN with a 30-day `window_days` filter; orphans
