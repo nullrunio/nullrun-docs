@@ -564,14 +564,23 @@ with nullrun.chain(chain_id, op="start"):           # soft-mode budget
 
 ## Anti-patterns
 
-!!! danger "Don't put `@protect` outside `@sensitive`"
-    Either order works, but the recommended convention is
-    `@sensitive` outside so registration in
-    `runtime.add_sensitive_tool` happens before the `@protect`
-    wrapper is built. Both produce identical observable behaviour
-    today; future shape changes may not.
+!!! danger "Don't write bare `@sensitive`"
+    `@sensitive` only exists in the factory form
+    `@sensitive(impact=money_outflow(...))` or
+    `@sensitive(impact=tool_params(...))`. Bare `@sensitive` raises
+    `NotImplementedError` at decoration time. For the common case
+    where you don't need a typed `BusinessImpact`, just `@protect`
+    — it auto-attaches a default `ToolParamsExtractor` so the wire
+    payload carries `tool_name + params` for every protected call.
 
-!!! note "Don't put `@sensitive` outside any `with workflow(...)` scope in production"
+!!! note "Order: `@sensitive` outside `@protect`"
+    The recommended stacking order is `@sensitive(impact=...)`
+    outside so registration in
+    `runtime.add_sensitive_tool` happens before the `@protect`
+    wrapper is built. Both orders produce identical observable
+    behaviour today; future shape changes may not.
+
+!!! note "Don't put `@sensitive(impact=...)` outside any `with workflow(...)` scope in production"
     `@sensitive(impact=...)` outside a workflow scope carries the
     sentinel `__nullrun_unknown__` as the displayed `workflow_id`.
     The dashboard renders this as "unknown workflow" — operators

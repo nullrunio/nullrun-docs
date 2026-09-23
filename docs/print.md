@@ -542,11 +542,12 @@ There are **two parallel taxonomies**:
 | `error` slug | HTTP | When | SDK exception |
 | --- | --- | --- | --- |
 | `bad_request` | 400 | Generic 400 — invalid input that isn't a validation failure | `NullRunConfigError` |
+| `invalid_json` | 400 | Request body could not be parsed as JSON (`JsonSyntaxError`) | `NullRunBackendError` |
 | `unauthorized` | 401 | Missing or invalid `X-API-Key` / expired session / HMAC mismatch | `NullRunAuthenticationError` |
 | `forbidden` | 403 | Authenticated but not allowed (incl. CSRF mismatch) | `NullRunAuthenticationError` |
 | `not_found` | 404 | Resource doesn't exist or isn't visible | (caller handles) |
 | `conflict` | 409 | Idempotency conflict, duplicate, "already a member" | `NullRunError` |
-| `validation_error` | 422 | Request body / params failed schema validation | `NullRunConfigError` |
+| `validation_error` | 422 | Request body parsed but failed schema validation (`JsonDataError`) | `NullRunBackendError` |
 | `plan_limit_exceeded` | 422 | Plan cap hit. Body `details.resource` carries dimension. | `NullRunBlockedException` |
 | `rate_limit_exceeded` | 429 | Per-minute / per-day rate cap. Body carries `retry_after`. | `RateLimitError` |
 | `internal_error` | 500 | Server-side bug | `NullRunBackendError` (retryable) |
@@ -600,7 +601,7 @@ WorkflowKilledInterrupt               (kill via control plane)
 The gateway exposes a small REST surface. Every request requires:
 
 - `Authorization: Bearer nr_live_...` (machine)
-- `X-NULLRUN-PROTOCOL: 3` (mandatory version header)
+- `X-NULLRUN-PROTOCOL: 4` (mandatory version header)
 
 ### `POST /api/v1/gate`
 

@@ -75,24 +75,6 @@ control-plane WebSocket pushes and background tasks that aren't part
 of the active request lifecycle). See
 [Reference → Errors](../reference/errors.md) for the full catalog.
 
-## Locale resolution
-
-By default the integration reads `Accept-Language` from the request.
-Pass a custom resolver when the locale comes from somewhere else
-(session cookie, JWT claim, upstream header):
-
-```python
-app = FastAPI()
-
-# Locale from a session cookie, falling back to "en".
-install(
-    app,
-    locale_resolver=lambda req: req.cookies.get("locale", "en"),
-)
-```
-
-A buggy resolver degrades silently to `"en"`.
-
 ## Custom exception mapping
 
 If you want to override `install()`'s defaults for a single endpoint
@@ -172,12 +154,12 @@ nullrun.set_user_message(
 - `app.add_exception_handler` is last-wins — if you already register
   a `NullRunError` handler, `install()` overwrites it. Re-order
   your `install()` call to last if you need custom precedence.
-- Kill middleware is process-global state. The locale resolver is
-  stored at module level; if you serve multiple FastAPI apps from
-  one process with different locale policies, the last `install()`
-  call wins. Per-app middleware
-  (`app.add_middleware(NullRunMiddleware, locale_resolver=...)`) is
-  the supported escape hatch.
+- Kill middleware is process-global state. The kill middleware
+  binding is stored at module level; if you serve multiple FastAPI
+  apps from one process with different kill policies, the last
+  `install()` call wins. Per-app middleware
+  (`app.add_middleware(NullRunMiddleware, ...)`) is the supported
+  escape hatch.
 
 ## See also
 

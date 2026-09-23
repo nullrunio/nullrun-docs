@@ -119,6 +119,14 @@ The complete flow, end-to-end:
    channel.
 7. SDK wakes the parked thread; agent resumes with the operator's
    outcome.
+8. SDK auto-consumes the approval row via
+   `POST /api/v1/approvals/{approval_id}/consume` so the row
+   closes on the success path (the prior behaviour left
+   `mode="inline"` rows at `status=APPROVED` past `expires_at`
+   because the consume SQL was only reachable from the
+   `/execute` orchestrator Step 6, which `inline` tools bypass).
+   On the operator-cancel path the row closes via the spawned
+   cancel step instead.
 
 If the WS push is silent for `approval_timeout_seconds`, the SDK
 **fails CLOSED**: `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`)

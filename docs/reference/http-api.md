@@ -142,6 +142,7 @@ end-to-end flow.
 | --- | --- | --- |
 | `POST` | `/api/v1/orgs/{org_id}/approvals/{approval_id}/approve` | Approve a pending approval. Idempotent — already-approved returns `409 approval_already_decided`. |
 | `POST` | `/api/v1/orgs/{org_id}/approvals/{approval_id}/deny` | Deny a pending approval. The SDK raises `WorkflowKilledInterrupt` for the parked agent. |
+| `POST` | `/api/v1/approvals/{approval_id}/consume` | Close an `APPROVED` approval row without invoking the approved tool. Called by the SDK on the success path after a `require_approval` round-trip resolves to `outcome=approved`, and on the operator-cancel path. Idempotent — `consumed` / `already_consumed` / `not_approved` all return 200. Org identity is derived from the API key (no `{org_id}` segment in the path). |
 
 ## Executions, audit, observability
 

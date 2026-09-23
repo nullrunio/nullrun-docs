@@ -56,7 +56,7 @@ authors wiring keys from a non-env source).
 | `track_llm(input_tokens, output_tokens=0, **kwargs)` | Manual escape hatch for non-HTTP LLM calls. Returns the backend's decision dict. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. `**kwargs` are forwarded to the transport layer (e.g. `model`, `latency_ms`, `metadata`). | ✅ |
 | `track_tool(tool_name, duration_ms=None, **kwargs)` | Manual tool-call tracking. `**kwargs` are forwarded to the transport layer (e.g. `is_retry`, `metadata`). | ✅ |
 | `track_event(event_type, **kwargs)` | Catch-all for custom events. | ✅ |
-| `format_user_message(exc, locale="en")` | Render a `NullRunError` as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. | ✅ |
+| `format_user_message(exc)` | Render a `NullRunError` as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. | ✅ |
 | `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
 | `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
 | `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads. Safe to register via `atexit`. | ✅ |
@@ -137,9 +137,9 @@ in `nullrun/__init__.py`: `__version__`, `init`, `protect`, `track_llm`,
 `NullRunAuthError`, `NullRunConfigError`, `NullRunBackendError`,
 `NullRunBudgetError`, `NullRunToolBlockedError`, and
 `WorkflowKilledInterrupt` (the kill signal). The legacy names
-(`WorkflowPausedException`, `WorkflowKilledException`,
-`NullRunAuthenticationError`, `NullRunBlockedException`) remain
-available via `from nullrun import X` for backward compatibility.
+(`WorkflowPausedException`, `NullRunAuthenticationError`,
+`NullRunBlockedException`) remain available via
+`from nullrun import X` for backward compatibility.
 
 ## Exceptions
 
@@ -170,7 +170,6 @@ hierarchy diagram.
 | `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
 | `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
 | `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunError`. Carries `.workflow_id`, `.reason`, `.resume_after`. |
-| `WorkflowKilledException` | Killed via control plane (legacy parent) | `BaseException` subclass. Use `NullRunWorkflowKilledError` directly. |
 | `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `NullRunError`. Caught by `except Exception:` like every other SDK error. |
 | `NullRunWorkflowKilledError` | Kill arrived mid-call (typed alias) | Subclass of `WorkflowKilledInterrupt`. Same wire semantics; use this for typed `except` arms. |
 
@@ -213,7 +212,7 @@ misbehaving hook cannot break the SDK.
 
 ## User-facing messages
 
-`nullrun.format_user_message(exc, locale="en")` renders a `NullRunError`
+`nullrun.format_user_message(exc)` renders a `NullRunError`
 (or any object with an `error_code` attribute) as an end-user-facing
 string. **Use this instead of `str(exc)` whenever the message might be
 shown to a person who is not the developer** — `str(exc)` contains
@@ -260,14 +259,6 @@ nullrun.set_user_message(
 Overrides live in a per-process dict and are checked before the
 catalog default. They do not persist across processes and are not
 synced to the backend — they are pure presentation sugar.
-
-### Locale
-
-`format_user_message(exc, locale)` accepts a locale code; in this SDK
-version **only English (`"en"`) is shipped** and any other value falls
-back to the English message. The parameter is reserved for future
-locale packs and matches the structure that user-message overrides
-will take when they land.
 
 ### What if `error_code` is unknown or missing?
 
