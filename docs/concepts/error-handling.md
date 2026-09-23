@@ -324,3 +324,108 @@ your own `except NullRunWorkflowKilledError:` arm above.
 - [Use with FastAPI](../how-to/fastapi.md) — exception handling
   inside ASGI handlers
 - [Tracing](tracing.md) — how errors map to spans
+
+## Deep dive
+
+### Mechanism
+
+Wire codes are minted by `backend/src/proxy/http/gate/error_codes.rs`
+in a single `GateErrorCode` enum. The `#[serde(rename_all =
+"SCREAMING_SNAKE_CASE")]` derive guarantees the on-the-wire string
+matches the variant name verbatim (e.g. `BudgetHardBlocked` →
+`"BUDGET_HARD_BLOCKED"`). The `as_str()` match arm at line 495 is the
+authoritative source of truth — adding a variant is a minor-bump
+protocol change, renaming is a major bump. HTTP status comes from
+`http_status()` (line 601) per the CLAUDE.md §13 table: money-math
+(402), security / ownership (403), lineage lookup miss (404), rate-
+limit (429), semantic validation (422). Wire envelope shape per
+`v3_error_envelope` (line 62):
+`{error_code, error_message, details, retry_after_ms}`. The handler at
+`gate.rs::gate_response_to_response` (line 56) routes both `/gate`
+and `/execute` through the same helper so block decisions carry their
+canonical HTTP 4xx status — pre-fix `/execute` hardcoded `Json(response)
+.into_response()` (defaults to 200) which silently fail-OPEN'd
+sensitive execute paths to SDKs that branch on HTTP status first
+(httpx `raise_for_status`). The kill path: `kill_workflow_handler`
+(`backend/src/proxy/handlers.rs:14895`) → `kill_legacy` →
+`kill_execution` validates the `State::Killed` transition (ADR-007),
+publishes `WorkflowEventPayload::StateChanged` to the EventBus, and
+the WS control plane (`ws_control.rs:1210`) pushes
+`WsMessage::StateChange` with `WsWorkflowState::Killed` to the SDK —
+which raises `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`).
+
+### Guarantees
+
+Every gate rejection is fail-CLOSED. The orchestrator at
+`run_gate_orchestrator` (`orchestrator.rs:185`) runs the steps in
+priority order (`Block > RequireApproval > Allow`, ADR-011 §"Decision
+priority") and short-circuits on the first non-Allow — the SDK sees a
+4xx block before any budget envelope is minted. Lua `RESERVE_SCRIPT`
+returns typed 5-tuple diagnostics
+(`{spent, budget, projected}`) so operators can reconstruct the
+rejection from logs alone (ADR-016 §2.4.2). The
+`RedisCircuitBreaker` / `PostgresCircuitBreaker` (ADR-055, shipped
+2026-09-21) wrap every gate hot-path site — a Redis or Postgres
+partition now short-circuits sub-100ms (FailClosed / Buffered / Degraded
+modes per `infra::FailureMode`) instead of hanging 5–10s on
+`pool.acquire()`. The kill signal inherits from `NullRunError`, so
+`except Exception:` catches it alongside every other SDK error;
+`handle()` / `@guarded` catch it via the standard `NullRunError` arm
+and print the structured four-line developer report.
+
+### Patterns
+
+Wire codes fall into three buckets: **decision** (block / allow /
+require_approval), **infrastructure** (Redis-down, Postgres-down,
+`BUDGET_REDIS_UNAVAILABLE`, `IDEMPOTENCY_REDIS_UNAVAILABLE`), and
+**transport** (`INVALID_JSON` / `INVALID_FIELD` from JSON rejection —
+DEF-DESTR-RUNNER-HTTP-STATUS). The SDK's `exc.error_code` is the
+stable machine-readable identifier; `exc.retryable` and
+`exc.retry_after` drive the SDK's retry/backoff loop. Approval-flow
+codes (`APPROVAL_NOT_FOUND`, `APPROVAL_DENIED`, `APPROVAL_EXPIRED`,
+`APPROVAL_DIGEST_MISMATCH`, `APPROVAL_TOOL_DIGEST_MISMATCH`,
+`APPROVAL_REPLAY_REJECTED`, `APPROVAL_NOT_YET_APPROVED`) all share the
+403 / 404 buckets with other ownership / auth-family codes
+(DEF-TS99-002). The kill signal flows through the WebSocket envelope
+as `WsWorkflowState::Killed` → `WsApprovalOutcome::Denied` (or
+`Expired`) → SDK raises `WorkflowKilledInterrupt`. The
+`@nullrun.on_error` hook fires once per `NullRunError`, **including
+the kill signal** — filter on `error_code` (`"NR-W002"`) to skip it.
+
+### Approaches
+
+The `GateErrorCode` enum replaces a prior design where wire strings
+were inline literals at the call site. The enum-backed approach lets
+`gate_response_to_response` resolve HTTP status from a single match
+table; the inline-literal approach silently fail-OPEN'd `/execute`
+block decisions as HTTP 200. Approval-flow codes were initially
+absent from `all()` (DEF-TS99-002, 2026-09-16) — they existed as
+inline strings in the orchestrator but `gate_response_to_response`
+couldn't resolve a HTTP status and defaulted to 200; adding them to
+`all()` closed the wire-surface gap. The kill signal was originally
+`WorkflowKilledException` (a `BaseException` subclass); the 0.18.2
+SDK removed that class entirely — only `NullRunWorkflowKilledError`
+and its alias `WorkflowKilledInterrupt` survive, both inheriting
+from `NullRunError(Exception)`. Idempotency on `/gate` and `/track`
+(IDEM-01, 2026-09-11) routes through `IdempotencyStore` (atomic
+SETNX + atomic Lua mutate) so SDK network retries return the stored
+response instead of minting a fresh `reservation_id`.
+
+### Limitations
+
+Wire codes are wire-shape-strict — renaming a `GateErrorCode` variant
+is a major-bump protocol change because SDK switch statements branch
+on the string. The HTTP status mapping is per-code; HTTP 200 + block
+body is intentional for `/gate` (the gate is a pre-flight probe, SDK
+branches on the body) but pre-fix `/execute` defaulted to 200 with
+block body too — that was the silent fail-OPEN class DEF-DESTR-RUNNER-
+HTTP-STATUS closed. The kill signal cannot be silently dropped —
+`WorkflowKilledInterrupt` inherits from `NullRunError` and `except Exception:`
+catches it; an SDK that catches only `NullRunBlockedException` and
+swallows everything else will leak the kill. The `on_error` hook
+fires for every `NullRunError` including kill — operators who wire
+Sentry capture on the hook will see kill events; filter on
+`error_code` (`"NR-W002"`) to skip them. The `is_approximate: true`
+flag on `ApproximateBudgetResponse` is mandatory — never render a 0¢
+spend on the 503 path (`BUDGET_DATA_UNAVAILABLE`), only a "data
+unavailable" CTA.
