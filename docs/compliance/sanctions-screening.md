@@ -133,35 +133,116 @@ sharper once money is in the picture.
 
 ## Deep dive
 
-### Mechanism
-The sanctions screening module lives at `backend/src/proxy/middleware/sanctions.rs`. The `SanctionsTable` struct (lines 103-117) holds an `AHash`-keyed `HashSet<String>` of normalised tokens plus the full `Vec<SdnEntry>` for identity-based matching. `load_or_degraded` (lines 124-161) reads from `data/sanctions/sdn.csv` (path configurable via `NULLRUN_SANCTIONS_CSV`); on missing file or parse failure, `degraded_fallback` (lines 185-221) returns a hand-curated 6-name subset (`Vladimir Putin`, `Kim Jong Un`, `Ali Khamenei`, `Bashar Assad`, `Miguel Díaz-Canel`, `Alexander Lukashenko`) with a `degraded: true` flag. `tokenise` (lines 90-100) NFKC-normalises (catches `ＡＢＣ` → `ABC`), lowercases, splits on non-alphanumeric, drops tokens <3 chars. `screen_signup` (lines 332-356) is the public entry: name first, then email local-part; returns `Clean | Match { matched, field } | DegradedFallback`. The module-level OnceLock caches the table at first call (lines 274-280).
+!!! info "Deep dive"
 
-### Guarantees
-- **Screening is ON by default**: `NULLRUN_SANCTIONS_SCREENING_DISABLED=1` (or case-insensitive `true`) disables; any other value (or unset) keeps it ON (`sanctions.rs`). The override is cached at first call (OnceLock per process) — runtime env-var changes do NOT take effect for the running process.
-- **Match is opaque to the client**: 403 body does NOT echo the matched display name; the matched name + field (`name` or `email`) are logged at WARN for audit (`sanctions-screening.md`). Avoiding confirming the screening target is a deliberate disclosure posture.
-- **Identity match requires ≥2 tokens OR a 1-token query that matches a 1-token entry** (`sanctions.rs`): a single shared given name like "Anatoly" does NOT match a 2-token SDN entry like "ANATOLY KOLODKIN" (test at lines 503-512). A shared first name is not enough to identify a sanctioned party.
-- **Email TLD does NOT match SDN tokens**: `gmail`/`mail`/`com` are too common to be screened as SDN tokens; only the email local-part is tokenised and matched (`sanctions.rs`). Tested at `email_tld_does_not_match_sdn_name_token` (lines 489-501).
-- **Degraded fallback still allows signup**: the WARN log + `OPERATIONAL_METRICS` flag the misconfiguration; the geo-block is still on at the IP layer as the always-on defence. `is_degraded()` is checked at `sanctions.rs`.
-- **Token-set collapses the homoglyph space (full-width only)**: `ＡＢＣ` → `ABC` via NFKC, then lowercased and split (`sanctions.rs`). Tested at lines 374-378.
+    The sanctions screening module lives at
+    `backend/src/proxy/middleware/sanctions.rs`. The
+    `SanctionsTable` struct holds an `AHash`-keyed
+    `HashSet<String>` of normalised tokens plus the full
+    `Vec<SdnEntry>` for identity-based matching.
+    `load_or_degraded` reads from `data/sanctions/sdn.csv`
+    (path configurable via `NULLRUN_SANCTIONS_CSV`); on missing
+    file or parse failure, `degraded_fallback` returns a
+    hand-curated 6-name subset (`Vladimir Putin`, `Kim Jong Un`,
+    `Ali Khamenei`, `Bashar Assad`, `Miguel Díaz-Canel`,
+    `Alexander Lukashenko`) with a `degraded: true` flag.
+    `tokenise` NFKC-normalises (catches `ＡＢＣ` → `ABC`),
+    lowercases, splits on non-alphanumeric, drops tokens <3
+    chars. `screen_signup` is the public entry: name first, then
+    email local-part; returns `Clean | Match { matched, field }
+    | DegradedFallback`. The module-level OnceLock caches the
+    table at first call.
 
-### Patterns
-- **Module-level OnceLock table** (`sanctions.rs`): `TABLE.get_or_init(...)` reads the CSV exactly once per process; lookups are O(1) per token against the `HashSet`. For 10k SDN entries the memory footprint is ~5 MB.
-- **Source-of-list identity column**: OFAC CSV column layout `ent_num, SDN_Name, SDN_Type, Program, ...` — only column 1 (`SDN_Name`) is read (`sanctions.rs`). EU/UK/UN equivalents share the same column layout.
-- **Identity-based match, not token-based**: a single shared word is never sufficient — common first names (`Anatoly`), email TLDs, and corporate suffixes are not unique identifiers (`sanctions.rs`).
-- **Operator override cached at first call**: `sanctions_screening_disabled()` uses a OnceLock per process; changing the env var at runtime does NOT take effect for the running process — restart required.
-- **Refresh cadence** (per docs): OFAC SDN daily, MaxMind GeoLite2 weekly, EU/UK consolidated monthly. The table is loaded once at process start; restart is required after each CSV update.
+    Screening is ON by default:
+    `NULLRUN_SANCTIONS_SCREENING_DISABLED=1` (or case-insensitive
+    `true`) disables; any other value (or unset) keeps it ON
+    (`sanctions.rs`). The override is cached at first call
+    (OnceLock per process) — runtime env-var changes do NOT
+    take effect for the running process. Match is opaque to
+    the client: 403 body does NOT echo the matched display
+    name; the matched name + field (`name` or `email`) are
+    logged at WARN for audit (`sanctions-screening.md`).
+    Avoiding confirming the screening target is a deliberate
+    disclosure posture. Identity match requires ≥2 tokens OR a
+    1-token query that matches a 1-token entry
+    (`sanctions.rs`): a single shared given name like
+    "Anatoly" does NOT match a 2-token SDN entry like
+    "ANATOLY KOLODKIN". A shared first name is not enough to
+    identify a sanctioned party. Email TLD does NOT match SDN
+    tokens: `gmail`/`mail`/`com` are too common to be screened
+    as SDN tokens; only the email local-part is tokenised and
+    matched (`sanctions.rs`). Degraded fallback still allows
+    signup: the WARN log + `OPERATIONAL_METRICS` flag the
+    misconfiguration; the geo-block is still on at the IP
+    layer as the always-on defence. `is_degraded()` is checked
+    at `sanctions.rs`. Token-set collapses the homoglyph space
+    (full-width only): `ＡＢＣ` → `ABC` via NFKC, then
+    lowercased and split (`sanctions.rs`).
 
-### Approaches
-The two-layer model (geo-block + sanctions screen) was chosen because the IP defence alone misses three classes of designated persons: those travelling abroad, those using commercial VPNs that exit in non-sanctioned jurisdictions, and those signing up via OAuth where the only data is name + email. The secondary layer catches the worst cases (designated persons / sanctioned addresses) even when the IP geo-block is bypassed.
+    Module-level OnceLock table (`sanctions.rs`):
+    `TABLE.get_or_init(...)` reads the CSV exactly once per
+    process; lookups are O(1) per token against the `HashSet`.
+    For 10k SDN entries the memory footprint is ~5 MB. The
+    source-of-list identity column is OFAC CSV column layout
+    `ent_num, SDN_Name, SDN_Type, Program, ...` — only column 1
+    (`SDN_Name`) is read (`sanctions.rs`); EU/UK/UN equivalents
+    share the same column layout. Match is identity-based, not
+    token-based: a single shared word is never sufficient —
+    common first names (`Anatoly`), email TLDs, and corporate
+    suffixes are not unique identifiers (`sanctions.rs`).
+    Operator override is cached at first call:
+    `sanctions_screening_disabled()` uses a OnceLock per
+    process; changing the env var at runtime does NOT take
+    effect for the running process — restart required. Refresh
+    cadence per docs: OFAC SDN daily, MaxMind GeoLite2 weekly,
+    EU/UK consolidated monthly. The table is loaded once at
+    process start; restart is required after each CSV update.
 
-The token-match strategy is intentionally aggressive — false positives are cheap (rejected signup, the user retries with a different email); false negatives carry criminal-law exposure per OFAC Sanctions Compliance Guidance for the Financial Sector (2014) and 31 CFR Part 501 (referenced in `sanctions.rs`). The `NULLRUN_SANCTIONS_SCREENING_DISABLED=1` operator override exists for the pre-revenue stage where the false-positive cost of "Vladimir Petrov" outweighs the residual sanctions risk.
+    The two-layer model (geo-block + sanctions screen) was
+    chosen because the IP defence alone misses three classes
+    of designated persons: those travelling abroad, those
+    using commercial VPNs that exit in non-sanctioned
+    jurisdictions, and those signing up via OAuth where the
+    only data is name + email. The secondary layer catches the
+    worst cases (designated persons / sanctioned addresses)
+    even when the IP geo-block is bypassed. The token-match
+    strategy is intentionally aggressive — false positives are
+    cheap (rejected signup, the user retries with a different
+    email); false negatives carry criminal-law exposure per
+    OFAC Sanctions Compliance Guidance for the Financial Sector
+    (2014) and 31 CFR Part 501 (referenced in `sanctions.rs`).
+    The `NULLRUN_SANCTIONS_SCREENING_DISABLED=1` operator
+    override exists for the pre-revenue stage where the
+    false-positive cost of "Vladimir Petrov" outweighs the
+    residual sanctions risk. The OnceLock caching of the
+    env-var lookup is intentional: it makes the override
+    decision atomic with process start, so a misconfigured
+    `set_var` later in the process lifetime can't accidentally
+    flip the screening on/off mid-execution. The trade-off is
+    that operators who want to flip must restart the process.
 
-The OnceLock caching of the env-var lookup is intentional: it makes the override decision atomic with process start, so a misconfigured `set_var` later in the process lifetime can't accidentally flip the screening on/off mid-execution. The trade-off is that operators who want to flip must restart the process.
-
-### Limitations
-- **Cyrillic / Latin homoglyphs are NOT collapsed** (`sanctions.rs`): NFKC normalises full-width / ligature forms but does NOT transliterate between scripts. A Cyrillic `а` stays Cyrillic; only the full-width Latin / ASCII cases collapse. A designated individual can circumvent by transliterating to a homoglyph script — the geo-block catches the non-Latin-from-sanctioned-country case.
-- **No email-domain match**: emails tokenise on `@` and `.`, but the resulting tokens (`gmail`, `mail`) are too common. The name is the primary, email is secondary (`sanctions-screening.md`).
-- **OnceLock caches the env-var override at first call** (`sanctions.rs`): changing `NULLRUN_SANCTIONS_SCREENING_DISABLED` at runtime does NOT take effect for the running process — restart required.
-- **Degraded fallback covers 6 state actors**: the hand-curated subset (`sanctions.rs`) is intentionally minimal. A real SDN download is required before production (`sanctions.rs` WARN log).
-- **Refresh cadence is manual**: the table is loaded at process start; the docs note restart is required after each CSV update (`sanctions-screening.md`). No automatic refresh worker.
-- **Pre-existing `email` DB rows are not screen-relevant here**: the screening is signup-time only — historical rows are not re-screened. A redesign that re-screens existing rows on every login is not currently scoped.
+    Cyrillic / Latin homoglyphs are NOT collapsed
+    (`sanctions.rs`): NFKC normalises full-width / ligature
+    forms but does NOT transliterate between scripts. A
+    Cyrillic `а` stays Cyrillic; only the full-width Latin /
+    ASCII cases collapse. A designated individual can
+    circumvent by transliterating to a homoglyph script — the
+    geo-block catches the non-Latin-from-sanctioned-country
+    case. There is no email-domain match: emails tokenise on
+    `@` and `.`, but the resulting tokens (`gmail`, `mail`)
+    are too common. The name is the primary, email is
+    secondary (`sanctions-screening.md`). The OnceLock caches
+    the env-var override at first call (`sanctions.rs`):
+    changing `NULLRUN_SANCTIONS_SCREENING_DISABLED` at runtime
+    does NOT take effect for the running process — restart
+    required. Degraded fallback covers 6 state actors: the
+    hand-curated subset (`sanctions.rs`) is intentionally
+    minimal; a real SDN download is required before production
+    (`sanctions.rs` WARN log). Refresh cadence is manual: the
+    table is loaded at process start; the docs note restart
+    is required after each CSV update
+    (`sanctions-screening.md`) — no automatic refresh worker.
+    Pre-existing `email` DB rows are not screen-relevant here:
+    the screening is signup-time only — historical rows are
+    not re-screened. A redesign that re-screens existing rows
+    on every login is not currently scoped.

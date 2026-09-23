@@ -127,106 +127,104 @@ disable the gate — bypassing it is a dev/test opt-out.
 
 ## Deep dive
 
-### Mechanism
+!!! info "Deep dive"
 
-The circuit breaker is the `/api/v1/gate` enforcement pipeline in
-`backend/src/proxy/http/gate/`. Three independent paths can trip it.
-**Budget exceeded** is enforced atomically by `reserve_v3.lua`
-(`backend/src/redis/scripts/reserve_v3.lua`) — Lua §6a runs an
-always-strict org ceiling, §6 runs the workflow ceiling, then the
-period-bound counter check, all in one `EVAL`. On overflow the binding
-status flips to `blocked` (ADR-016 §2.6) and the gate returns a 5-tuple
-diagnostic `{spent, budget, projected}` to the orchestrator. **Tool
-block** is enforced by `check_tool_block` in
-`backend/src/proxy/http/gate/orchestrator.rs` — it resolves the
-canonical tool list from `req.tools ++ req.tool` (TB-1/TB-4 fail-CLOSED
-fixes), looks up the per-key `KeyPolicy.tool_patterns`, and runs
-`glob_match` (line 2320) against every pattern. **Operator kill**
-flows: `kill_workflow_handler` (`backend/src/proxy/handlers.rs`)
-verifies API-key ownership of the workflow, calls
-`CircuitBreaker::kill_legacy` (`backend/src/decision/mod.rs`),
-which validates the `State::Killed` transition per ADR-007, flips
-state, and publishes a `WorkflowEventPayload::StateChanged { new_state:
-"killed" }` to the EventBus. `ws_control.rs` consumes that envelope
-(line 1210) and pushes `WsMessage::StateChange` with
-`WsWorkflowState::Killed` over the per-org WebSocket; the SDK receives
-the push and raises `WorkflowKilledInterrupt`. ADR-055 (shipped
-2026-09-21) wired `RedisCircuitBreaker` and `PostgresCircuitBreaker`
-into 9 Redis + 19 Postgres hot-path sites, so a Redis or Postgres
-partition now short-circuits sub-100ms instead of hanging 5–10s on
-`pool.acquire()`.
+    The circuit breaker is the `/api/v1/gate` enforcement pipeline in
+    `backend/src/proxy/http/gate/`, with three independent paths that
+    can trip it. **Budget exceeded** is enforced atomically by
+    `reserve_v3.lua` (`backend/src/redis/scripts/reserve_v3.lua`) —
+    Lua §6a runs an always-strict org ceiling, §6 runs the workflow
+    ceiling, then the period-bound counter check, all in one `EVAL`;
+    on overflow the binding status flips to `blocked` (ADR-016 §2.6)
+    and the gate returns a 5-tuple diagnostic `{spent, budget,
+    projected}` to the orchestrator. **Tool block** is enforced by
+    `check_tool_block` in `backend/src/proxy/http/gate/orchestrator.rs`
+    — it resolves the canonical tool list from `req.tools ++ req.tool`
+    (TB-1/TB-4 fail-CLOSED fixes), looks up the per-key
+    `KeyPolicy.tool_patterns`, and runs `glob_match` against every
+    pattern. **Operator kill** flows through
+    `kill_workflow_handler` (`backend/src/proxy/handlers.rs`) →
+    `CircuitBreaker::kill_legacy` (`backend/src/decision/mod.rs`),
+    which validates the `State::Killed` transition per ADR-007,
+    flips state, and publishes a
+    `WorkflowEventPayload::StateChanged { new_state: "killed" }` to
+    the EventBus; `ws_control.rs` consumes that envelope and pushes
+    `WsMessage::StateChange` with `WsWorkflowState::Killed` over the
+    per-org WebSocket so the SDK raises `WorkflowKilledInterrupt`.
+    ADR-055 (shipped 2026-09-21) wired `RedisCircuitBreaker` and
+    `PostgresCircuitBreaker` into 9 Redis + 19 Postgres hot-path
+    sites, so a Redis or Postgres partition now short-circuits
+    sub-100ms instead of hanging 5–10s on `pool.acquire()`.
 
-### Guarantees
+    Every rejection on the budget and ToolBlock paths is fail-CLOSED.
+    `reserve_v3.lua` rejects `EXECUTION_NOT_BOUND` /
+    `EXECUTION_ORG_MISMATCH` / `EXECUTION_KEY_MISMATCH` before
+    touching any counter, and `check_tool_block`'s TB-1 / TB-4
+    branches reject when `tools` is absent while `tool_patterns` is
+    non-empty or when the policy cache is unavailable. Per-org
+    aggregate rate limit is FailClosed (Hard); the per-key default is
+    FailOpen with the budget gate as the authoritative backstop
+    (ADR-029 §2). `/gate` is idempotent on retry via `IdempotencyStore`
+    at `gate.rs` (atomic SETNX + atomic Lua mutate) so network retries
+    return the stored response instead of minting a fresh
+    `reservation_id` (IDEM-01, 2026-09-11). `execution_id` is
+    server-minted (UUIDv7 at
+    `backend/src/proxy/http/gate/execution_id.rs`) and bound to
+    `(org_id, api_key_id)` in `execution:{id}` — the binding is the
+    single source of truth for the reserve/consume pair (ADR-003),
+    and the kill signal inherits from `NullRunError` so
+    `except Exception:` catches it alongside every other SDK error.
 
-Every rejection on the budget and ToolBlock paths is fail-CLOSED.
-`reserve_v3.lua` rejects `EXECUTION_NOT_BOUND` /
-`EXECUTION_ORG_MISMATCH` / `EXECUTION_KEY_MISMATCH` before touching any
-counter; `check_tool_block`'s TB-1 / TB-4 branches reject when `tools`
-is absent while `tool_patterns` is non-empty or when the policy cache
-is unavailable. Per-org aggregate rate limit is FailClosed (Hard); the
-per-key default is FailOpen — the budget gate is the authoritative
-backstop (ADR-029 §2). `/gate` is idempotent on retry: `IdempotencyStore`
-at `gate.rs` uses atomic SETNX + atomic Lua mutate so network retries
-return the stored response instead of minting a fresh
-`reservation_id` (IDEM-01, 2026-09-11). `execution_id` is
-server-minted (UUIDv7 at `backend/src/proxy/http/gate/execution_id.rs`)
-and bound to `(org_id, api_key_id)` in `execution:{id}` — the binding
-is the single source of truth for the reserve/consume pair
-(ADR-003). The kill signal inherits from `NullRunError`, so
-`except Exception:` catches it alongside every other SDK error.
+    Server-minted identity threads through the whole pipeline. The
+    canonical tool name matcher at `validate_tool_name` rejects
+    control characters on both the singular `tool` field and every
+    entry of the plural `tools[]` array (DEF-SDKT-002), and ToolBlock
+    patterns use the `glob_match` family: `*` alone matches
+    everything, `prefix.*` smart-matches `prefix` AND
+    `prefix.anything`, and multi-`*` patterns split on every star and
+    require literal segments in order — `*.drop_*` matches
+    `s3.drop_table` (v3.39 / DEF-POLFLOW-TB-06). The orchestrator at
+    `run_gate_orchestrator` runs in priority order: workflow_active
+    → parent_ownership → cycle_depth_check → tool_block →
+    business_impact_validate → rate_limit → budget_reserve, with
+    the first non-`Allow` decision winning (`Block > RequireApproval
+    > Allow` per ADR-011). For multi-wf shared org budgets, ADR-050
+    ships a single per-org counter shared by all workflows so
+    exhausting the org budget via workflow A naturally blocks
+    workflow B (enforced in Lua §6a via `org_budget_cents` from
+    `AggregatedPolicy.org_budget_cents`).
 
-### Patterns
+    Two design alternatives were considered and rejected: (1)
+    **Inline arms in `gate_internal` (pre-v3.56)** — each enforcement
+    step was a flat arm in the monolithic `gate_internal` function,
+    and the unified orchestrator now composes the same checks via
+    lifted helpers but keeps the inline arms until the H.1 dispatcher
+    activation lands (wire shape unchanged at runtime); (2)
+    **Per-org circuit-breaker state** — rejected because Redis /
+    Postgres are global infra and per-org breakers would be premature
+    optimization (ADR-055 §"Not changed"). ADR-055 chose to wrap
+    existing `pool.acquire()` calls in `RedisCircuitBreaker::execute()`
+    and `PostgresCircuitBreaker::execute_with_degraded()` rather than
+    rewrite the call sites, which means `read_binding` now takes an
+    explicit mode parameter (FailClosed for orchestrator
+    parent_ownership, Degraded for `/track` re-read). The 30%
+    anti-DoS `RESERVED_CAP_EXCEEDED` check was moved into the
+    soft-pass branch (v3.21) because pre-fix soft-mode bypass could
+    accumulate unbounded reservations and silently bypass the cap.
 
-Server-minted identity threads through the whole pipeline. The
-canonical tool name matcher at `validate_tool_name` rejects control
-characters on both the singular `tool` field and every entry of the
-plural `tools[]` array (DEF-SDKT-002). ToolBlock patterns use the
-`glob_match` family: `*` alone matches everything; `prefix.*` smart-
-matches `prefix` AND `prefix.anything`; multi-`*` patterns split on
-every star and require literal segments in order — `*.drop_*` matches
-`s3.drop_table` (v3.39 / DEF-POLFLOW-TB-06). The orchestrator at
-`run_gate_orchestrator` (`orchestrator.rs`) runs in priority
-order: workflow_active → parent_ownership → cycle_depth_check →
-tool_block → business_impact_validate → rate_limit → budget_reserve.
-The first non-`Allow` decision wins (`Block > RequireApproval > Allow`
-per ADR-011). For multi-wf shared org budgets, ADR-050 ships a single
-per-org counter shared by all workflows so exhausting the org budget
-via workflow A naturally blocks workflow B (enforced in Lua §6a via
-`org_budget_cents` from `AggregatedPolicy.org_budget_cents`).
-
-### Approaches
-
-Two design alternatives were considered and rejected. (1)
-**Inline arms in `gate_internal` (pre-v3.56)** — each enforcement
-step was a flat arm in the monolithic `gate_internal` function. The
-unified orchestrator (`run_gate_orchestrator`) now composes the same
-checks via lifted helpers but keeps the inline arms until the H.1
-dispatcher activation lands — wire shape unchanged at runtime. (2)
-**Per-org circuit-breaker state** — rejected because Redis / Postgres
-are global infra; per-org breakers would be premature optimization
-(ADR-055 §"Not changed"). ADR-055 chose to wrap existing
-`pool.acquire()` calls in `RedisCircuitBreaker::execute()` and
-`PostgresCircuitBreaker::execute_with_degraded()` rather than rewrite
-the call sites; the trade-off is that `read_binding` now takes an
-explicit mode parameter (FailClosed for orchestrator parent_ownership,
-Degraded for `/track` re-read). The 30% anti-DoS `RESERVED_CAP_EXCEEDED`
-check was moved into the soft-pass branch (v3.21) because pre-fix
-soft-mode bypass could accumulate unbounded reservations and silently
-bypass the cap.
-
-### Limitations
-
-Per-org breaker state is a deliberate non-feature. The Postgres
-breaker is per-binary global, not per-org — acceptable for infra
-failure (Postgres down = all orgs affected). In-flight partial
-reservations before circuit trip rely on envelope TTL (24h) for
-cleanup — documented trade-off (ADR-055 PR-C §"Trade-offs"). The
-breaker is wired into 9 Redis + 19 Postgres sites but enforcement
-sites outside that set (workers, outbox processor) rely on the worker
-pool's natural backpressure. The WS push for kill delivery has its
-own transport fallback: if the WebSocket is down, the SDK's heartbeat
-polling picks up the kill — so delivery latency is bounded by the
-heartbeat interval, not zero. `reserve_v3.lua`'s `RESERVED_SCANNED_PARTIAL`
-return fires if the inline SCAN over `budget:reserved:{org_id}:*`
-exceeds 256 iterations (NR-015 audit) — fail-CLOSED, but operators
-see the partial-scan rate on the dashboard as the cue to scale up.
+    Per-org breaker state is a deliberate non-feature — the
+    Postgres breaker is per-binary global, not per-org, which is
+    acceptable for infra failure (Postgres down = all orgs affected).
+    In-flight partial reservations before circuit trip rely on
+    envelope TTL (24h) for cleanup, a documented trade-off
+    (ADR-055 PR-C §"Trade-offs"). The breaker is wired into 9 Redis
+    + 19 Postgres sites but enforcement sites outside that set
+    (workers, outbox processor) rely on the worker pool's natural
+    backpressure. The WS push for kill delivery has its own transport
+    fallback: if the WebSocket is down, the SDK's heartbeat polling
+    picks up the kill — so delivery latency is bounded by the
+    heartbeat interval, not zero. `reserve_v3.lua`'s
+    `RESERVED_SCANNED_PARTIAL` return fires if the inline SCAN over
+    `budget:reserved:{org_id}:*` exceeds 256 iterations (NR-015
+    audit) — fail-CLOSED, with the partial-scan rate on the dashboard
+    as the cue to scale up.

@@ -209,101 +209,89 @@ exposing the secret.
 
 ## Deep dive
 
-### Mechanism
+!!! info "Deep dive"
 
-An API key is two independent secrets minted at create time
-(`backend/src/proxy/http/api_keys.rs::create_api_key_handler`):
-a raw key of shape `nr_live_<32 alphanumerics>` from
-`auth/mod.rs::generate_api_key()` (62⁵² search space from
-`OsRng`), and an HMAC secret of shape `<64 hex chars>` (32 random
-bytes) from `auth/mod.rs::generate_hmac_secret()`. The HMAC
-secret is independent from the raw key — a 2026-07-06 bug-fix
-split them after a prior version reused `generate_api_key()` for
-both, giving HMAC a 0-bit security margin. Each request signs
-with `HMAC-SHA256(secret, timestamp:api_key:body_hash)` and the
-gateway verifies with constant-time compare via
-`auth/hmac.rs::verify_hmac_signature`. Lookup is two-step:
-`ApiKey::compute_fingerprint` returns `SHA-256(raw_key)[:16]` hex
-for O(1) DB pre-check before Argon2 verify.
+    An API key is two independent secrets minted at create time
+    (`backend/src/proxy/http/api_keys.rs::create_api_key_handler`):
+    a raw key of shape `nr_live_<32 alphanumerics>` from
+    `auth/mod.rs::generate_api_key()` (62⁵² search space from
+    `OsRng`), and an HMAC secret of shape `<64 hex chars>` (32
+    random bytes) from `auth/mod.rs::generate_hmac_secret()`. The
+    HMAC secret is independent from the raw key — a 2026-07-06
+    bug-fix split them after a prior version reused
+    `generate_api_key()` for both, giving HMAC a 0-bit security
+    margin. Each request signs with
+    `HMAC-SHA256(secret, timestamp:api_key:body_hash)` and the
+    gateway verifies with constant-time compare via
+    `auth/hmac.rs::verify_hmac_signature`. Lookup is two-step:
+    `ApiKey::compute_fingerprint` returns `SHA-256(raw_key)[:16]`
+    hex for O(1) DB pre-check before Argon2 verify.
 
-Multi-version rotation works through `HmacKeyStore`
-(`auth/hmac.rs`): `load_key_versions_with_plaintext` keeps a
-`HashMap<api_key_id, Vec<KeyVersion>>` in `Arc<RwLock>`, and
-mutations publish `HmacKeyEvent` over Redis pub/sub channel
-`nullrun:hmac:keys` so other pods re-apply via
-`HmacKeySubscriber::spawn`. Plaintext never crosses pub/sub —
-receivers re-fetch locally.
+    Multi-version rotation works through `HmacKeyStore`
+    (`auth/hmac.rs`): `load_key_versions_with_plaintext` keeps a
+    `HashMap<api_key_id, Vec<KeyVersion>>` in `Arc<RwLock>`, and
+    mutations publish `HmacKeyEvent` over Redis pub/sub channel
+    `nullrun:hmac:keys` so other pods re-apply via
+    `HmacKeySubscriber::spawn`. Plaintext never crosses pub/sub —
+    receivers re-fetch locally. Revocation is two-phase (ADR-010).
+    When `NULLRUN_AUTH_DRAIN_ENABLED=1`, the handler runs
+    `transition_to_rotating → drain_in_flight →
+    transition_to_revoked` via `proxy/auth_lifecycle/`. In-flight
+    count lives at `in_flight:{org_id}:{api_key_id}` and is bumped
+    via `redis/scripts/in_flight_inc_v1.lua` — Lua (not `INCR`)
+    because `INCR` drops TTL, which would leave a stuck counter
+    after a pod restart. Default TTL 300s aligns with
+    `AUTH_CACHE_TTL_SECS`.
 
-Revocation is two-phase (ADR-010). When
-`NULLRUN_AUTH_DRAIN_ENABLED=1`, the handler runs
-`transition_to_rotating → drain_in_flight → transition_to_revoked`
-via `proxy/auth_lifecycle/`. In-flight count lives at
-`in_flight:{org_id}:{api_key_id}` and is bumped via
-`redis/scripts/in_flight_inc_v1.lua` — Lua (not `INCR`) because
-`INCR` drops TTL, which would leave a stuck counter after a pod
-restart. Default TTL 300s aligns with `AUTH_CACHE_TTL_SECS`.
+    HMAC timestamp freshness is a 5-minute sliding window
+    (`max_age_seconds = 300`) — replay protection via age check,
+    not nonce storage. Revoke is drain-aware: in-flight requests
+    finish before the key is terminal, so a long-running `/check`
+    cannot lose its reservation mid-flight. Redis hiccup during
+    in-flight increment is fail-CLOSED — the request is rejected
+    because the supervisor cannot guarantee accurate counts
+    during a future revoke
+    (`backend/src/redis/in_flight.rs::inc_in_flight`). The
+    server-mints `api_key_id` (UUIDv7) bound to `(org_id,
+    api_key_id)` in `organization_api_keys` — client-supplied IDs
+    are rejected. The HMAC secret is returned to the dashboard
+    ONCE at create time, stored as a hash on the server, and
+    never re-served.
 
-### Guarantees
+    Per-workflow binding (Phase 139): `workflow_id` column on
+    `organization_api_keys`, one key = one workflow, used as the
+    per-key group axis on `/control-center/api-keys`. Five scopes
+    are auto-assigned at create: `gate`, `execute`, `track`,
+    `verify`, `*`. A telemetry-only ingestor ships `track` only;
+    a CI checker ships `verify` only. `last_used_at` is updated
+    via the auth-cache hit path on every `/check` / `/execute` /
+    `/track` request that bears a valid `X-API-Key`. Per-plan key
+    cap (`seats_limit`-style lookup in
+    `dashboard::parse_plan_limits`): Lite = 10, Starter = 15,
+    Growth = 100, Scale = 350, Enterprise = unlimited. ADR-057
+    Lite Trial overlays Scale's cap for the trial window via
+    `resolve_plan_for_org_overlay_strict`.
 
-- HMAC timestamp freshness is a 5-minute sliding window
-  (`max_age_seconds = 300`) — replay protection via age check,
-  not nonce storage.
-- Revoke is drain-aware: in-flight requests finish before the key
-  is terminal, so a long-running `/check` cannot lose its
-  reservation mid-flight.
-- Redis hiccup during in-flight increment is fail-CLOSED — the
-  request is rejected because the supervisor cannot guarantee
-  accurate counts during a future revoke
-  (`backend/src/redis/in_flight.rs::inc_in_flight`).
-- Server-minted `api_key_id` (UUIDv7), bound to `(org_id,
-  api_key_id)` in `organization_api_keys` — client-supplied IDs
-  are rejected.
-- HMAC secret returned to the dashboard ONCE at create time —
-  stored as a hash on the server; never re-served.
+    Considered client-supplied `key_id` — rejected because of
+    ownership ambiguity on multi-tenant boundaries and a replay
+    surface against `consume_approved`. Considered a single-
+    version HMAC secret store — chosen multi-version instead so
+    an in-flight SDK can keep signing with the old secret while
+    the dashboard has already cut over to the new one (rotation
+    without downtime). Considered `INCR` + separate `EXPIRE` for
+    in-flight count — rejected because the gap between `INCR` and
+    `EXPIRE` lets a counter land without a TTL and never recover.
+    Lua serializes read-modify-write under Redis's executor so
+    `SET … EX ttl` is atomic.
 
-### Patterns
-
-- Per-workflow binding (Phase 139): `workflow_id` column on
-  `organization_api_keys`, one key = one workflow, used as the
-  per-key group axis on `/control-center/api-keys`.
-- Five scopes auto-assigned at create: `gate`, `execute`, `track`,
-  `verify`, `*`. A telemetry-only ingestor ships `track` only;
-  a CI checker ships `verify` only.
-- `last_used_at` is updated via the auth-cache hit path on every
-  `/check` / `/execute` / `/track` request that bears a valid
-  `X-API-Key`.
-- Per-plan key cap (`seats_limit`-style lookup in
-  `dashboard::parse_plan_limits`): Lite = 10, Starter = 15,
-  Growth = 100, Scale = 350, Enterprise = unlimited. ADR-057
-  Lite Trial overlays Scale's cap for the trial window via
-  `resolve_plan_for_org_overlay_strict`.
-
-### Approaches
-
-- Considered client-supplied `key_id`. Rejected — ownership
-  ambiguity on multi-tenant boundaries and a replay surface
-  against `consume_approved`.
-- Considered a single-version HMAC secret store. Chosen
-  multi-version so an in-flight SDK can keep signing with the old
-  secret while the dashboard has already cut over to the new one
-  (rotation without downtime).
-- Considered `INCR` + separate `EXPIRE` for in-flight count.
-  Rejected — the gap between `INCR` and `EXPIRE` lets a counter
-  land without a TTL and never recover. Lua serializes
-  read-modify-write under Redis's executor so `SET … EX ttl` is
-  atomic.
-
-### Limitations
-
-- Raw key value is shown exactly once. Losing it forces rotation
-  (revoke + create).
-- HMAC secret is also shown exactly once; losing it forces
-  regeneration even if the raw key is preserved.
-- Cross-pod split-brain: a pub/sub outage leaves remote pods with
-  a stale `HmacKeyStore` until the next event. Trade-off documented
-  in `auth/hmac.rs` ("stale peers until the next event" over
-  "blocking the SDK request behind a Redis call").
-- Two-phase revoke is dormant behind
-  `NULLRUN_AUTH_DRAIN_ENABLED=1`; without the flag the handler
-  falls through to immediate revoke (preserves the pre-Phase-C
-  wire contract).
+    The raw key value is shown exactly once — losing it forces
+    rotation (revoke + create). The HMAC secret is also shown
+    exactly once; losing it forces regeneration even if the raw
+    key is preserved. Cross-pod split-brain is a known trade-off:
+    a pub/sub outage leaves remote pods with a stale
+    `HmacKeyStore` until the next event (documented in
+    `auth/hmac.rs` as "stale peers until the next event" over
+    "blocking the SDK request behind a Redis call"). Two-phase
+    revoke is dormant behind `NULLRUN_AUTH_DRAIN_ENABLED=1`;
+    without the flag the handler falls through to immediate
+    revoke (preserves the pre-Phase-C wire contract).

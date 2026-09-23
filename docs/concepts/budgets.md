@@ -179,98 +179,77 @@ unavailable", never as `≈ $0 spent`.
 
 ## Deep dive
 
-### Mechanism
+!!! info "Deep dive"
 
-The authoritative counter is `org:{id}:bp:{period_start_ts}:cost_cents`
-(mirrored by `:cost_millicents` for sub-cent precision per DEF-07-02)
-in Redis. The period `period_start_ts` is computed server-side by
-`compute_calendar_month_period` in the Rust orchestrator and passed
-to `reserve_v3.lua` as `ARGV[21]` / `ARGV[22]` (ADR-026 / v3.64) —
-the script reads `redis.call('TIME')` for `now` but trusts the
-backend-computed period so no `2629800` approximation runs in the
-production path. `/track` flows through `consume_v3.lua`
-(`backend/src/redis/scripts/consume_v3.lua`): it parses the
-`cjson.encode`d reservation record from `budget:reserved:{org}:{exec}`
-to recover `authorized_cents`, then compares `actual` against
-`authorized + epsilon_cents` (fixed cents, default 1¢ — ADR-005).
-On `actual > authorized + ε`, the script INCRBYs the period counter
-on the actual spend (not the reserve), DELs the reservation envelope,
-stamps `consumed_at = "overage_unreconciled"` + `status = "overage"`,
-and returns `CONSUME_OVERBUDGET` (HTTP 422). The 4-table audit
-separation (ADR-009) keeps the period counter in Redis for fast
-enforcement while `cost_events` flows through the Postgres outbox for
-durable history. The `ApproximateBudget` endpoint at
-`backend/src/proxy/http/budget.rs` walks Redis → Postgres outbox →
-last-known cache; when all three miss, it returns 503
-`BUDGET_DATA_UNAVAILABLE` with a 5s `Retry-After`.
+    The authoritative counter is `org:{id}:bp:{period_start_ts}:cost_cents`
+    in Redis (mirrored by `:cost_millicents` for sub-cent precision per
+    DEF-07-02), with `period_start_ts` computed server-side by
+    `compute_calendar_month_period` and passed to `reserve_v3.lua` as
+    `ARGV[21]` / `ARGV[22]` (ADR-026 / v3.64) — the script reads
+    `redis.call('TIME')` for `now` but trusts the backend-computed
+    period so no `2629800` approximation runs in the production path.
+    `/track` flows through `consume_v3.lua`, which parses the
+    `cjson.encode`d reservation record from `budget:reserved:{org}:{exec}`
+    to recover `authorized_cents` and compares `actual` against
+    `authorized + epsilon_cents` (fixed cents, default 1¢ — ADR-005); on
+    `actual > authorized + ε` the script INCRBYs the period counter on
+    actual spend, DELs the envelope, stamps
+    `consumed_at = "overage_unreconciled"` + `status = "overage"`, and
+    returns `CONSUME_OVERBUDGET` (HTTP 422). The 4-table audit separation
+    (ADR-009) keeps the period counter in Redis for fast enforcement
+    while `cost_events` flows through the Postgres outbox for durable
+    history; the `ApproximateBudget` endpoint at
+    `backend/src/proxy/http/budget.rs` walks Redis → Postgres outbox →
+    last-known cache and returns 503 `BUDGET_DATA_UNAVAILABLE` (5s
+    `Retry-After`) when all three miss.
 
-### Guarantees
+    The reserve / consume pair is atomic in Lua: `reserve_v3.lua` HSETs
+    `reserved_cents` on the binding before the period INCRBY so a retry
+    between Lua return and Rust outbox commit sees `status='reserved'`
+    and returns `{prior_cents, "OK", "REPLAY"}` instead of double-INCRBY
+    (AUDIT P0-05), and `/track` idempotency keys on the binding's
+    `status` field (`consumed` → `IDEMPOTENT_REPLAY`; `overage` →
+    `CONSUME_OVERBUDGET` with the same 5-tuple the first call produced).
+    The aggregator at `backend/src/proxy/policy_cache.rs::aggregate_policies_with_mode`
+    runs `min()` over `budget_cents` across both scopes but stores the
+    wf-only and org-only minima independently (`wf_budget_cents`,
+    `policy_org_ceiling_cents`); Lua §6a enforces the always-strict
+    org ceiling first, §5.5 pre-computes the wf ceiling state, and §6
+    enforces it (Hard mode) or inside the soft-pass branch (Soft mode,
+    gated on `enforcement_mode=Soft` + active `chain_id` + projected
+    within `max_overdraft_cents` AND `max_overdraft_percent`). N
+    concurrent chains share one org overdraft counter — they do NOT
+    multiply the cap.
 
-`Consume ≤ Reserve + ε_cents` (ADR-005). Fixed cents, never percentage
-— a percentage ε would let a $100 reserve accept $110 actual, while
-fixed 1¢ bounds the drift regardless of reserve size. The reserve /
-consume pair is atomic in Lua: `reserve_v3.lua` HSETs
-`reserved_cents` on the binding before the period INCRBY so a retry
-between Lua return and Rust outbox commit sees `status='reserved'`
-and returns `{prior_cents, "OK", "REPLAY"}` instead of double-INCRBY
-(AUDIT P0-05). Idempotency on `/track` (consume_v3.lua)
-keys on the binding's `status` field: `consumed` → `IDEMPOTENT_REPLAY`
-(OK replay); `overage` → `CONSUME_OVERBUDGET` with the same 5-tuple
-the first call produced. The reservation envelope's TTL is 300s idle
-(or `envelope_ttl_arg` for approval-mode, ADR-022 P0-A); on TTL
-expiry, `/track` returns `RESERVATION_NOT_FOUND` (503) and the period
-counter is NOT incremented. The `ApproximateBudget` endpoint is
-advisory only — it always returns `is_approximate: true`, never feeds
-the gate.
+    The pre-ADR-026 path computed the period inside Lua via
+    `HGET polar:{org}` and a `2629800`-month approximation and was
+    REMOVED (ADR-026 / v3.64) because pre-ADR-026 callers could land
+    on different period buckets across `/gate` and `/track` for the
+    same execution (e.g. gate at 23:59:59, track at 00:00:01); the
+    binding-as-source-of-truth path eliminates that drift. The
+    `ApproximateBudget` three-tier fallback (Redis → Postgres →
+    last-known) was chosen over a single source because Redis can be
+    unavailable during a period rollover and Postgres outbox lag is
+    sub-second to ~2s — three confidence bands (`High` / `Medium` /
+    `Low`) let the UI render the value with the right caveat.
+    Percentage ε was considered and rejected (ADR-005 §"Why fixed
+    cents") because the abuse surface is unbounded — fixed 1¢ caps
+    the drift to a single cent regardless of reserve size, with a
+    per-policy override wired via `policies.consume_epsilon_cents` for
+    the rare operator that needs it.
 
-### Patterns
-
-The aggregator at `backend/src/proxy/policy_cache.rs::aggregate_policies_with_mode`
-runs `min()` over `budget_cents` for BudgetLimit policies across both
-scopes, but stores the wf-only and org-only minima independently
-(`wf_budget_cents`, `policy_org_ceiling_cents`). Both ship to Lua —
-Lua §6a enforces the always-strict org ceiling first, then §5.5
-pre-computes the wf ceiling state, then §6 enforces it (Hard mode) or
-inside the soft-pass branch (Soft mode). Soft mode requires three
-preconditions (CLAUDE.md §6): `enforcement_mode=Soft`, an active
-`chain_id` declared via `with chain(...)`, and the projected cost
-within `max_overdraft_cents` AND `max_overdraft_percent`. The chain
-TTL is 5 minutes idle (CLAUDE.md §6) or `max_chain_duration_seconds`
-(default 3600s). N concurrent chains share one org overdraft counter
-— they do NOT multiply the cap.
-
-### Approaches
-
-The pre-ADR-026 path computed the period inside Lua via
-`HGET polar:{org}` and a `2629800`-month approximation. That path
-was REMOVED (ADR-026 / v3.64) because pre-ADR-026 callers could
-land on different period buckets across `/gate` and `/track` for the
-same execution (e.g. gate at 23:59:59, track at 00:00:01). The new
-binding-as-source-of-truth path eliminates that drift. The
-`ApproximateBudget` endpoint's three-tier fallback (Redis → Postgres
-→ last-known) was chosen over a single source because Redis can be
-unavailable during a period rollover and Postgres outbox lag is
-sub-second to ~2s — three confidence bands (`High` / `Medium` / `Low`)
-let the UI render the value with the right caveat. Percentage ε was
-considered and rejected (ADR-005 §"Why fixed cents") because the
-abuse surface is unbounded — fixed 1¢ caps the drift to a single cent
-regardless of reserve size. Per-policy override is wired via
-`policies.consume_epsilon_cents` for the rare operator that needs it.
-
-### Limitations
-
-The `ApproximateBudget` endpoint is advisory only — never feed a
-gate, rate-limit, or agent-side decision off it; an outage of all
-three sources returns 503, NOT `≈ $0 spent`. The reservation envelope
-TTL is 300s (or operator-configured); a `/track` arriving after TTL
-expiry returns `RESERVATION_NOT_FOUND` and the operator must retry
-with a fresh `/gate`. `consume_v3.lua`'s orphan-tolerance invariant
-(`pkey TTL'd → RESERVATION_NOT_FOUND`) means a malformed reservation
-record (legacy integer, bad JSON) is treated as missing — by design,
-because the cap check is reserved for the gate-bypass case only.
-Consume time can never revalidate the reserve's commitment against a
-new operator-tightened cap: the cap is fresh at `/track` (re-fetched
-in Rust), but the `authorized_cents` ceiling is sealed at `/gate`
-time. `ε > 5¢` produces a warning at startup (ADR-005) — operators
-that need wider tolerance should re-evaluate the reserve projection
-rather than raise ε.
+    The `ApproximateBudget` endpoint is advisory only — never feed a
+    gate, rate-limit, or agent-side decision off it; an outage of all
+    three sources returns 503, NOT `≈ $0 spent`. The reservation
+    envelope TTL is 300s (or operator-configured); a `/track` arriving
+    after TTL expiry returns `RESERVATION_NOT_FOUND` and the operator
+    must retry with a fresh `/gate`. `consume_v3.lua`'s
+    orphan-tolerance invariant (`pkey TTL'd → RESERVATION_NOT_FOUND`)
+    treats a malformed reservation record as missing by design, since
+    the cap check is reserved for the gate-bypass case only. Consume
+    time can never revalidate the reserve's commitment against a new
+    operator-tightened cap: the cap is fresh at `/track` (re-fetched
+    in Rust) but the `authorized_cents` ceiling is sealed at `/gate`
+    time. `ε > 5¢` produces a warning at startup (ADR-005) —
+    operators that need wider tolerance should re-evaluate the reserve
+    projection rather than raise ε.
