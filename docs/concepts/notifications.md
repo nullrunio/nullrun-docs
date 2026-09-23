@@ -131,8 +131,6 @@ alert-rules section, when split out).
 - [Audit log](error-handling.md#audit-trail) — every channel and
   rule mutation is recorded as an audit row.
 
-## Deep dive
-
 !!! info "Deep dive"
 
     Notification channels live in `backend/src/alert/`. Channel

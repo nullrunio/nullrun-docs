@@ -196,8 +196,6 @@ the standard OpenAI / Anthropic / Gemini / Cohere clients.
 - [Reference → SDK API → track_*](../reference/sdk-api.md) — manual
   span creation
 
-## Deep dive
-
 !!! info "Deep dive"
 
     The trace ingest path is `proxy/middleware/tracing.rs`

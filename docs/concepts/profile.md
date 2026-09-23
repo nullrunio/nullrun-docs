@@ -118,8 +118,6 @@ window.
 - [Audit log](error-handling.md#audit-trail) — every profile
   change (password / 2FA / email / sessions) leaves a row.
 
-## Deep dive
-
 !!! info "Deep dive"
 
     Per-user surface distinct from per-org Organization. Reads

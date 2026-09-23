@@ -325,8 +325,6 @@ your own `except NullRunWorkflowKilledError:` arm above.
   inside ASGI handlers
 - [Tracing](tracing.md) — how errors map to spans
 
-## Deep dive
-
 !!! info "Deep dive"
 
     Wire codes are minted by

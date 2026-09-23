@@ -125,8 +125,6 @@ disable the gate — bypassing it is a dev/test opt-out.
 - [Troubleshooting](../troubleshooting.md) — common "why is my
   agent blocked?" questions
 
-## Deep dive
-
 !!! info "Deep dive"
 
     The circuit breaker is the `/api/v1/gate` enforcement pipeline in

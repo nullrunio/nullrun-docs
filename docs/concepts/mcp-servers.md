@@ -178,8 +178,6 @@ probe scheduler on it.
 - [Sensitive tools](sensitive-tools.md) — recommended starter
   patterns for destructive actions.
 
-## Deep dive
-
 !!! info "Deep dive"
 
     The page is one row per Action Source (`mcp://<server_name>`),

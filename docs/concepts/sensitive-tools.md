@@ -174,8 +174,6 @@ is bound to the exact action payload the SDK sent on `/gate`. See
   disabling a ToolBlock rule
 - [Circuit breaker → fail-CLOSED matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable)
 
-## Deep dive
-
 !!! info "Deep dive"
 
     ToolBlock lives as Step 3 of the gate orchestrator's 10-step

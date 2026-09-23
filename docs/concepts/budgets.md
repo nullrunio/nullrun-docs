@@ -177,8 +177,6 @@ unavailable", never as `≈ $0 spent`.
 - [Policies](policies.md) — rate limits (separate from budget) and soft-mode fields
 - [Troubleshooting](../troubleshooting.md#why-is-my-call-being-rejected-with-nullrunblockedexception)
 
-## Deep dive
-
 !!! info "Deep dive"
 
     The authoritative counter is `org:{id}:bp:{period_start_ts}:cost_cents`

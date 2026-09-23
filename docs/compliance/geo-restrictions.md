@@ -137,8 +137,6 @@ PII under GDPR) — they appear at WARN.
 The NullRun team maintains the GeoIP database; contact support if
 geo-block seems misclassified.
 
-## Deep dive
-
 !!! info "Deep dive"
 
     The geo-block middleware lives at

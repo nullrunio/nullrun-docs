@@ -131,8 +131,6 @@ API directly even if the page itself doesn't render.
 - [Audit log](error-handling.md#audit-trail) — every dismiss /
   snooze is recorded as an audit row.
 
-## Deep dive
-
 !!! info "Deep dive"
 
     The Alerts page is served by

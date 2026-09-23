@@ -207,8 +207,6 @@ exposing the secret.
 - [Configuration](../getting-started/configuration.md) — env vars
   for keys
 
-## Deep dive
-
 !!! info "Deep dive"
 
     An API key is two independent secrets minted at create time

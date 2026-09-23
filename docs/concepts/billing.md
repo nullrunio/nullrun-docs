@@ -164,8 +164,6 @@ comparison table before being asked to pay.
 - [Workspace & Org](organization.md) — for changing the org
   name / contact email / DPA acceptance.
 
-## Deep dive
-
 !!! info "Deep dive"
 
     The billing surface lives in `backend/src/billing/`. The

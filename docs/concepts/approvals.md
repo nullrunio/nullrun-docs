@@ -169,8 +169,6 @@ binding, and the digest-mismatch drift cases (`NR-A013` /
   lands in the hash-chained audit log; the operator + `decided_by`
   UUID + `decided_at` are searchable.
 
-## Deep dive
-
 !!! info "Deep dive"
 
     Every approval decision flows through

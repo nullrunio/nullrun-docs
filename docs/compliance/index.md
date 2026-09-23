@@ -16,8 +16,6 @@ cooperating layers control jurisdiction-based access:
 Sanctions violations are strict-liability; see legal review for full
 rationale. A regression on either layer is a compliance incident.
 
-## Deep dive
-
 !!! info "Deep dive"
 
     Compliance posture is implemented by two cooperating
@@ -46,12 +44,12 @@ rationale. A regression on either layer is a compliance incident.
     enforcement paths fail-CLOSED by default — this replaces the
     pre-2026-07-08 `allow, log loudly` posture that allowed the
     sanctioned-jurisdiction VPN signup bypass. Sanctions
-    screening is ON by default:
-    `NULLRUN_SANCTIONS_SCREENING_DISABLED=1` (or case-insensitive
-    `true`) disables; unset or any other value leaves it ON
-    (`sanctions.rs`). The OnceLock caches the env-var lookup at
-    first call. Match is opaque: a 403 response on SDN match
-    does NOT echo the matched display name to the client
+    screening is ON by default: the operator-level override
+    env var set to `1` (or case-insensitive `true`) disables;
+    unset or any other value leaves it ON (`sanctions.rs`).
+    The OnceLock caches the env-var lookup at first call.
+    Match is opaque: a 403 response on SDN match does NOT
+    echo the matched display name to the client
     (`sanctions-screening.md`); the matched name + field
     (`name` or `email`) are logged at WARN for audit. The
     sanctions table load is graceful — missing CSV returns a
@@ -112,10 +110,9 @@ rationale. A regression on either layer is a compliance incident.
     provisional (`geo_block.rs`): sanctioned-jurisdiction
     visitors can complete OAuth via the BFF until the BFF
     carries XFF — the secondary name/email screen is the catch.
-    The OnceLock caches the env-var override at first call
-    (`sanctions.rs`): changing
-    `NULLRUN_SANCTIONS_SCREENING_DISABLED` at runtime does NOT
-    take effect for the running process — restart required.
+    The OnceLock caches the override env-var at first call
+    (`sanctions.rs`): changing it at runtime does NOT take
+    effect for the running process — restart required.
     Refresh cadence is manual: the sanctions table is loaded at
     process start; restart is required after each CSV update
     (`sanctions-screening.md`) — no automatic refresh worker.

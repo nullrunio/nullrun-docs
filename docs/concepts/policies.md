@@ -187,8 +187,6 @@ see the exact request that triggered the decision.
   that produce `require_approval`
 - [Workflows](workflow.md) — where the merged policy is applied
 
-## Deep dive
-
 !!! info "Deep dive"
 
     `aggregate_policies` at `backend/src/proxy/policy_cache.rs` is

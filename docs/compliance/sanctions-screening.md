@@ -74,7 +74,7 @@ On a `Match` the response body is a generic 403 — the matched display
 name is **not** echoed to the client to avoid confirming the
 screening target.
 
-## Operator override — `NULLRUN_SANCTIONS_SCREENING_DISABLED`
+## Operator override
 
 The screening is **ON by default**. The IP-level Fortress geo-block
 excludes sanctioned-country traffic before signup; name-based SDN
@@ -83,14 +83,8 @@ who travel, use a non-sanctioned-country VPN, or register via
 OAuth from a non-sanctioned IP.
 
 To **disable** name-based screening entirely (the screening always
-returns `Clean`), set:
-
-```bash
-NULLRUN_SANCTIONS_SCREENING_DISABLED=1
-```
-
-There is no other accepted value — only `1` and the case-insensitive
-`true` disable the screening. Any other value (including `0`,
+returns `Clean`), set the operator-level override env var to `1`
+(or the case-insensitive `true`). Any other value (including `0`,
 `false`, or an unset variable) leaves screening ON.
 
 ### Posture by environment
@@ -131,8 +125,6 @@ sharper once money is in the picture.
   that matching them would produce false positives. The name tokens
   are the primary signal; the email is a secondary, weaker signal.
 
-## Deep dive
-
 !!! info "Deep dive"
 
     The sanctions screening module lives at
@@ -153,12 +145,12 @@ sharper once money is in the picture.
     | DegradedFallback`. The module-level OnceLock caches the
     table at first call.
 
-    Screening is ON by default:
-    `NULLRUN_SANCTIONS_SCREENING_DISABLED=1` (or case-insensitive
-    `true`) disables; any other value (or unset) keeps it ON
-    (`sanctions.rs`). The override is cached at first call
-    (OnceLock per process) — runtime env-var changes do NOT
-    take effect for the running process. Match is opaque to
+    Screening is ON by default: the operator-level override
+    env var set to `1` (or case-insensitive `true`) disables;
+    any other value (or unset) keeps it ON (`sanctions.rs`).
+    The override is cached at first call (OnceLock per process)
+    — runtime env-var changes do NOT take effect for the
+    running process. Match is opaque to
     the client: 403 body does NOT echo the matched display
     name; the matched name + field (`name` or `email`) are
     logged at WARN for audit (`sanctions-screening.md`).
@@ -211,8 +203,8 @@ sharper once money is in the picture.
     email); false negatives carry criminal-law exposure per
     OFAC Sanctions Compliance Guidance for the Financial Sector
     (2014) and 31 CFR Part 501 (referenced in `sanctions.rs`).
-    The `NULLRUN_SANCTIONS_SCREENING_DISABLED=1` operator
-    override exists for the pre-revenue stage where the
+    The operator-level override env var (= `1` to disable)
+    exists for the pre-revenue stage where the
     false-positive cost of "Vladimir Petrov" outweighs the
     residual sanctions risk. The OnceLock caching of the
     env-var lookup is intentional: it makes the override
@@ -232,10 +224,10 @@ sharper once money is in the picture.
     `@` and `.`, but the resulting tokens (`gmail`, `mail`)
     are too common. The name is the primary, email is
     secondary (`sanctions-screening.md`). The OnceLock caches
-    the env-var override at first call (`sanctions.rs`):
-    changing `NULLRUN_SANCTIONS_SCREENING_DISABLED` at runtime
-    does NOT take effect for the running process — restart
-    required. Degraded fallback covers 6 state actors: the
+    the override env-var at first call (`sanctions.rs`):
+    changing it at runtime does NOT take effect for the
+    running process — restart required. Degraded fallback
+    covers 6 state actors: the
     hand-curated subset (`sanctions.rs`) is intentionally
     minimal; a real SDN download is required before production
     (`sanctions.rs` WARN log). Refresh cadence is manual: the

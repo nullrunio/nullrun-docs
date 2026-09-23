@@ -161,8 +161,6 @@ and on every reconnect.
 - [Troubleshooting](../troubleshooting.md) — "why did my workflow
   pause without me doing anything?"
 
-## Deep dive
-
 !!! info "Deep dive"
 
     The control plane is a WebSocket at

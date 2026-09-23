@@ -203,8 +203,6 @@ approval for sends to non-`@internal` addresses"), use the typed
 - [Human approval](../concepts/human-approval.md) — typed
   `BusinessImpact` predicates for narrower rules
 
-## Deep dive
-
 !!! info "Deep dive"
 
     The catalog is a docs reference; the enforcement lives in

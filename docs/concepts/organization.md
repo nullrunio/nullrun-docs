@@ -109,8 +109,6 @@ subsequent tombstones.
 - [Audit log](error-handling.md#audit-trail) — every identity
   change leaves a row.
 
-## Deep dive
-
 !!! info "Deep dive"
 
     Org identity is read by

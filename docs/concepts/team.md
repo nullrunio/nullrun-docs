@@ -106,8 +106,6 @@ who did what to whom.
 - [Audit log](error-handling.md#audit-trail) — every team
   mutation leaves a row.
 
-## Deep dive
-
 !!! info "Deep dive"
 
     Four-role matrix in `backend/src/auth/rbac.rs::Role`

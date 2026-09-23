@@ -181,8 +181,6 @@ a call you think should be allowed:
 - [Human approval](human-approval.md) — the approval-rule path,
   distinct from ToolBlock
 
-## Deep dive
-
 !!! info "Deep dive"
 
     ToolBlock policies flow through `check_tool_block`

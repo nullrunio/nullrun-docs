@@ -157,8 +157,6 @@ week and the same workflow handles it.
 - [Control plane](control-plane.md) — how Kill / Pause reach your agent
 - [API keys](api-keys.md) — how to mint a key bound to this workflow
 
-## Deep dive
-
 !!! info "Deep dive"
 
     A workflow is a row in `workflows` plus a runtime `State` entry
