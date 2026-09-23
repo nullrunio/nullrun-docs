@@ -1,0 +1,86 @@
+name: Deploy docs to Cloudflare Pages
+
+# Parallel deployment target for the docs site. The primary workflow
+# `.github/workflows/docs.yml` continues to publish to GitHub Pages
+# (origin: docs.nullrun.io CNAME → nullrunio.github.io). This workflow
+# builds the same MkDocs artifact and publishes it to a Cloudflare Pages
+# project. Until DNS is cut over from the GitHub Pages origin to the
+# Cloudflare Pages target, traffic still flows through GitHub Pages —
+# the Cloudflare deploy is dormant but stays current on every push.
+#
+# Required GH repository secrets (set after the Cloudflare Pages
+# project is created in the dashboard):
+#   CLOUDFLARE_API_TOKEN — Pages Edit permission on the account
+#   CLOUDFLARE_ACCOUNT_ID — found in the CF dashboard URL
+#
+# Cutover procedure (one-time, manual):
+#   1. Create a Cloudflare Pages project pointing at this repo, branch
+#      master, build command `mkdocs build --strict`, output `site/`.
+#   2. Add the custom domain `docs.nullrun.io` to the project
+#      (Cloudflare provisions the CNAME target automatically).
+#   3. At the registrar (netim.net), change the CNAME record for
+#      docs.nullrun.io from `nullrunio.github.io.` to
+#      `<project-name>.pages.dev.` (Cloudflare shows the exact value).
+#   4. Verify with `Resolve-DnsName docs.nullrun.io -Type CNAME` and
+#      re-run the Mozilla Observatory scan.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: cloudflare-pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install mkdocs + material theme
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            mkdocs \
+            mkdocs-material \
+            pymdown-extensions
+
+      - name: Build site
+        # --strict mirrors the GitHub Pages workflow — same artifact,
+        # same warning surface. The CF Pages deploy should never silently
+        # diverge from the GH Pages build.
+        run: mkdocs build --strict
+
+      - name: Upload Pages artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-pages
+          path: site
+          retention-days: 1
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: nullrun-docs
+          directory: site
+          # `gitHubToken` enables automatic PR-comment previews; without
+          # it the action still publishes but skips the comment.
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          # Wraps the deploy output in a collapsible summary instead of
+          # dumping raw wrangler logs into the run view.
+          wranglerVersion: "3"

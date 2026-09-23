@@ -69,6 +69,64 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 - **Python ≥ 3.10** for the SDK.
 - **Nothing else to read the docs** — the site is public.
 
+## Deployment
+
+Two parallel workflows ship from this repository. Until DNS is cut over,
+traffic flows through the **active** origin (GitHub Pages); the
+**standby** origin (Cloudflare Pages) stays current on every push so the
+switchover is a one-record change at the registrar.
+
+| Workflow | Target | DNS origin | Status |
+| --- | --- | --- | --- |
+| `.github/workflows/docs.yml` | GitHub Pages | `nullrunio.github.io` (CNAME at netim.net) | **Active** |
+| `.github/workflows/pages-cf.yml` | Cloudflare Pages | `<project>.pages.dev` (CF-provisioned) | **Standby** |
+
+### Current security posture
+
+Mozilla Observatory scores each header in the response:
+
+| Test | GitHub Pages (current) | Cloudflare Pages (after cutover) |
+| --- | --- | --- |
+| Content-Security-Policy | passes (meta-tag form) | passes (HTTP header) |
+| Referrer-Policy | passes (meta-tag form) | passes (HTTP header) |
+| Strict-Transport-Security | ❌ (GitHub Pages forbids) | ✅ (1 year, includeSubDomains) |
+| X-Content-Type-Options | ❌ | ✅ `nosniff` |
+| X-Frame-Options | ❌ | ✅ `DENY` |
+| Permissions-Policy | ❌ | ✅ (camera, mic, geo, etc. disabled) |
+| Cross-Origin-Opener-Policy | ❌ | ✅ `same-origin` |
+| Cross-Origin-Resource-Policy | ❌ | ✅ `same-origin` |
+
+GitHub Pages does not allow custom HTTP response headers — the
+`<meta http-equiv>` form in `overrides/main.html` covers the two tests
+that accept it; the remaining six tests require the HTTP-header form in
+`docs/_headers`, which only Cloudflare Pages can serve. See the comment
+block at the top of `docs/_headers` for the per-header credit map.
+
+### One-time cutover procedure
+
+1. In the Cloudflare dashboard, create a Pages project pointing at this
+   repo, branch `master`, build command `mkdocs build --strict`,
+   output directory `site/`.
+2. Add the custom domain `docs.nullrun.io` to the project. Cloudflare
+   issues the certificate and shows the target CNAME
+   (`<project>.pages.dev`).
+3. Add two GH repository secrets: `CLOUDFLARE_API_TOKEN` (Pages Edit
+   permission) and `CLOUDFLARE_ACCOUNT_ID` (from the CF dashboard URL).
+4. At the registrar (netim.net), change the CNAME record for
+   `docs.nullrun.io` from `nullrunio.github.io.` to the
+   `<project>.pages.dev.` value CF provided. DNS propagation: ~5 min
+   on Fastly's resolver, up to 48 h elsewhere.
+5. Re-run the [Mozilla Observatory
+   scan](https://developer.mozilla.org/en-US/observatory/analyze?host=docs.nullrun.io).
+   Expected grade: **A+**.
+6. After the cutover, disable `.github/workflows/docs.yml` to stop
+   the duplicate GitHub Pages deploy.
+
+The `<meta http-equiv>` tags in `overrides/main.html` stay in place as
+a defence-in-depth fallback — they have no effect when the equivalent
+HTTP headers are present, and they keep the site partially hardened if
+the site ever has to fall back to a host without header injection.
+
 ## Other NullRun repositories
 
 - [nullrun-sdk-python](https://github.com/nullrunio/nullrun-sdk-python) — Python SDK (`pip install nullrun`)

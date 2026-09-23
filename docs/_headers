@@ -1,0 +1,43 @@
+# Cloudflare Pages headers — docs.nullrun.io
+# ────────────────────────────────────────────────────────────────────────────
+# This file is consumed by Cloudflare Pages when the site is served from
+# there. Until DNS is cut over from `nullrunio.github.io` to the
+# Cloudflare Pages project, this file is dormant — GitHub Pages serves
+# `site/` directly without honoring `_headers`.
+#
+# MkDocs copies this file verbatim into `site/_headers` at build time
+# (it's a static asset, not a markdown page). The Cloudflare Pages
+# GitHub Action in `.github/workflows/pages-cf.yml` then deploys `site/`
+# as the publish directory.
+#
+# Mozilla Observatory credit map (https://developer.mozilla.org/en-US/observatory):
+#   • content-security-policy          → CSP test (header form)
+#   • strict-transport-security        → HSTS test
+#   • x-content-type-options           → X-Content-Type-Options test
+#   • x-frame-options                  → X-Frame-Options test
+#                                          (frame-ancestors in CSP also
+#                                          accepted; both set for belt
+#                                          + suspenders on legacy UAs)
+#   • referrer-policy                  → Referrer-Policy test
+#   • permissions-policy               → Permissions-Policy test
+#   • cross-origin-opener-policy       → COOP test
+#   • cross-origin-resource-policy     → CORP test
+# Cross-Origin-Embedder-Policy is intentionally omitted — `require-corp`
+# breaks cross-origin font loads from fonts.gstatic.com, and a docs
+# site doesn't need cross-origin isolation for SharedArrayBuffer.
+
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Content-Security-Policy: default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self'; frame-ancestors 'none'; form-action 'self' https://github.com; base-uri 'self'
+
+# Print edition at /print/ — relaxed CSP because the inline print-button
+# handler and inline anchors don't fit the default-src 'self' baseline
+# cleanly across older browsers. HSTS / X-CTO / X-Frame still apply.
+/print/*
+  Content-Security-Policy: default-src 'self' 'unsafe-inline'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'

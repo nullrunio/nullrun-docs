@@ -38,6 +38,57 @@
 {% block extrahead %}
   {{ super() }}
 
+  {# ── Security meta tags (Observatory fallback) ──────────────────────
+     GitHub Pages — the current host of docs.nullrun.io — does not
+     allow custom HTTP response headers. Without a host that supports
+     header injection (Cloudflare Pages / Netlify / Vercel / etc.) we
+     can only ship a subset of the security headers Mozilla Observatory
+     tests via `<meta http-equiv>`.
+
+     What's covered here:
+       • Content-Security-Policy — closes the Observatory CSP test
+         via the meta-tag form. `frame-ancestors` is IGNORED when CSP
+         is delivered as `<meta>` per spec — Observatory only checks
+         presence, so the directive is still emitted for parity with
+         the HTTP-header version that Cloudflare Pages will serve once
+         we migrate (see _headers at the repo root).
+       • Referrer-Policy — closes the Observatory Referrer-Policy
+         test via the standard `<meta name="referrer">` form.
+
+     What's NOT covered here and requires HTTP headers (added to
+     docs/_headers for the Cloudflare Pages migration):
+       • Strict-Transport-Security, X-Content-Type-Options,
+         X-Frame-Options, Permissions-Policy, Cross-Origin-Opener-
+         Policy, Cross-Origin-Resource-Policy.
+     Those gain credit only after the DNS CNAME cuts from
+     nullrunio.github.io to the Cloudflare Pages project. #}
+
+  {# Content-Security-Policy — `default-src 'self'` baseline with the
+     exceptions mkdocs-material actually needs:
+       • img-src data: https:  → embedded SVG icons + cross-origin
+                                 OG-image fallbacks
+       • style-src 'unsafe-inline' https://fonts.googleapis.com →
+                                 Material injects theme styles inline;
+                                 the Roboto fallback stylesheet is
+                                 still emitted by base.html even
+                                 though the page uses Inter / IBM Plex
+                                 Mono from local @font-face
+       • font-src data: https://fonts.gstatic.com →
+                                 same fallback chain
+       • script-src 'unsafe-inline' 'unsafe-eval' →
+                                 inline JSON-LD in this template +
+                                 Mermaid dynamic rendering
+       • form-action 'self' https://github.com →
+                                 search dialog submits to '/' +
+                                 outbound edit links
+       • frame-ancestors 'none' / base-uri 'self' →
+                                 prevent clickjacking + base-tag
+                                 injection (frame-ancestors is a
+                                 no-op in meta-CSP but matches the
+                                 HTTP-header version) #}
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self'; frame-ancestors 'none'; form-action 'self' https://github.com; base-uri 'self'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+
   {# Brand chrome color — cream paper (#F1EDDA) + machined black
      (#1A1A1A). Mobile Safari/Chrome tint address bar / tab strip
      in the brand surface. Mirrors `--bg-base` from frontend/app/
