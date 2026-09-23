@@ -195,3 +195,110 @@ the standard OpenAI / Anthropic / Gemini / Cohere clients.
 - [Error handling](error-handling.md) — errors that span blocks
 - [Reference → SDK API → track_*](../reference/sdk-api.md) — manual
   span creation
+
+## Deep dive
+
+### Mechanism
+
+The trace ingest path is `proxy/middleware/tracing.rs:64-132`
+(`trace_middleware`). On every inbound request the middleware reads
+the `traceparent` header (W3C Trace Context format:
+`version-trace_id-span_id-flags`), parses it via
+`TraceContext::from_traceparent` (line 29-41), and stashes it in
+request extensions so handlers can read `get_trace_id(request)` or
+`get_trace_context(request)`. The parsed context is forwarded into
+the trace ingest at `proxy/handlers.rs:process_span_events_batch`
+(ADR-014) where `traces.w3c_trace_id` and `spans.w3c_parent_span_id`
+get populated as sibling columns — the SDK-minted UUID remains the
+primary key (`TraceRow.w3c_trace_id` is nullable,
+`backend/src/db/mod.rs:454-458`). The read path is
+`backend/src/proxy/http/traces.rs:1-` — the org-scoped list endpoint
+fetches trace summaries plus per-trace span batches (capped by
+`MAX_SPANS_PER_TRACE`, default `DEFAULT_SPANS_PER_TRACE = 10`,
+`:81`) and redacts PII via `proxy::redaction::Redactor` before
+serialization. The single-trace endpoint
+(`GET /api/v1/orgs/:org_id/traces/:trace_id`) reconstructs the
+waterfall tree from `spans.parent_span_id` (DB schema migration
+141 at `db/mod.rs:4506-4532`).
+
+### Guarantees
+
+W3C header extraction is best-effort — a missing or malformed
+`traceparent` MUST NOT block ingest (ADR-014 §"Compliance"). When
+the header is absent, `w3c_trace_id` is `NULL` and the trace
+remains queryable by its SDK-minted UUID. The audit chain retains
+the SDK-minted UUID as the canonical identity even when
+`w3c_trace_id` is populated, so no JOIN / index / FK is re-typed.
+A sparse partial index `idx_traces_w3c_trace_id_partial` keeps the
+secondary-identifier index bounded (ADR-014 §"Cons"). Per-plan
+retention is enforced by `backend/src/workers/decision_history_retention.rs`
+which reads `plans.features.history_days` live from the DB; the
+canonical values are 3 (Lite), 7 (Starter), 30 (Growth), 90
+(Scale), -1 unlimited (Enterprise) — pinned by migration 002 and
+the inline `plans` table seeding at `db/mod.rs:1994-2011`. Span
+rows carry a typed `verdict` column (`'allow'` / `'flag'` /
+`'block'` / `'chain'`, migration 274) that replaced the
+3-tier frontend heuristic; DB CHECK constraint enforces the
+four-value domain.
+
+### Patterns
+
+The auto-instrumentation emits one span per LLM call and one per
+`@protect` invocation; `with workflow()` / `with chain()` /
+`with span()` context managers emit a parent span that the per-call
+spans nest under. Sub-agent orchestration propagates the W3C
+`traceparent` so a supervisor's child spans appear under the
+supervisor's trace_id in the waterfall. Per-trace PII redaction is
+applied at the read boundary (`traces.rs:Redactor` usage, line 72)
+— allowlist inside the config keeps well-known identifier fields
+(`span_id`, `trace_id`, `w3c_trace_id`, `w3c_parent_span_id`)
+intact, but everything else in `metadata` / `name` / `error` /
+`root_span_name` runs through the deny-list redactor before
+serialization. The `decision` field on a span is `verdict` — never
+`metadata.policy_decision` (the frontend's previous heuristic
+fallback was deleted in migration 274). When the SDK process
+crashes before the buffer flush, in-flight spans are lost — that's
+why `nullrun.shutdown(flush=True)` is required in the `finally`
+block.
+
+### Approaches
+
+ADR-014 chose Path B (sibling `w3c_trace_id` / `w3c_parent_span_id`
+columns) over Path A (rename `trace_id` to W3C hex). The reasons
+were: backward-compat (existing SDKs that don't extract
+`traceparent` continue to write `NULL`), no FK changes (every
+JOIN and audit-chain reference is unchanged), forward-compat (a
+future rename to W3C hex becomes a key-swap, not a re-typing),
+and OTLP-friendly (a future `nullrun-otlp-exporter` can read
+`w3c_trace_id` and emit it as the OTLP trace ID). The
+typed-`verdict`-column fix (F-27, migration 274) was chosen over
+the alternative of "frontend keeps the heuristic" because the
+audit log + dashboard would otherwise disagree on the decision
+label. Span retention is per-plan, not global — the alternative
+considered (single retention floor) was rejected because Scale
+and Enterprise customers have materially different cost-to-store
+trade-offs.
+
+### Limitations
+
+Retention is independent of the trace *generation* caps — Lite
+throttles at 10 000 tokens/hour and 75 000 executions/month
+(`db/mod.rs:1994` features payload), so traces stop accumulating
+well before the 3-day window applies. After the retention window
+expires, the trace is removed from the dashboard; the aggregated
+cost information is summarized per workflow per period and
+survives. The W3C header extraction is best-effort and best-effort
+on the SDK side too — only SDKs that call the W3C propagation
+helper populate `w3c_trace_id` (others leave it `NULL`). The
+partial index on `w3c_trace_id` keeps lookup bounded but means a
+full UUID join remains the path for legacy SDKs. The frontend's
+`SpanRow.tsx` previously used a 3-tier heuristic
+(`metadata.policy_decision → name-suffix → status`) that disagreed
+with the backend's typed `verdict` column; the migration is closed
+in `verdict` typed column. The trace ingest batches via
+`process_span_events_batch` — there is no synchronous per-span
+INSERT path; back-pressure on the batch buffer shows up as dropped
+spans during high traffic. Per-trace span count is capped
+(`MAX_SPANS_PER_TRACE`) and the response marks truncated rows via
+`truncated_trace_ids` so the dashboard can show a "show more"
+indicator.
