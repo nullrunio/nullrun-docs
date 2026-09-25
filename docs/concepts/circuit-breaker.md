@@ -56,9 +56,11 @@ for the recommended handler shape.
 
 If you use the zero-boilerplate helpers from the SDK, you don't have
 to write any of this — `with nullrun.guard():` catches the standard
-exceptions (including the kill signal), prints the structured
-four-line developer report, and exits 1. To handle kill distinctly,
-use bare `@protect` with an explicit `except NullRunWorkflowKilledError:` arm.
+`NullRunError` exceptions, prints the structured four-line developer
+report, and exits 1. The kill signal is the one exception:
+`guard()` re-raises it so kill always reaches the top of the agent
+loop. To handle kill distinctly, use bare `@protect` with an
+explicit `except NullRunWorkflowKilledError:` arm.
 
 ## When the gateway is unreachable
 

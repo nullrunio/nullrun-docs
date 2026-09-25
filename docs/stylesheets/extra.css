@@ -13,7 +13,7 @@
      │ sidebar  │  menu-bar (50px, offset right)   │
      │  (fixed  ├──────────────────────────────────┤
      │  340px,  │                                  │
-     │  full    │  content (max 900px, centered)   │
+     │  full    │  content (max 1400px, centered)  │
      │  height) │                                  │
      │          │                                  │
      │  numbered│                                  │
@@ -752,15 +752,26 @@ body.nr-sidebar-hidden .md-sidebar--primary {
    7. CONTENT — flush against sidebar, max-width, Inter body
    ──────────────────────────────────────────────────────────────────────────── */
 .md-content {
-  /* No horizontal padding — article sits flush against the sidebar
-     (sidebar ends at x=340, article starts at x=340). Material's
-     default `padding: 32px 32px 64px` was creating a 56px gap
-     (32px container padding + 24px .md-content__inner margin) on
-     each side that felt wasteful next to a 340px sidebar.
-     Vertical 16px keeps a little breathing room above the H1. */
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 16px 0;
+  /* No horizontal padding on the right (article sits flush against
+     the TOC at the viewport's right edge via §3 max-width: none on
+     .md-grid). A 20px left padding gives a minimum breathing gap
+     between the sidebar's right border and the article — without it,
+     headings like "First agent" start right at x=340 and feel glued
+     to the chrome. Vertical 16px keeps a little breathing room
+     above the H1. */
+  max-width: 1400px;
+  /* Center explicitly within (100vw − 340px) — the content area to the
+     right of the 340px sidebar. Plain `margin: 0 auto` doesn't center
+     here because Material sets `flex: 1` on .md-content, which grows
+     the item to fill the flex row, leaving no leftover space for the
+     auto margins to distribute. `max(0px, …)` clamps the offset to
+     zero on viewports narrower than 1740px (where the 1400px column
+     exactly fills the available width minus the sidebar). The 20px
+     left padding lives INSIDE the 1400px box (border-box sizing) so
+     the centering math doesn't need to know about it. */
+  margin-left: max(0px, calc((100vw - 340px - 1400px) / 2));
+  margin-right: max(0px, calc((100vw - 340px - 1400px) / 2));
+  padding: 16px 0 16px 20px;
 }
 /* Material's `.md-content__inner` is the `<article>` tag and ends
    up with `margin-left: 24px` / `margin-right: 24px` even though
@@ -1224,7 +1235,7 @@ body[data-md-color-scheme="slate"] .nr-shot img.nr-shot__dark  { display: block;
   display: block;
   padding: 10px 16px;
   border-top: 2px solid var(--md-default-fg-color);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--md-text-font);
   font-size: 0.78rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;

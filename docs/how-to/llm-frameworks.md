@@ -138,7 +138,8 @@ Some patterns bypass the auto-instrumentation:
 - A framework not listed above — file an issue at
   `github.com/nullrunio/nullrun-sdk-python`
 
-The catch-all `track_llm(input_tokens=…, output_tokens=…, model=…)`
+The catch-all
+`nullrun.get_runtime().track_llm(input_tokens=…, output_tokens=…, model=…)`
 is the escape hatch for any of these. If `@protect` fires 50+ times
 without the runtime seeing a single `track_llm` event, the SDK logs
 **one** WARNING naming the three most likely root causes.

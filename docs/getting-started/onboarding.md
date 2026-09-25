@@ -6,7 +6,7 @@ description: Wire NullRun into an existing agent in fifteen minutes: install, ke
 # First agent
 
 This is the recommended path from "I have an LLM app" to "NullRun is
-gating my spend and tools". Each step links out to deeper docs only
+gating my spend and tools".  Each step links out to deeper docs only
 when you need them.
 
 ## 1. Sign up and create an API key

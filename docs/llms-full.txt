@@ -727,7 +727,7 @@ with workflow("my-first-agent"):       # scopes the gate to a workflow
         return response.choices[0].message.content
 
 if __name__ == "__main__":
-    with nullrun.guard():        # catches NullRunError, prints the
+    with nullrun.guard():         # catches NullRunError, prints the
         print(answer("What does NullRun do?"))
         # structured 4-line developer report on failure, then sys.exit(1)
 ```
@@ -904,9 +904,11 @@ for the recommended handler shape.
 
 If you use the zero-boilerplate helpers from the SDK, you don't have
 to write any of this — `with nullrun.guard():` catches the standard
-exceptions (including the kill signal), prints the structured
-four-line developer report, and exits 1. To handle kill distinctly,
-use bare `@protect` with an explicit `except NullRunWorkflowKilledError:` arm.
+`NullRunError` exceptions, prints the structured four-line developer
+report, and exits 1. The kill signal is the one exception:
+`guard()` re-raises it so kill always reaches the top of the agent
+loop. To handle kill distinctly, use bare `@protect` with an
+explicit `except NullRunWorkflowKilledError:` arm.
 
 ## When the gateway is unreachable
 
@@ -2242,11 +2244,13 @@ except WorkflowPausedException:
     raise
 ```
 
-Both signals inherit from `NullRunError`, so `with nullrun.guard():`
-catches both (prints the structured four-line developer report, exits
-1). To handle kill distinctly — checkpoint state, notify a
-supervisor, then exit — wrap the un-`guard()` call in your own
-try/except. See
+Both signals inherit from `NullRunError`. `with nullrun.guard():`
+catches `WorkflowPausedException` (prints the structured four-line
+developer report, exits 1) and re-raises `WorkflowKilledInterrupt`
+— kill is a control-plane action, not an SDK failure, and must reach
+the top of the agent loop. To handle kill distinctly — checkpoint
+state, notify a supervisor, then exit — wrap the un-`guard()` call
+in your own try/except. See
 [Error handling → Kill signal](../concepts/error-handling.md#kill-signal)
 for the recommended handler shape.
 
@@ -4039,12 +4043,13 @@ $ echo $?
 1
 ```
 
-`with nullrun.guard():` catches every `NullRunError` — which now
-includes the kill signal (`WorkflowKilledInterrupt` /
-`NullRunWorkflowKilledError` both inherit from `NullRunError`) —
-prints the structured report to stderr, and exits with code 1. To
-handle kill distinctly (for example, checkpoint state before exit),
-use the un-`guard()` form and add your own
+`with nullrun.guard():` catches every `NullRunError` raised inside
+the block, prints the structured report to stderr, and exits with
+code 1. The kill signal (`WorkflowKilledInterrupt` /
+`NullRunWorkflowKilledError`) is the one exception — `guard()`
+re-raises it unchanged so kill always reaches the top of the
+agent loop. To handle kill distinctly (for example, checkpoint
+state before exit), use the un-`guard()` form and add your own
 `except NullRunWorkflowKilledError:` arm.
 
 `guard()` is the recommended form: it gives a clearer scope,
@@ -4160,8 +4165,10 @@ except NullRunError:
     log.error("agent failed", exc_info=True)
 ```
 
-`guard()` catches kill via the standard `NullRunError`
-arm — it prints the structured four-line report and exits 1. To keep
+`guard()` re-raises the kill signal — kill is a control-plane
+action, not an SDK failure, and must reach the top of the agent
+loop. `with nullrun.guard():` catches every other `NullRunError`
+and exits 1, but the kill signal passes straight through. To keep
 the process alive on kill (checkpoint, notify a supervisor, then
 exit), use bare `@protect` with your own `except NullRunWorkflowKilledError:`
 arm above.
@@ -4207,8 +4214,9 @@ arm above.
     modes) instead of hanging on `pool.acquire()`. The kill signal
     inherits from `NullRunError`, so `except Exception:` catches it
     alongside every other SDK error; `with nullrun.guard():`
-    catches it via the standard `NullRunError` arm and prints the
-    structured four-line developer report.
+    re-raises the kill signal (control-plane action, not an SDK
+    failure) while catching every other `NullRunError` and printing
+    the structured four-line developer report.
 
     Wire codes fall into three buckets: **decision** (block / allow /
     require_approval), **infrastructure** (Redis-down, Postgres-down,
@@ -6070,9 +6078,9 @@ pip install nullrun crewai
 ```
 
 The patch subscribes to the crewai `EventBus` and translates each
-lifecycle event into a `nullrun.track(...)` call. The runtime and the
-crewai EventBus hook are attached lazily on the first
-`@protect` call:
+lifecycle event into a `nullrun.get_runtime().track(...)` call. The
+runtime and the crewai EventBus hook are attached lazily on the
+first `@protect` call:
 
 ```python title="crewai_crew.py"
 import nullrun
@@ -6435,7 +6443,8 @@ Some patterns bypass the auto-instrumentation:
 - A framework not listed above — file an issue at
   `github.com/nullrunio/nullrun-sdk-python`
 
-The catch-all `track_llm(input_tokens=…, output_tokens=…, model=…)`
+The catch-all
+`nullrun.get_runtime().track_llm(input_tokens=…, output_tokens=…, model=…)`
 is the escape hatch for any of these. If `@protect` fires 50+ times
 without the runtime seeing a single `track_llm` event, the SDK logs
 **one** WARNING naming the three most likely root causes.
@@ -6920,7 +6929,8 @@ estimate. See
 [OpenAI streaming reference](https://platform.openai.com/docs/api-reference/chat-streaming).
 
 ```python
-from nullrun import protect, track_llm
+import nullrun
+from nullrun import protect
 
 
 @protect
@@ -6936,7 +6946,7 @@ def custom_stream(prompt: str):
         final = chunk
         yield chunk.choices[0].delta.content or ""
     if final and getattr(final, "usage", None):
-        track_llm(
+        nullrun.get_runtime().track_llm(
             input_tokens=final.usage.prompt_tokens,
             output_tokens=final.usage.completion_tokens,
             model="gpt-4o-mini",
@@ -6969,15 +6979,15 @@ next `/gate` may reject the next call based on stale spend.
 
 ---
 title: Custom Tracking
-description: Manually report cost and events with track_llm, track_tool, and track when auto-instrumentation doesn't fit your runtime.
+description: Manually report cost and events with runtime.track_llm, runtime.track_tool, and runtime.track when auto-instrumentation doesn't fit your runtime.
 ---
 
 # Manual cost / event tracking
 
 Most of the time auto-instrumentation handles cost tracking — the
 httpx transport hook reads `usage` from OpenAI / Anthropic / Gemini /
-Cohere responses and emits `track_llm` automatically. Use
-`track_llm`, `track_tool`, and `track` manually when:
+Cohere responses and emits `track_llm` automatically. Reach for the
+runtime's `track_llm` / `track_tool` / `track` methods manually when:
 
 - your LLM client bypasses httpx (Bedrock via boto3, Cohere on a raw
   socket, an offline batch reading cached completions);
@@ -6992,13 +7002,18 @@ If your SDK wraps the standard OpenAI / Anthropic / Gemini / Cohere
 clients, do **not** call `track_llm` manually — auto-instrumentation
 will fire and you'll double-count.
 
+The three trackers live on the runtime instance — reach them via
+`nullrun.get_runtime()`. They are not exposed as top-level names on
+the `nullrun` package; the curated public surface is the universal
+`@protect` decorator plus lifecycle / error helpers.
+
 ## The three trackers
 
 | API | Purpose | Required fields |
 | --- | --- | --- |
-| `track_llm(input_tokens, output_tokens, model, ...)` | Manual LLM cost | `input_tokens`, `output_tokens`; `model` recommended |
-| `track_tool(tool_name, duration_ms, ...)` | Manual tool cost | `tool_name` (must match `ToolBlock` patterns) |
-| `track({"type": ..., ...})` | Arbitrary observability | `type` (becomes a filterable event category) |
+| `runtime.track_llm(input_tokens, output_tokens, *, model=None, latency_ms=None, metadata=None)` | Manual LLM cost | `input_tokens`, `output_tokens`; `model` recommended |
+| `runtime.track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool cost | `tool_name` (must match `ToolBlock` patterns) |
+| `runtime.track({"type": ..., ...})` | Arbitrary observability | `type` (becomes a filterable event category) |
 
 Without `track_llm` the budget counter is never credited for the
 call — the next `/gate` may reject based on stale spend.
@@ -7007,10 +7022,11 @@ call — the next `/gate` may reject based on stale spend.
 
 ```python title="track_custom.py"
 import nullrun
-from nullrun import track_llm, track_tool, track
+
+runtime = nullrun.get_runtime()
 
 # After your custom LLM call returns:
-track_llm(
+runtime.track_llm(
     input_tokens=response.usage.prompt_tokens,
     output_tokens=response.usage.completion_tokens,
     model="custom-llm-v1",
@@ -7019,7 +7035,7 @@ track_llm(
 )
 
 # After a tool call (regardless of success/failure):
-track_tool(
+runtime.track_tool(
     tool_name="send_email",
     duration_ms=240,
     is_retry=False,
@@ -7027,14 +7043,15 @@ track_tool(
 )
 
 # Arbitrary business events:
-track({"type": "agent.milestone", "step": "research_complete", "elapsed_secs": 42})
-track({"type": "agent.error", "code": "validation_failed", "field": "email"})
+runtime.track({"type": "agent.milestone", "step": "research_complete", "elapsed_secs": 42})
+runtime.track({"type": "agent.error", "code": "validation_failed", "field": "email"})
 ```
 
-`track_tool`'s `tool_name` flows through the policy engine — a
+`track_tool`'s `tool_name` flows through to the policy engine — a
 `ToolBlock` policy with pattern `send_*` catches a manual call to
-`track_tool("send_email", ...)`. Use the same tool names you would
-pass to auto-instrumentation so policy enforcement stays consistent.
+`runtime.track_tool("send_email", ...)`. Use the same tool names you
+would pass to auto-instrumentation so policy enforcement stays
+consistent.
 
 ## When the SDK can't see the call
 
@@ -7042,12 +7059,15 @@ If your tool isn't called from inside `@protect`, wrap the manual
 tracking in `@protect` so the gate still runs:
 
 ```python
-from nullrun import protect, track_llm
+import nullrun
+from nullrun import protect
+
+runtime = nullrun.get_runtime()
 
 @protect
 def call_custom_llm(prompt):
     response = my_custom_client.complete(prompt)
-    track_llm(
+    runtime.track_llm(
         input_tokens=response.usage.input,
         output_tokens=response.usage.output,
         model="custom-llm-v1",
@@ -7069,10 +7089,9 @@ def call_custom_llm(prompt):
 
 ## See also
 
-- [SDK API → track_llm / track_tool / track](../reference/sdk-api.md#track_llm-manual-usage)
+- [SDK API → runtime.track_llm / track_tool / track](../reference/sdk-api.md#runtimetrack_llm-manual-usage)
 - [LLM frameworks](../how-to/llm-frameworks.md) — non-httpx vendors
   (Bedrock, Cohere) that use manual tracking
-
 
 ---
 
@@ -7242,7 +7261,7 @@ checklist.
 
 title: SDK API
 maturity: stable
-description: Reference for every NullRun SDK symbol: @protect (canonical entry point, takes no parameters), the workflow / span / chain / attempt context managers, exceptions, manual tracking, and transport hooks.
+description: Reference for every NullRun SDK symbol: @protect (canonical entry point, takes no parameters), the workflow / span / chain context managers, exceptions, manual tracking, and transport hooks.
 # SDK API
 
 The Python SDK lives in
@@ -7262,7 +7281,7 @@ Auto-instrumentation for httpx-based libraries (`openai`,
 ## Top-level
 
 ```python title="public_surface.py"
-from nullrun import init, protect, workflow, span, agent, chain, track_llm, track_tool, track
+from nullrun import init, protect, workflow, span, agent, chain
 ```
 
 ### `init` {#init}
@@ -7286,43 +7305,44 @@ callsite-level error translation as `init(..., fail_on_exit=True)`,
 applied to a region of code rather than at startup. Calling `init()`
 twice returns the same singleton without re-running the lazy trigger.
 
-|| Symbol | Purpose | In `__all__` |
+| Symbol | Purpose | In `__all__` |
 |---|---|---|---|
 | `init(api_key=None, api_url=None, debug=False, fail_on_exit=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). With `fail_on_exit=True`, missing config prints the developer report and `sys.exit(1)` instead of raising. The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
 | `@protect` | Wrap a function for **gate** enforcement (control plane / budget / span / per-tool policy). Takes no kwargs. Every call routes through `/execute`; the backend decides allow / block / require-approval. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — ships `tool_name + args + kwargs` on the wire for every protected call. Wrap the call site in `with nullrun.guard():` for the structured 4-line dev report on failure. | ✅ |
-| `with nullrun.guard():` | Context manager for friendly exit — catches any `NullRunError` raised inside the block, renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
+| `with nullrun.guard():` | Context manager for friendly exit — catches every `NullRunError` raised inside the block (the kill signal `WorkflowKilledInterrupt` re-raises), renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
 | `chain(chain_id: str, op: str = "start")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
 | `span(name=None)` | Context manager for nested trace spans. | (lazy) |
 | `agent(name=None)` | Context manager for agent identity. | (lazy) |
 | `set_call_context(model=None, tools=None)` | Per-call context the SDK forwards to `/gate` so the backend's budget + tool-block enforcement sees real values. | (lazy) |
 | `on_error(hook)` | Register a global error hook. Fires for every `NullRunError` subclass — including the kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) — BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Filter inside the hook by `error_code` (`"NR-W002"`) if you need to skip kill. Returns an idempotent unregister callable. | ✅ |
-| `track_llm(input_tokens, output_tokens=0, **kwargs)` | Manual escape hatch for non-HTTP LLM calls. Returns the backend's decision dict. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. `**kwargs` are forwarded to the transport layer (e.g. `model`, `latency_ms`, `metadata`). | ✅ |
-| `track_tool(tool_name, duration_ms=None, **kwargs)` | Manual tool-call tracking. `**kwargs` are forwarded to the transport layer (e.g. `is_retry`, `metadata`). | ✅ |
-| `track(event: dict)` | Generic manual-event emission. Pass a dict with `type` (event category) and any additional payload fields; buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. Use for arbitrary observability signals (milestones, errors, business events). | ✅ |
+| `runtime.track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` | Manual escape hatch for non-HTTP LLM calls. Reach it via `nullrun.get_runtime()`. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. Cost is recomputed on the backend from `input_tokens` + `output_tokens` + org pricing policy. | (runtime method) |
+| `runtime.track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool-call tracking on the runtime instance. `tool_name` flows through to the policy engine — a `ToolBlock` policy with matching pattern catches the call. | (runtime method) |
+| `runtime.track(event: dict)` | Generic manual-event emission on the runtime instance. Pass a dict with `type` (event category) and any additional payload fields; buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. Use for arbitrary observability signals (milestones, errors, business events). | (runtime method) |
 | `format_user_message(exc)` | Render a `NullRunError` as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. | ✅ |
 | `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
 | `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
 | `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads. Auto-registered with `atexit` inside `init()`, so long-running scripts get a clean WS close on process exit without an explicit call. Calling it manually is safe and idempotent. | ✅ |
-| `status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. Raises `NullRunConfigError` with `error_code="NR-C004"` if the runtime hasn't been initialised yet. | ✅ |
+| `nullrun.get_runtime().status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. Raises `NullRunConfigError` with `error_code="NR-C004"` if the runtime hasn't been initialised yet. | (lazy) |
 
 Rows marked **lazy** are exposed under `nullrun.*` via `__getattr__`
 on first access; they do not appear in `dir(nullrun)` until used.
 
-### `track_llm` manual usage
+### `runtime.track_llm` manual usage
 
-Use `track_llm` when auto-instrumentation can't see the LLM call — a
-custom HTTP client that bypasses `httpx`, an offline batch job, a
-test fixture. The signature mirrors the data the auto-instrumentation
-extractor reads from OpenAI / Anthropic / Gemini / Cohere response
-bodies:
+Use `runtime.track_llm` when auto-instrumentation can't see the LLM
+call — a custom HTTP client that bypasses `httpx`, an offline batch
+job, a test fixture. The signature mirrors the data the
+auto-instrumentation extractor reads from OpenAI / Anthropic / Gemini
+/ Cohere response bodies:
 
 ```python title="track_llm_manual.py"
 import nullrun
-from nullrun import track_llm
+
+runtime = nullrun.get_runtime()
 
 # After your custom LLM call returns:
-track_llm(
+runtime.track_llm(
     input_tokens=response.usage.prompt_tokens,
     output_tokens=response.usage.completion_tokens,
     model="custom-model-v1",
@@ -7333,15 +7353,15 @@ track_llm(
 
 Without `track_llm`, the SDK has nothing to report to the gateway —
 the budget counter is never credited, and the next `/gate` call may
-reject based on stale spend. Call `track_llm` once per real LLM
-call.
+reject based on stale spend. Call `runtime.track_llm` once per real
+LLM call.
 
-### `track_tool` manual usage
+### `runtime.track_tool` manual usage
 
 ```python title="track_tool_manual.py"
-from nullrun import track_tool
+import nullrun
 
-track_tool(
+nullrun.get_runtime().track_tool(
     tool_name="send_email",
     duration_ms=240,
     is_retry=False,
@@ -7353,14 +7373,14 @@ Use it when a non-LLM tool call happens outside the auto-instrumentation
 hooks (e.g. a custom agent framework, or a tool wrapped in your own
 function). The `tool_name` flows through to the policy engine — a
 `ToolBlock` policy with `pattern = "send_*"` will catch a manual call
-to `track_tool("send_email", ...)`.
+to `runtime.track_tool("send_email", ...)`.
 
-### `track` catch-all
+### `runtime.track` catch-all
 
 ```python title="track_manual.py"
-from nullrun import track
+import nullrun
 
-track({
+nullrun.get_runtime().track({
     "type": "agent.milestone",
     "step": "research_complete",
     "elapsed_secs": 42,
@@ -7386,11 +7406,18 @@ structured exception names `NullRunError`, `NullRunAuthError`,
 `NullRunConfigError`, `NullRunBackendError`, `NullRunBudgetError`,
 `NullRunToolBlockedError`, `WorkflowKilledInterrupt`, and the
 typed MCP / approval subclasses. The lazy surface (PEP 562) adds
-`workflow`, `span`, `agent`, `attempt`, `chain`,
+`workflow`, `span`, `agent`, `chain`,
 `set_call_context`, the audit classes (`AuditQuery`, `AuditEntry`,
 …), the tracer (`SpanContext`, `get_current_span`, …), and the
 additional exception names (`WorkflowPausedException`,
 `NullRunBlockedException`, `NullRunApproval*Error`, etc.).
+
+For a runtime snapshot, reach `NullRunStatus` via
+`nullrun.get_runtime().status()`. Returns the same frozen
+`NullRunStatus` dataclass (`ok` / `degraded` / `offline` /
+`misconfigured`); thread-safe, side-effect-free; raises
+`NullRunConfigError` (`error_code="NR-C004"`) if the runtime
+hasn't been initialised yet.
 
 ## Exceptions
 
@@ -7521,7 +7548,7 @@ function never raises and never returns an empty string.
 - [Decorators & context managers](decorators.md) — deep-dive on
   `@protect` (canonical entry point, takes no parameters),
   `with nullrun.guard():`, `set_call_context`, and the
-  workflow / span / chain / attempt context managers
+  workflow / span / chain context managers
 - [Errors](errors.md)
 - [Errors → Decision vs. infrastructure](errors.md#decision-vs-infrastructure)
 - [Use with FastAPI](../how-to/fastapi.md)
@@ -8021,16 +8048,21 @@ required.
 | Helper | Catches | For |
 |---|---|---|
 | `init(api_key=..., fail_on_exit=True)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
-| `with nullrun.guard():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) — **recommended** form |
+| `with nullrun.guard():` | Any `NullRunError` raised inside the block (kill signal re-raises) | Region of code (e.g. a graph `invoke`) — **recommended** form |
 
 Both helpers propagate non-`NullRunError` exceptions (anything
 that isn't an SDK error) as honest tracebacks. `NullRunError`
-subclasses — including the kill signal `NullRunWorkflowKilledError` —
-are caught and rendered as the **structured four-line developer
-report** (catalog headline + `[error_code]` + `what` + `where` +
-`why` + `how to fix`), then the process exits 1. For the full
-design rationale and the boundary between "what NullRun tells the
-developer" and "what the developer tells their end users", see
+subclasses raised inside `with nullrun.guard():` are caught and
+rendered as the **structured four-line developer report**
+(catalog headline + `[error_code]` + `what` + `where` + `why` +
+`how to fix`), then the process exits 1. The kill signal
+(`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) is the
+one exception: `guard()` re-raises it unchanged so kill always
+reaches the top of the agent loop. Catch kill explicitly with
+`except NullRunWorkflowKilledError:` if you need to checkpoint
+state before exit. For the full design rationale and the
+boundary between "what NullRun tells the developer" and "what
+the developer tells their end users", see
 [Concepts → Error handling](../concepts/error-handling.md).
 
 ## Decision vs. infrastructure
@@ -8175,7 +8207,7 @@ you don't care about the exact cause.
 | `NR-R001` | Per-workflow rate limit hit (gateway returned 429 with `Retry-After`) | 429 | `RateLimitError` (subclass of `NullRunTransportError` — infrastructure class despite the 429 status) |
 | `NR-R002` | Rate-limit Redis unavailable (aggregate per-org rate-limit fail-CLOSED) | 503 | `NullRunRateLimitRedisError` |
 | `NR-C000` | Misconfiguration (missing api_key, invalid setup) | n/a (raised) | `NullRunConfigError` (default) |
-| `NR-C004` | Runtime status requested before the runtime is bound (no `@protect` / `init()` yet) | n/a (raised) | `NullRunConfigError` (raised by `nullrun.get_runtime()` when no runtime is bound) |
+| `NR-C004` | Runtime status requested before the runtime is bound (no `@protect` / `init()` yet) — reached via `nullrun.get_runtime()` | n/a (raised) | `NullRunConfigError` (raised by `nullrun.get_runtime()` when no runtime is bound) |
 | `NR-A001` | Auth rejected by backend (general) | 401/403 | `NullRunAuthenticationError` (default) |
 | `NR-P001` | Wire-protocol version mismatch | 400 | `NullRunProtocolError` |
 | `INVALID_JSON` | Request body failed JSON parsing (`JsonSyntaxError`) — `error` slug `invalid_json` | 400 | `NullRunBackendError` |

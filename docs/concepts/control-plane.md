@@ -76,11 +76,13 @@ except WorkflowPausedException:
     raise
 ```
 
-Both signals inherit from `NullRunError`, so `with nullrun.guard():`
-catches both (prints the structured four-line developer report, exits
-1). To handle kill distinctly — checkpoint state, notify a
-supervisor, then exit — wrap the un-`guard()` call in your own
-try/except. See
+Both signals inherit from `NullRunError`. `with nullrun.guard():`
+catches `WorkflowPausedException` (prints the structured four-line
+developer report, exits 1) and re-raises `WorkflowKilledInterrupt`
+— kill is a control-plane action, not an SDK failure, and must reach
+the top of the agent loop. To handle kill distinctly — checkpoint
+state, notify a supervisor, then exit — wrap the un-`guard()` call
+in your own try/except. See
 [Error handling → Kill signal](../concepts/error-handling.md#kill-signal)
 for the recommended handler shape.
 

@@ -113,16 +113,21 @@ required.
 | Helper | Catches | For |
 |---|---|---|
 | `init(api_key=..., fail_on_exit=True)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
-| `with nullrun.guard():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) — **recommended** form |
+| `with nullrun.guard():` | Any `NullRunError` raised inside the block (kill signal re-raises) | Region of code (e.g. a graph `invoke`) — **recommended** form |
 
 Both helpers propagate non-`NullRunError` exceptions (anything
 that isn't an SDK error) as honest tracebacks. `NullRunError`
-subclasses — including the kill signal `NullRunWorkflowKilledError` —
-are caught and rendered as the **structured four-line developer
-report** (catalog headline + `[error_code]` + `what` + `where` +
-`why` + `how to fix`), then the process exits 1. For the full
-design rationale and the boundary between "what NullRun tells the
-developer" and "what the developer tells their end users", see
+subclasses raised inside `with nullrun.guard():` are caught and
+rendered as the **structured four-line developer report**
+(catalog headline + `[error_code]` + `what` + `where` + `why` +
+`how to fix`), then the process exits 1. The kill signal
+(`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) is the
+one exception: `guard()` re-raises it unchanged so kill always
+reaches the top of the agent loop. Catch kill explicitly with
+`except NullRunWorkflowKilledError:` if you need to checkpoint
+state before exit. For the full design rationale and the
+boundary between "what NullRun tells the developer" and "what
+the developer tells their end users", see
 [Concepts → Error handling](../concepts/error-handling.md).
 
 ## Decision vs. infrastructure

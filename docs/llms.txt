@@ -42,12 +42,12 @@ SDK — TypeScript / JavaScript / Go have no equivalent.
 - [Run multiple agents](https://docs.nullrun.io/how-to/multi-agent/): shared workflow, parent_trace_id propagation
 - [Multi-agent orchestration](https://docs.nullrun.io/how-to/multi-agent-orchestration/): sub-agents, kill propagation
 - [Stream responses](https://docs.nullrun.io/how-to/streaming/): `@protect`-decorated stream iterator
-- [Manual cost / event tracking](https://docs.nullrun.io/how-to/custom-tracking/): `track_llm`, `track_tool`, `track`
+- [Manual cost / event tracking](https://docs.nullrun.io/how-to/custom-tracking/): `runtime.track_llm`, `runtime.track_tool`, `runtime.track`
 - [CI / CD integration](https://docs.nullrun.io/how-to/ci-cd/): fail-CLOSED in CI, smoke-test scripts
 
 ## Reference
 
-- [SDK API](https://docs.nullrun.io/reference/sdk-api/): `@protect` (canonical, takes no parameters), `workflow`, `chain`, exceptions, manual tracking
+- [SDK API](https://docs.nullrun.io/reference/sdk-api/): `@protect` (canonical, takes no parameters), `workflow`, `chain`, `guard`, exceptions, runtime tracking
 - [Decorators & context managers](https://docs.nullrun.io/reference/decorators/): `@protect`, `with nullrun.guard():`, `set_call_context`, context managers, order of application
 - [HTTP API](https://docs.nullrun.io/reference/http-api/): `/api/v1/gate`, `/api/v1/track`, `/api/v1/capabilities`, `/api/v1/heartbeat`, control-plane WebSocket
 - [Error codes](https://docs.nullrun.io/reference/errors/): `NR-B004`, `NR-T001`, `NR-R001`, full hierarchy + decision vs infrastructure

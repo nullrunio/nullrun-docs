@@ -184,12 +184,13 @@ $ echo $?
 1
 ```
 
-`with nullrun.guard():` catches every `NullRunError` — which now
-includes the kill signal (`WorkflowKilledInterrupt` /
-`NullRunWorkflowKilledError` both inherit from `NullRunError`) —
-prints the structured report to stderr, and exits with code 1. To
-handle kill distinctly (for example, checkpoint state before exit),
-use the un-`guard()` form and add your own
+`with nullrun.guard():` catches every `NullRunError` raised inside
+the block, prints the structured report to stderr, and exits with
+code 1. The kill signal (`WorkflowKilledInterrupt` /
+`NullRunWorkflowKilledError`) is the one exception — `guard()`
+re-raises it unchanged so kill always reaches the top of the
+agent loop. To handle kill distinctly (for example, checkpoint
+state before exit), use the un-`guard()` form and add your own
 `except NullRunWorkflowKilledError:` arm.
 
 `guard()` is the recommended form: it gives a clearer scope,
@@ -305,8 +306,10 @@ except NullRunError:
     log.error("agent failed", exc_info=True)
 ```
 
-`guard()` catches kill via the standard `NullRunError`
-arm — it prints the structured four-line report and exits 1. To keep
+`guard()` re-raises the kill signal — kill is a control-plane
+action, not an SDK failure, and must reach the top of the agent
+loop. `with nullrun.guard():` catches every other `NullRunError`
+and exits 1, but the kill signal passes straight through. To keep
 the process alive on kill (checkpoint, notify a supervisor, then
 exit), use bare `@protect` with your own `except NullRunWorkflowKilledError:`
 arm above.
@@ -352,8 +355,9 @@ arm above.
     modes) instead of hanging on `pool.acquire()`. The kill signal
     inherits from `NullRunError`, so `except Exception:` catches it
     alongside every other SDK error; `with nullrun.guard():`
-    catches it via the standard `NullRunError` arm and prints the
-    structured four-line developer report.
+    re-raises the kill signal (control-plane action, not an SDK
+    failure) while catching every other `NullRunError` and printing
+    the structured four-line developer report.
 
     Wire codes fall into three buckets: **decision** (block / allow /
     require_approval), **infrastructure** (Redis-down, Postgres-down,

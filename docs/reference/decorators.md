@@ -1,7 +1,7 @@
 ---
 title: Decorators & context managers
 maturity: stable
-description: Reference for @protect (the gate decorator) and the workflow / span / chain / attempt context managers it pairs with, plus the with nullrun.guard(): friendly-exit wrapper.
+description: Reference for @protect (the gate decorator) and the workflow / span / chain context managers it pairs with, plus the with nullrun.guard(): friendly-exit wrapper.
 ---
 
 # Decorators & context managers
@@ -44,7 +44,6 @@ configure the typed predicates the gate evaluates.
 | `with workflow(...)` | context manager | lazy (`from nullrun import workflow`) |
 | `with span(...)` | context manager | lazy |
 | `with agent(...)` | context manager | lazy |
-| `with attempt(...)` | context manager | lazy |
 | `with chain(...)` | context manager | lazy |
 | `set_call_context(...)` | imperative setter | lazy |
 
@@ -231,7 +230,6 @@ causes. The diagnostic is warn-once; subsequent bumps do not spam.
 | `with workflow(name=None)` | `name: str \| None` | Root scope: pushes `workflow_id` + `trace_id` + `span_id` (root `SpanContext`). All `@protect` and `track_*` calls inside auto-tag events with this `workflow_id`. |
 | `with span(name=None)` | `name: str \| None` | Child span derived from the active parent `SpanContext`. No-op if no parent is active (bare `with span(...)` outside any workflow/protect block). |
 | `with agent(name=None)` | `name: str \| None` | Sets `agent_id` for per-agent cost attribution. |
-| `with attempt(attempt_index)` | `attempt_index: int` | Sets `attempt_index` for retry correlation. |
 | `with chain(chain_id, op="start")` | `chain_id: str` (UUID v4), `op: str` | Soft-mode budget gate. Overdrafts are allowed only when an active chain is registered against the org. `op` is `"start"` / `"continue"` / `"end"` / `"auto"` (default). |
 
 ### `workflow()` and the policy binding
@@ -345,9 +343,9 @@ re-checks the digest on `/execute` and refuses on mismatch.
 | Per-call model name and tools for `/gate` | `nullrun.set_call_context(model=..., tools=[...])` inside `with workflow` |
 | Soft-mode budget (controlled overdrafts) | `with nullrun.chain(uuid.uuid4(), op="start"): ...` |
 | LangGraph auto-tracking | (auto on first `@protect` call) |
-| Manual LLM tracking (custom client) | `nullrun.track_llm(input_tokens=..., output_tokens=..., model=...)` |
-| Manual tool-call tracking | `nullrun.track_tool(tool_name=..., duration_ms=..., metadata=...)` |
-| Custom business event | `nullrun.track({"type": "agent.milestone", "step": ..., "elapsed_secs": ...})` |
+| Manual LLM tracking (custom client) | `nullrun.get_runtime().track_llm(input_tokens=..., output_tokens=..., model=...)` |
+| Manual tool-call tracking | `nullrun.get_runtime().track_tool(tool_name=..., duration_ms=..., metadata=...)` |
+| Custom business event | `nullrun.get_runtime().track({"type": "agent.milestone", "step": ..., "elapsed_secs": ...})` |
 | Audit log read | `runtime.audit.list(AuditQuery(event_type=..., since=..., limit=...))` |
 | Global error hook (Sentry, OTel) | `nullrun.on_error(my_handler)` — returns an idempotent unregister callable |
 | Snapshot runtime state | `nullrun.get_runtime().status()` — frozen `NullRunStatus` dataclass |

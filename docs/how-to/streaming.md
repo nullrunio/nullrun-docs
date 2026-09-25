@@ -116,7 +116,8 @@ estimate. See
 [OpenAI streaming reference](https://platform.openai.com/docs/api-reference/chat-streaming).
 
 ```python
-from nullrun import protect, track_llm
+import nullrun
+from nullrun import protect
 
 
 @protect
@@ -132,7 +133,7 @@ def custom_stream(prompt: str):
         final = chunk
         yield chunk.choices[0].delta.content or ""
     if final and getattr(final, "usage", None):
-        track_llm(
+        nullrun.get_runtime().track_llm(
             input_tokens=final.usage.prompt_tokens,
             output_tokens=final.usage.completion_tokens,
             model="gpt-4o-mini",

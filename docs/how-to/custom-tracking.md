@@ -1,14 +1,14 @@
 ---
 title: Custom Tracking
-description: Manually report cost and events with track_llm, track_tool, and track when auto-instrumentation doesn't fit your runtime.
+description: Manually report cost and events with runtime.track_llm, runtime.track_tool, and runtime.track when auto-instrumentation doesn't fit your runtime.
 ---
 
 # Manual cost / event tracking
 
 Most of the time auto-instrumentation handles cost tracking — the
 httpx transport hook reads `usage` from OpenAI / Anthropic / Gemini /
-Cohere responses and emits `track_llm` automatically. Use
-`track_llm`, `track_tool`, and `track` manually when:
+Cohere responses and emits `track_llm` automatically. Reach for the
+runtime's `track_llm` / `track_tool` / `track` methods manually when:
 
 - your LLM client bypasses httpx (Bedrock via boto3, Cohere on a raw
   socket, an offline batch reading cached completions);
@@ -23,13 +23,18 @@ If your SDK wraps the standard OpenAI / Anthropic / Gemini / Cohere
 clients, do **not** call `track_llm` manually — auto-instrumentation
 will fire and you'll double-count.
 
+The three trackers live on the runtime instance — reach them via
+`nullrun.get_runtime()`. They are not exposed as top-level names on
+the `nullrun` package; the curated public surface is the universal
+`@protect` decorator plus lifecycle / error helpers.
+
 ## The three trackers
 
 | API | Purpose | Required fields |
 | --- | --- | --- |
-| `track_llm(input_tokens, output_tokens, model, ...)` | Manual LLM cost | `input_tokens`, `output_tokens`; `model` recommended |
-| `track_tool(tool_name, duration_ms, ...)` | Manual tool cost | `tool_name` (must match `ToolBlock` patterns) |
-| `track({"type": ..., ...})` | Arbitrary observability | `type` (becomes a filterable event category) |
+| `runtime.track_llm(input_tokens, output_tokens, *, model=None, latency_ms=None, metadata=None)` | Manual LLM cost | `input_tokens`, `output_tokens`; `model` recommended |
+| `runtime.track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool cost | `tool_name` (must match `ToolBlock` patterns) |
+| `runtime.track({"type": ..., ...})` | Arbitrary observability | `type` (becomes a filterable event category) |
 
 Without `track_llm` the budget counter is never credited for the
 call — the next `/gate` may reject based on stale spend.
@@ -38,10 +43,11 @@ call — the next `/gate` may reject based on stale spend.
 
 ```python title="track_custom.py"
 import nullrun
-from nullrun import track_llm, track_tool, track
+
+runtime = nullrun.get_runtime()
 
 # After your custom LLM call returns:
-track_llm(
+runtime.track_llm(
     input_tokens=response.usage.prompt_tokens,
     output_tokens=response.usage.completion_tokens,
     model="custom-llm-v1",
@@ -50,7 +56,7 @@ track_llm(
 )
 
 # After a tool call (regardless of success/failure):
-track_tool(
+runtime.track_tool(
     tool_name="send_email",
     duration_ms=240,
     is_retry=False,
@@ -58,14 +64,15 @@ track_tool(
 )
 
 # Arbitrary business events:
-track({"type": "agent.milestone", "step": "research_complete", "elapsed_secs": 42})
-track({"type": "agent.error", "code": "validation_failed", "field": "email"})
+runtime.track({"type": "agent.milestone", "step": "research_complete", "elapsed_secs": 42})
+runtime.track({"type": "agent.error", "code": "validation_failed", "field": "email"})
 ```
 
-`track_tool`'s `tool_name` flows through the policy engine — a
+`track_tool`'s `tool_name` flows through to the policy engine — a
 `ToolBlock` policy with pattern `send_*` catches a manual call to
-`track_tool("send_email", ...)`. Use the same tool names you would
-pass to auto-instrumentation so policy enforcement stays consistent.
+`runtime.track_tool("send_email", ...)`. Use the same tool names you
+would pass to auto-instrumentation so policy enforcement stays
+consistent.
 
 ## When the SDK can't see the call
 
@@ -73,12 +80,15 @@ If your tool isn't called from inside `@protect`, wrap the manual
 tracking in `@protect` so the gate still runs:
 
 ```python
-from nullrun import protect, track_llm
+import nullrun
+from nullrun import protect
+
+runtime = nullrun.get_runtime()
 
 @protect
 def call_custom_llm(prompt):
     response = my_custom_client.complete(prompt)
-    track_llm(
+    runtime.track_llm(
         input_tokens=response.usage.input,
         output_tokens=response.usage.output,
         model="custom-llm-v1",
@@ -100,6 +110,6 @@ def call_custom_llm(prompt):
 
 ## See also
 
-- [SDK API → track_llm / track_tool / track](../reference/sdk-api.md#track_llm-manual-usage)
+- [SDK API → runtime.track_llm / track_tool / track](../reference/sdk-api.md#runtimetrack_llm-manual-usage)
 - [LLM frameworks](../how-to/llm-frameworks.md) — non-httpx vendors
   (Bedrock, Cohere) that use manual tracking
