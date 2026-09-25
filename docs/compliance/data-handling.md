@@ -28,12 +28,12 @@ derived/inferred from code + ADR · `[N]` = not attested in repo.
 | What does the SDK send? | Tool name, cost estimate, optional typed `business_impact`, optional `action_digest` (SHA-256 of canonical payload). | [§1 Data transmitted](#1-data-transmitted) |
 | What does the backend store in Postgres? | Org / user / key / workflow / policy / approval / cost / audit rows. `audit_events` is **immutable** (4-layer defence). | [§2 Data stored](#2-data-stored-postgres) |
 | What does the backend store in Redis? | Period cost counters, execution bindings, rate-limit buckets, session indexes, chain state. **No PII.** | [§3 Data stored](#3-data-stored-redis) |
-| Where is it hosted? | DigitalOcean (US with EU regions). Self-hosted Postgres + Redis in Docker on a single VPS. | [§4 Hosting](#4-hosting--placement) |
+| Where is it hosted? | DigitalOcean (US with EU regions). Self-hosted Postgres + Redis in Docker on a single VPS. | [§4 Hosting](#4-hosting-placement) |
 | Who can access production data? | Owners / Admins / Operators / Viewers (4-level RBAC). SSH to prod only via allowlisted `vps` wrapper. | [§5 Access controls](#5-access-controls) |
 | How is it encrypted? | TLS 1.2/1.3 edge, pgcrypto column-level for Slack OAuth tokens, HMAC-SHA256 for request signing, audit-export sidecar signing. | [§6 Encryption](#6-encryption) |
 | Which third parties see data? | DigitalOcean, Brevo (DE), Polar (SE), Slack, GitHub, Google. Listed at `/api/v1/subprocessors`. | [§7 Sub-processors](#7-sub-processors) |
 | How is data deleted? | Soft-delete with 60-day grace; hard purge via `purge_organization_data`; two-phase revoke for API keys. | [§8 Deletion](#8-deletion) |
-| Where physically is data? | Region selectable at signup (EU or US). Single-region deployment. | [§9 Residency](#9-data-residency--sovereignty) |
+| Where physically is data? | Region selectable at signup (EU or US). Single-region deployment. | [§9 Residency](#9-data-residency-sovereignty) |
 | What's the compliance posture? | DPA available at `/api/v1/orgs/{org}/dpa`. No SOC 2 / ISO 27001 / HIPAA attestation in repo. | [§10 Compliance](#10-compliance-posture) |
 
 ## 1. Data transmitted
@@ -48,7 +48,7 @@ Wire schema (`backend/src/proxy/http/gate/schemas.rs`):
 | `trace_id`, `tool`, `mode`, `operation_id` | SDK-supplied | Standard envelope. |
 | `business_impact {Money{direction, amount_minor, currency}}` | SDK-supplied | Optional; only required for typed approval rules. |
 | `action_digest` | SDK-supplied | SHA-256 hex of canonicalised payload. Verified at `/execute` time per ADR-006. |
-| `tool_params` | SDK-supplied | Optional JSON map. ToolParamsExtractor auto-attached since SDK 0.18.1. |
+| `tool_params` | SDK-supplied | Raw `kwargs` under `input_data.kwargs`; backend reads by `param_name` in ToolParameters approval rules. |
 | `workflow_id`, `parent_execution_id` | SDK-supplied | Body `workflow_id` MUST match authenticated key's `workflow_id`, else `400 WORKFLOW_ID_BODY_MISMATCH` (WF-ID-01). |
 
 **Org-mismatch guard (IDOR, P0-01):** body `organization_id` must match

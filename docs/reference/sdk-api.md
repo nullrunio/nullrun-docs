@@ -1,6 +1,6 @@
 title: SDK API
 maturity: stable
-description: Reference for every NullRun SDK symbol: @protect (canonical entry point), @sensitive(impact=...) for typed impact + digest-bound approval, workflow / chain context managers, exceptions, manual tracking, and transport hooks.
+description: Reference for every NullRun SDK symbol: @protect (canonical entry point, takes no parameters), the workflow / span / chain / attempt context managers, exceptions, manual tracking, and transport hooks.
 # SDK API
 
 The Python SDK lives in
@@ -8,10 +8,9 @@ The Python SDK lives in
 Package name on PyPI: **`nullrun`**.
 
 ```bash title="shell"
-pip install nullrun            # core only
-pip install "nullrun[langgraph]"
-pip install "nullrun[agents]"  # openai-agents
-pip install "nullrun[all]"     # every optional extra
+pip install nullrun                    # core — covers every LLM SDK that uses httpx
+pip install nullrun[opentelemetry]     # OTel span/metric export on top of the core
+pip install nullrun[dev]               # pytest + respx + mypy + ruff + coverage
 ```
 
 Auto-instrumentation for httpx-based libraries (`openai`,
@@ -21,7 +20,7 @@ Auto-instrumentation for httpx-based libraries (`openai`,
 ## Top-level
 
 ```python title="public_surface.py"
-from nullrun import init, init_or_die, protect, workflow, span, agent, chain, track_llm, track_tool, track_event
+from nullrun import init, init_or_die, protect, workflow, span, agent, chain, track_llm, track_tool, track
 ```
 
 ### `init` / `init_or_die` {#init--init_or_die}
@@ -37,16 +36,14 @@ authors wiring keys from a non-env source).
 | `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI). Library authors wiring an SDK key from a non-env source. |
 | `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Catches the `NullRunAuthenticationError` exception, prints the catalog user-message to stderr, calls `sys.exit(exit_code)`. Returns the runtime otherwise. | One-shot scripts, CLI tools, smoke tests — anywhere a missing key is a hard error and you want a clean exit instead of a traceback. |
 
-`init_or_die` is `init` plus a `try/except NullRunAuthenticationError → sys.exit(1)`. The chain `@guarded` decorator does the same for callsite-level errors. Both helpers are also idempotent — calling `init()` twice returns the same singleton without re-running the lazy trigger.
+`init_or_die` is `init` plus a `try/except NullRunAuthenticationError → sys.exit(1)`. The `with nullrun.handle():` context manager does the same for callsite-level errors. Both helpers are also idempotent — calling `init()` twice returns the same singleton without re-running the lazy trigger.
 
 || Symbol | Purpose | In `__all__` |
 |---|---|---|---|
 | `init(api_key=None, api_url=None, debug=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
 | `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Like `init` but exits cleanly with `exit_code` (default 1) if no API key is configured. See the table above. | ✅ |
-| `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — auto-attaches a default `ToolParamsExtractor` so every kwarg reaches the operator on the wire. Pair with `with nullrun.handle():` for the structured 4-line dev report on failure. | ✅ |
-| `@sensitive(impact=...)` | Factory form — stamps a typed `BusinessImpact` extractor (`money_outflow(...)` for money flows, `tool_params(...)` for an explicit rename map or empty-bag mode) + SHA-256 `action_digest` for digest-bound approval. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
-| `@guarded` | Decorator equivalent of `with nullrun.handle():` — wraps a function so any `NullRunError` raised inside is converted to the structured 4-line dev report on stderr and `sys.exit(1)`. Use the un-`@guarded` `protect()` form if you need to handle kill distinctly. | ✅ |
-| `with nullrun.handle(*, exit_code=1):` | Context manager form of `@guarded` — apply to a region of code rather than a single function. **Recommended** for the structured 4-line developer report. | ✅ |
+| `@protect` | Wrap a function for **gate** enforcement (control plane / budget / span / per-tool policy). Takes no kwargs. Every call routes through `/execute`; the backend decides allow / block / require-approval. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — ships `tool_name + args + kwargs` on the wire for every protected call. Wrap the call site in `with nullrun.handle():` for the structured 4-line dev report on failure. | ✅ |
+| `with nullrun.handle(*, exit_code=1):` | Context manager for friendly exit — catches any `NullRunError` raised inside the block, renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
 | `chain(chain_id: str, op: str = "start")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
 | `span(name=None)` | Context manager for nested trace spans. | (lazy) |
@@ -55,7 +52,7 @@ authors wiring keys from a non-env source).
 | `on_error(hook)` | Register a global error hook. Fires for every `NullRunError` subclass — including the kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) — BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Filter inside the hook by `error_code` (`"NR-W002"`) if you need to skip kill. Returns an idempotent unregister callable. | ✅ |
 | `track_llm(input_tokens, output_tokens=0, **kwargs)` | Manual escape hatch for non-HTTP LLM calls. Returns the backend's decision dict. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. `**kwargs` are forwarded to the transport layer (e.g. `model`, `latency_ms`, `metadata`). | ✅ |
 | `track_tool(tool_name, duration_ms=None, **kwargs)` | Manual tool-call tracking. `**kwargs` are forwarded to the transport layer (e.g. `is_retry`, `metadata`). | ✅ |
-| `track_event(event_type, **kwargs)` | Catch-all for custom events. | ✅ |
+| `track(event: dict)` | Generic manual-event emission. Pass a dict with `type` (event category) and any additional payload fields; buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. Use for arbitrary observability signals (milestones, errors, business events). | ✅ |
 | `format_user_message(exc)` | Render a `NullRunError` as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. | ✅ |
 | `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
 | `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
@@ -111,18 +108,23 @@ function). The `tool_name` flows through to the policy engine — a
 `ToolBlock` policy with `pattern = "send_*"` will catch a manual call
 to `track_tool("send_email", ...)`.
 
-### `track_event` catch-all
+### `track` catch-all
 
-```python title="track_event_manual.py"
-from nullrun import track_event
+```python title="track_manual.py"
+from nullrun import track
 
-track_event("agent.milestone", step="research_complete", elapsed_secs=42)
+track({
+    "type": "agent.milestone",
+    "step": "research_complete",
+    "elapsed_secs": 42,
+})
 ```
 
-Accepts arbitrary keyword arguments as the event payload. Use for
-custom observability signals (milestones, errors, business events)
-that you want in the decision log alongside `track_llm` /
-`track_tool`.
+Accepts an arbitrary dict as the event payload. Use for custom
+observability signals (milestones, errors, business events) that
+you want in the decision log alongside `track_llm` / `track_tool`.
+The `type` field becomes the filterable event category in the
+dashboard.
 
 ### Custom user messages
 
@@ -130,16 +132,18 @@ See [User-facing messages → Per-deployment branding](#per-deployment-branding)
 below for `set_user_message` / `get_user_message` usage.
 
 The curated public surface in `dir(nullrun)` is the `__all__` list
-in `nullrun/__init__.py`: `__version__`, `init`, `protect`, `track_llm`,
-`track_tool`, `track_event`, `shutdown`, `on_error`, `status`,
-`format_user_message`, `set_user_message`, `handle`, `guarded`,
-`init_or_die`, plus the structured exception names `NullRunError`,
-`NullRunAuthError`, `NullRunConfigError`, `NullRunBackendError`,
-`NullRunBudgetError`, `NullRunToolBlockedError`, and
-`WorkflowKilledInterrupt` (the kill signal). The legacy names
-(`WorkflowPausedException`, `NullRunAuthenticationError`,
-`NullRunBlockedException`) remain available via
-`from nullrun import X` for backward compatibility.
+in `nullrun/__init__.py`: `__version__`, `init`, `protect`,
+`shutdown`, `on_error`, `status`, `format_user_message`,
+`set_user_message`, `handle`, `init_or_die`, plus the
+structured exception names `NullRunError`, `NullRunAuthError`,
+`NullRunConfigError`, `NullRunBackendError`, `NullRunBudgetError`,
+`NullRunToolBlockedError`, `WorkflowKilledInterrupt`, and the
+typed MCP / approval subclasses. The lazy surface (PEP 562) adds
+`workflow`, `span`, `agent`, `attempt`, `chain`,
+`set_call_context`, the audit classes (`AuditQuery`, `AuditEntry`,
+…), the tracer (`SpanContext`, `get_current_span`, …), and the
+additional exception names (`WorkflowPausedException`,
+`NullRunBlockedException`, `NullRunApproval*Error`, etc.).
 
 ## Exceptions
 
@@ -268,11 +272,10 @@ function never raises and never returns an empty string.
 
 ## See also
 
-- [Decorators & extractors](decorators.md) — deep-dive on `@protect`
-  (canonical entry point, auto-attaches default extractor), the
-  `@sensitive(impact=...)` factory form, `@guarded`,
-  `money_outflow`, `tool_params`, `set_call_context`, and the
-  workflow / span / chain context managers
+- [Decorators & context managers](decorators.md) — deep-dive on
+  `@protect` (canonical entry point, takes no parameters),
+  `with nullrun.handle():`, `set_call_context`, and the
+  workflow / span / chain / attempt context managers
 - [Errors](errors.md)
 - [Errors → Decision vs. infrastructure](errors.md#decision-vs-infrastructure)
 - [Use with FastAPI](../how-to/fastapi.md)

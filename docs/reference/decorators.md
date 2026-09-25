@@ -1,44 +1,37 @@
 ---
-title: Decorators & extractors
+title: Decorators & context managers
 maturity: stable
-description: Deep-dive reference for the Python SDK decorators (@protect, @guarded), the impact extractor factories (money_outflow, tool_params) used by @sensitive(impact=...), and the workflow / span / chain context managers they pair with.
+description: Reference for @protect (the gate decorator) and the workflow / span / chain / attempt context managers it pairs with, plus the with nullrun.handle(): friendly-exit wrapper.
 ---
 
-# Decorators & extractors
+# Decorators & context managers
 
 This page is the deep-dive reference for the SDK's runtime-API
-surface — every decorator, impact extractor, and context manager
-that affects **how a function call enters the gate**. The
-top-level symbol table is in
+surface — every decorator and context manager that affects **how a
+function call enters the gate**. The top-level symbol table is in
 [SDK API](sdk-api.md); this page explains the *contracts* each
 symbol establishes with the gate.
 
-`@protect` is the canonical public entry point. It auto-attaches a
-default `ToolParamsExtractor` so the wire payload carries
-`tool_name + params` for every protected function. The
-`@sensitive(impact=...)` factory form stamps a typed
-`BusinessImpact` extractor (`money_outflow(...)`, `tool_params(...)`)
-for the digest-bound approval flow.
-
-If you only want the "which one do I use?" answer, jump to
-[When to use what](#when-to-use-what). If you want the full
-contract for a single symbol, use the section headings below.
+`@protect` is the universal gate decorator. Every protected function
+call goes through the four pre-execution gates (control plane /
+budget / span / per-tool policy) and emits a tool-call span event
+tagged with the masked arguments. Wrap the call site in
+`with nullrun.handle():` for the structured 4-line developer report
+on failure.
 
 ## The canonical API: `@protect` only
 
-**The single canonical public entry point for the SDK is `@protect`.**
+`@protect` is the single canonical public entry point for the SDK.
 It is the gate. Every protected function call goes through the four
-pre-execution gates (control plane / budget / span / sensitive-tool
+pre-execution gates (control plane / budget / span / per-tool
 policy) and emits a tool-call span event tagged with the masked
-arguments. `@protect` auto-attaches a default
-`ToolParamsExtractor(include_all=True)` — the wire payload carries
-`tool_name + params` for **every** protected function.
+arguments.
 
-The split is intentional: the SDK collects facts (every kwarg goes
-on the wire), the server decides what to do with them. Business
-semantics — "this is a money tool", "this requires human approval" —
-are expressed in NullRun policies, not in another decorator on the
-function. See
+The split is intentional: the SDK collects facts (`tool_name`,
+`args`, `kwargs`) and ships them on the wire; the backend decides
+what to do with them. Business semantics — "this is a money tool",
+"this requires human approval" — live in NullRun policies, not in
+another decorator on the function. See
 [Human approval](../concepts/human-approval.md) for how operators
 configure the typed predicates the gate evaluates.
 
@@ -47,20 +40,16 @@ configure the typed predicates the gate evaluates.
 | Symbol | Type | Surface |
 |---|---|---|
 | `@protect` | decorator | eager (`from nullrun import protect`) — **canonical** |
-| `@sensitive(impact=...)` | factory decorator | lazy (`from nullrun import sensitive`) |
-| `@guarded` | decorator | eager (via `__all__`) |
-| `money_outflow(...)` | extractor factory | lazy (`from nullrun import money_outflow`) |
-| `tool_params(...)` | extractor factory | lazy (`from nullrun import tool_params`) |
-| `with workflow(...)` | context manager | lazy |
+| `with handle():` | context manager | eager |
+| `with workflow(...)` | context manager | lazy (`from nullrun import workflow`) |
 | `with span(...)` | context manager | lazy |
 | `with agent(...)` | context manager | lazy |
 | `with attempt(...)` | context manager | lazy |
 | `with chain(...)` | context manager | lazy |
 | `set_call_context(...)` | imperative setter | lazy |
 
-Everything in this table participates in the **gate decision** for
-at least one code path. Setters that only enrich observability
-(`set_trace_id`, `set_operation_id`, etc.) are not covered here —
+Setters that only enrich observability
+(`set_trace_id`, `set_operation_id`, …) are not covered here —
 they are internal hooks the runtime drives from inside `@protect`.
 
 ---
@@ -96,10 +85,10 @@ the kill/pause signal translation differs.
 | 1 | `check_control_plane(workflow_id)` — KILL/PAUSE from the dashboard | **fail-CLOSED** (kill is terminal) | Raise `NullRunBlockedException(NR-W002)` / `(NR-W003)` | Re-raise the underlying `NullRunWorkflowKilledError` unchanged |
 | 2 | `check_workflow_budget()` — `/gate` pre-flight reservation | **fail-OPEN** on transport error (a transient backend outage must not freeze the user's agent) | `NullRunBudgetError(NR-B004)` on real block; transport error logs and proceeds | identical |
 | 3 | `_emit_span_start(...)` — observability `span_start` event | **never blocks** — exceptions swallowed at DEBUG | identical | identical |
-| 4 | `_enforce_sensitive_tool(...)` — `/execute` per-tool policy if `fn.__name__` is in the sensitive set | **fail-CLOSED** on transport error (a denied `charge_card` that runs when the policy engine is down is worse than a denied `charge_card` during an outage). Opt out via `NULLRUN_SENSITIVE_FAIL_OPEN=1`. | `NullRunBlockedException` on real block; on `NullRunTransportError` re-raises with source-specific `error_code` (NR-B001/NR-B002/NR-A003/NR-B005) | identical |
+| 4 | `_run_tool_policy_gate(...)` — `/execute` per-tool policy | **fail-CLOSED** on transport error (a denied `charge_card` that runs when the policy engine is down is worse than a denied `charge_card` during an outage). Opt out via `NULLRUN_SENSITIVE_FAIL_OPEN=1`. | `NullRunBlockedException` on real block; on `NullRunTransportError` re-raises with source-specific `error_code` (NR-B001/NR-B002/NR-A003/NR-B005) | identical |
 
 After the body completes, `@protect` calls
-`track_tool(fn.__name__, metadata={"arguments": _safe_kwargs(kwargs)})`
+`runtime.track_tool(fn.__name__, metadata={"arguments": _safe_kwargs(kwargs)})`
 to emit a tool-call span event tagged with the masked arguments.
 Sensitive kwargs (PANs, tokens, etc., per `SENSITIVE_ARG_KEYS`)
 are replaced with `"***"` **before** truncation so a long URL
@@ -109,6 +98,19 @@ If any gate raises and the function body never ran, the wrapper
 calls `_safe_cancel_active_execution(reason="tool_exception")` —
 this hits `POST /cancel` to close the open Redis reservation
 that `/gate` minted, so the budget doesn't leak via TTL expiry.
+
+### Wire payload on `/execute`
+
+Every `@protect` call ships a `NoImpact` envelope — the SDK is
+policy-blind and the backend owns the decision.
+
+| Field | Value | Source |
+|---|---|---|
+| `tool_name` | `fn.__name__` | the decorated function |
+| `input_data` | `{"args": masked_args, "kwargs": masked}` | positional and keyword arguments, PII-masked |
+| `business_impact` | `None` | wire-shape compat — backend reads only `action_digest` + `kwargs` |
+| `action_digest` | SHA-256 hex (64 chars) of `BusinessImpact.no_impact()` | `compute_action_digest(...)` |
+| `tools` | tuple of tool names (defaults to `(fn.__name__,)` if unset) | `set_call_context(tools=...)` or the `@protect` default |
 
 ### Sync vs async: the kill-signal divergence
 
@@ -147,155 +149,15 @@ or spends money. `@protect` is the gate. The workflow is derived
 from the API key on the backend; `fn.__name__` becomes the
 `tool_name` for the policy engine.
 
-### `@protect` auto-attaches tool_params
-
-Every `@protect` stamps the function with a default
-`ToolParamsExtractor(include_all=True)`. The kwargs of every live
-call flow onto the wire under `params` without any additional
-decorator — the gate sees them and matches them against
-ToolParameters Approval Rules. See
-[Human approval → Typed predicates](../concepts/human-approval.md#typed-predicates).
-
-```python title="protect_only_auto_attaches.py"
-@nullrun.protect
-def delete_user(uid: int) -> None:
-    ...                  # params={"uid": <live value>} reaches the gate
-```
-
-This is the **recommended pattern** for any tool that should be
-eligible for ToolParameters approval rules. To skip the auto-attach
-(no `params` on the wire) — for example, when every kwarg is a
-secret — wrap the function with the explicit
-`@sensitive(impact=tool_params(include_all=False))` form below.
-
 ---
 
-## `@sensitive` — typed impact + digest
-
-The factory form `@sensitive(impact=...)` stamps a typed
-`BusinessImpact` extractor on the function and forwards the SHA-256
-`action_digest` to `/execute` so the gate's post-approval re-check
-refuses the call if the live payload drifts from the approved
-digest.
-
-```python title="sensitive_factory.py"
-@nullrun.sensitive(impact=money_outflow(argument="amount_cents"))
-@nullrun.protect
-def refund_customer(amount_cents: int, customer_id: str): ...
-```
-
-The factory form attaches a typed impact extractor to the
-function. The wrapper reads it from the `_nullrun_extractor`
-attribute and forwards the typed `BusinessImpact` + the SHA-256
-`action_digest` to `/execute`. The gate's post-approval re-check
-refuses the call if the live payload drifts from the approved
-digest.
-
-### The `impact=` parameter
-
-Accepts one of two extractor objects.
-
-#### `money_outflow(...)` — typed money impact
-
-| Parameter | Type | Default | Notes |
-|---|---|---|---|
-| `argument` | `str` | required | Name of the parameter to extract the amount from. Positional or keyword — `inspect.signature(...).bind(...)` makes them equivalent. |
-| `currency` | `str` | `"USD"` | ISO-4217 3-letter uppercase. Whitelist: `USD` `EUR` `GBP` `CHF` `CAD` `AUD` `JPY` `KWD` `BHD` `OMR`. Anything else raises `InvalidCurrencyError` at decoration time — **fail-CLOSED**. |
-| `units` | `str` | `"minor"` | `"minor"` (the bound argument is already in minor units — `int` is the canonical type; `Decimal` accepted if integer-valued). `"major"` (the bound argument is a `Decimal` in major units — the SDK converts via `Decimal * 10**N` where `N = currency_minor_digits(currency)`). The discriminator is **explicit** so a refactor of the function signature from `int` to `Decimal` does not silently flip the meaning. |
-| `extractor_id` | `str` | `"nullrun.money.path"` | Self-reported SDK provenance. Advisory only; the trust boundary is the digest round-trip. |
-| `extractor_version` | `str` | `"1"` | Self-reported version. |
-| `enforce_business_cap` | `bool` | `True` | Per-currency cap (default $1,000,000 USD per call). Above the cap the extractor raises `InvalidMoneyAmountError(reason="excessive")` so the call goes through the explicit human-approval path. Set `False` for batch-settlement tools that already have an approval flow. |
-
-**What the extractor rejects outright:**
-
-| Input | Why |
-|---|---|
-| `bool` | `bool` is a subclass of `int` in Python — without the check, `refund(amount=True)` would silently treat `True` as `1` cent. |
-| `float` | IEEE-754 surprises are the entire reason `Decimal` exists. Pass `Decimal` for major units, `int` for minor. |
-| Negative amount | A negative outflow would silently fall through every `op=gt` predicate (`-5000 > 5000` is always False). |
-| `Decimal("50.005")` for USD | More fractional digits than the currency supports. Truncate explicitly with `value.quantize(Decimal("1E-2"))` to opt in to rounding; the SDK never rounds silently. |
-| Amount above `2**63 - 1` | Wire-format `i64` upper bound — checked after conversion. |
-| Amount above per-currency cap | `InvalidMoneyAmountError(reason="excessive")` unless `enforce_business_cap=False`. |
-
-The result is `BusinessImpact(impact=MoneyImpact(...))` →
-`compute_action_digest()` → 64 lowercase hex characters. The
-digest MUST match the backend's calculation byte-for-byte; a
-mismatch is a 403 `DIGEST_MISMATCH` on the post-approval re-check.
-
-#### `tool_params(...)` — free-form argument bag
-
-| Parameter | Type | Default | Notes |
-|---|---|---|---|
-| `param_extractors` | `dict[str, str] \| None` | `None` | Explicit `{rule_param: arg_name}` map. When set, **only** the listed args are captured under `rule_param` keys; everything else is dropped. Use this when the rule name diverges from the function arg name (e.g. `{"user_id": "uid"}`). `include_all` is ignored when this is set. |
-| `include_all` | `bool` | `True` | Capture every kwarg verbatim. Set `False` (with `param_extractors=None`) for tools whose every kwarg is a secret the operator must never see. |
-
-The two modes are mutually exclusive — passing both raises
-`ValueError` at decoration time. The three effective extraction
-modes (priority order):
-
-1. `param_extractors` set → only those args under `rule_param` keys
-2. `include_all=True` (default) → every kwarg as-is
-3. neither → empty `params` (rare; tools that take no args but should still be eligible for `kind="tool_call"` approval rules)
-
-**What the extractor filters out:**
-
-- `***` masked sentinels (PII-masked values that would never match a real rule)
-- `float` values (JSON round-trip is not lossless for IEEE-754)
-- unsupported types (`set`, custom objects)
-
-The wire shape is `BusinessImpact(impact=ToolCallParams(...))` and
-shares the same `action_digest` contract as the money variant.
-
-### Order of application
-
-```python title="sensitive_order.py"
-# Recommended: @sensitive outside (top), @protect inside (bottom)
-@nullrun.sensitive(impact=money_outflow(argument="amount_cents"))
-@nullrun.protect
-def charge(amount_cents: int): ...
-
-# Also works: @protect outside. Same observable behaviour.
-@nullrun.protect
-@nullrun.sensitive(impact=money_outflow(argument="amount_cents"))
-def charge(amount_cents: int): ...
-```
-
-The recommended form is `@sensitive` outside so the registration
-in `runtime.add_sensitive_tool(fn.__name__)` happens before the
-`@protect` wrapper is built. `functools.wraps` makes both orders
-work either way.
-
-### When to use
-
-| Tool category | Recommendation |
-|---|---|
-| Read-only tools (`get_weather`, `list_files`) | `@protect` alone — covers budget + span tracking. Auto-attached `ToolParamsExtractor` ships every kwarg on the wire. |
-| Side-effect tools with bounded blast radius (`send_email`, `revoke_access`, `delete_user`) | `@protect` alone — auto-attached default extractor is enough for ToolParameters rules. |
-| Money-moving tools (`refund`, `charge_card`, `transfer`) | `@protect @sensitive(impact=money_outflow(...))` — typed impact + `action_digest` for tamper-proof approval flow. |
-| Tools where rule names ≠ arg names | `@protect @sensitive(impact=tool_params({"rule_param": "arg_name"}))` |
-| Tools whose every kwarg is a secret | `@protect @sensitive(impact=tool_params(include_all=False))` to ship an empty `params` bag |
-| Tools that need `kind="tool_call"` envelope with no extractor | `@protect @sensitive(impact=tool_params(include_all=False))` |
-
-Reach for `@sensitive(impact=...)` when you need the typed
-`BusinessImpact` envelope (money / tool_parameters) and the
-digest-bound approval flow.
-
-Without `@protect` (and without an explicit
-`runtime.add_sensitive_tool(fn.__name__)`), the `_enforce_sensitive_tool`
-gate is a no-op — the function body runs immediately after
-`/gate`. This violates the fail-CLOSED contract for any
-irreversible action.
-
----
-
-## `with nullrun.handle():` (and `@guarded`) — friendly-exit wrapper
+## `with nullrun.handle():` — friendly-exit wrapper
 
 The **canonical form is `with nullrun.handle():`** — it makes the
 scope explicit and prints the structured four-line developer report
-on any `NullRunError`. `@guarded` is the decorator equivalent for
-the same behaviour.
+on any `NullRunError`.
 
-**Parameters: none (decorators and context managers).** `handle()`
+**Parameters: none (context managers).** `handle()`
 accepts an optional `exit_code=` keyword (default `1`).
 
 ```python title="handle_canonical.py"
@@ -312,23 +174,12 @@ if __name__ == "__main__":
         print(my_agent("hello"))
 ```
 
-For decorator-style usage, `@guarded` is the alternative — same
-behaviour, function-scoped:
+### What it does
 
-```python title="guarded_basic.py"
-@nullrun.guarded
-@nullrun.protect
-def my_agent(prompt: str) -> str:
-    return call_llm(prompt)
-```
-
-### What they do
-
-Any `NullRunError` raised inside the wrapped function (or inside
-the `handle()` block) is caught, rendered as the **structured
-four-line developer report** (`[error_code]` + `what` + `where` +
-`why` + `how to fix`), printed to **stderr**, and the process
-exits with code `1`.
+Any `NullRunError` raised inside the `handle()` block is caught,
+rendered as the **structured four-line developer report**
+(`[error_code]` + `what` + `where` + `why` + `how to fix`), printed
+to **stderr**, and the process exits with code `1`.
 
 The catalog user-message is the headline line so end-user-facing
 deployments still get a clean single sentence; the structured detail
@@ -344,30 +195,14 @@ Exceptions that propagate unchanged:
 - Any non-NullRun exception — the user's own bugs are not handled
   here; let them propagate for an honest traceback.
 
-### Order of application
-
-`@guarded` is always **outside** `@protect`:
-
-```python title="guarded_order.py"
-# CORRECT
-@nullrun.guarded
-@nullrun.protect
-def my_agent(prompt): ...
-
-# WRONG — @guarded below @protect does not protect the body
-@nullrun.protect
-@nullrun.guarded
-def my_agent(prompt): ...
-```
-
 ### When to use
 
 For **top-level entry points** in scripts and CLIs: instead of a
 raw traceback on `NullRunConfigError(NR-C001)` at the first gate
 call, the operator sees the structured four-line developer report
 and the process exits cleanly. In libraries and long-running
-services, prefer `try/except NullRunError` — `handle()` / `@guarded`
-exit the process, which isn't appropriate there.
+services, prefer `try/except NullRunError` — `handle()` exits the
+process, which isn't appropriate there.
 
 The context-manager form `with nullrun.handle():` is the
 **recommended form** for region-of-code scopes — see the example
@@ -394,7 +229,7 @@ causes. The diagnostic is warn-once; subsequent bumps do not spam.
 | Context manager | Parameters | What it sets |
 |---|---|---|
 | `with workflow(name=None)` | `name: str \| None` | Root scope: pushes `workflow_id` + `trace_id` + `span_id` (root `SpanContext`). All `@protect` and `track_*` calls inside auto-tag events with this `workflow_id`. |
-| `with span(name=None)` | `name: str \| None` | Child span derived from the active parent `SpanContext`. No-op if no parent is active (bare `with span(...)` outside any workflow/protect block keeps the legacy fallback). |
+| `with span(name=None)` | `name: str \| None` | Child span derived from the active parent `SpanContext`. No-op if no parent is active (bare `with span(...)` outside any workflow/protect block). |
 | `with agent(name=None)` | `name: str \| None` | Sets `agent_id` for per-agent cost attribution. |
 | `with attempt(attempt_index)` | `attempt_index: int` | Sets `attempt_index` for retry correlation. |
 | `with chain(chain_id, op="start")` | `chain_id: str` (UUID v4), `op: str` | Soft-mode budget gate. Overdrafts are allowed only when an active chain is registered against the org. `op` is `"start"` / `"continue"` / `"end"` / `"auto"` (default). |
@@ -460,7 +295,7 @@ nullrun.set_call_context(
 
 | Parameter | Type | Default | Effect when unset |
 |---|---|---|---|
-| `model` | `str \| None` | `None` (no change) | Backend receives the literal `"budget-precheck"` and falls back to the default pricing rate. Per-model budget tiers cannot fire. |
+| `model` | `str \| None` | `None` (no change) | Backend reads the rate from the workflow default; per-model budget tiers do not fire. |
 | `tools` | `list[str] \| tuple[str, ...] \| None` | `None` (no change) | Backend skips `ToolBlock` enforcement on `/gate`. Pass `[]` to clear (different from `None`, which leaves the previous value). |
 
 Call this **inside** a `with workflow(...)` block, before the
@@ -481,22 +316,38 @@ the tool-block check for that single function name.
 
 ---
 
+## How ToolParameters approval rules work
+
+The `@protect` envelope ships `tool_name + args + kwargs` plus a
+`NoImpact` envelope (kind=`"none"`) on every call. Approval rules
+that need to inspect argument values reference them by `param_name`
+in the dashboard approval-rule editor — the backend reads the live
+value out of `kwargs` directly. There is no SDK-side extractor and
+no decorator to configure; the wire payload carries everything the
+rule needs.
+
+The canonical envelope (`BusinessImpact.no_impact()`) computes to
+the same 64-char SHA-256 `action_digest` on every call. The digest
+binds approval grants to the exact payload — backend
+re-checks the digest on `/execute` and refuses on mismatch.
+
+---
+
 ## When to use what
 
 | Task | API |
 |---|---|
-| Wrap a function that calls an LLM or tool (canonical) | `@nullrun.protect` (no parameters) — auto-attaches default `ToolParamsExtractor` |
-| Mark a money-moving tool for typed approval + digest | `@nullrun.protect @nullrun.sensitive(impact=money_outflow(argument="amount_cents", currency="USD"))` |
-| Mark a tool where rule names ≠ arg names | `@nullrun.protect @nullrun.sensitive(impact=tool_params({"user_id": "uid"}))` |
-| Mark a tool where every kwarg is a secret | `@nullrun.protect @nullrun.sensitive(impact=tool_params(include_all=False))` |
-| Top-level script entry (friendly exit) | `with nullrun.handle():` (preferred) — `@nullrun.guarded` is the decorator alternative for the same behaviour |
+| Wrap a function that calls an LLM or tool (canonical) | `@nullrun.protect` (no parameters) |
+| Mark a money-moving tool for typed approval + digest | `@nullrun.protect` + an approval rule referencing `param_name` in the dashboard |
+| Mark a tool where rule names ≠ arg names | Approval rule `param_name` mapping in the dashboard |
+| Top-level script entry (friendly exit) | `with nullrun.handle():` |
 | Multi-step agent run (cost + trace per workflow) | `with nullrun.workflow("agent-name"): ...` |
 | Per-call model name and tools for `/gate` | `nullrun.set_call_context(model=..., tools=[...])` inside `with workflow` |
 | Soft-mode budget (controlled overdrafts) | `with nullrun.chain(uuid.uuid4(), op="start"): ...` |
 | LangGraph auto-tracking | (auto on first `@protect` call) |
 | Manual LLM tracking (custom client) | `nullrun.track_llm(input_tokens=..., output_tokens=..., model=...)` |
 | Manual tool-call tracking | `nullrun.track_tool(tool_name=..., duration_ms=..., metadata=...)` |
-| Custom business event | `nullrun.track_event("agent.milestone", step=..., elapsed_secs=...)` |
+| Custom business event | `nullrun.track({"type": "agent.milestone", "step": ..., "elapsed_secs": ...})` |
 | Audit log read | `runtime.audit.list(AuditQuery(event_type=..., since=..., limit=...))` |
 | Global error hook (Sentry, OTel) | `nullrun.on_error(my_handler)` — returns an idempotent unregister callable |
 | Snapshot runtime state | `nullrun.status()` — frozen `NullRunStatus` dataclass |
@@ -507,11 +358,6 @@ the tool-block check for that single function name.
 ## Order of application — cheat sheet
 
 ```python title="order_cheatsheet.py"
-# ─── Sensitive money tool ───
-@nullrun.sensitive(impact=money_outflow(argument="amount_cents", currency="USD"))
-@nullrun.protect
-def refund(amount_cents: int): ...
-
 # ─── Canonical: just @protect ───
 @nullrun.protect
 def delete_user(uid: int): ...           # ToolParameters rules "just work"
@@ -564,52 +410,18 @@ with nullrun.chain(chain_id, op="start"):           # soft-mode budget
 
 ## Anti-patterns
 
-!!! danger "Don't write bare `@sensitive`"
-    `@sensitive` only exists in the factory form
-    `@sensitive(impact=money_outflow(...))` or
-    `@sensitive(impact=tool_params(...))`. Bare `@sensitive` raises
-    `NotImplementedError` at decoration time. For the common case
-    where you don't need a typed `BusinessImpact`, just `@protect`
-    — it auto-attaches a default `ToolParamsExtractor` so the wire
-    payload carries `tool_name + params` for every protected call.
-
-!!! note "Order: `@sensitive` outside `@protect`"
-    The recommended stacking order is `@sensitive(impact=...)`
-    outside so registration in
-    `runtime.add_sensitive_tool` happens before the `@protect`
-    wrapper is built. Both orders produce identical observable
-    behaviour today; future shape changes may not.
-
-!!! note "Don't put `@sensitive(impact=...)` outside any `with workflow(...)` scope in production"
-    `@sensitive(impact=...)` outside a workflow scope carries the
-    sentinel `__nullrun_unknown__` as the displayed `workflow_id`.
-    The dashboard renders this as "unknown workflow" — operators
-    can't attribute the call to a real policy.
-
-!!! warning "Don't put `@guarded` below `@protect`"
-    `@guarded` only catches errors raised inside the function it
-    decorates. A bare `@guarded` underneath `@protect` is a no-op
-    for gate-time errors — the exception is raised by the
-    `@protect` wrapper, never reaches the user's function, and
-    bubbles past `@guarded` unhandled.
+!!! warning "Don't put `with nullrun.handle():` inside a `@protect`-wrapped body"
+    `handle()` only catches errors raised inside its own block. A
+    bare `with nullrun.handle():` placed inside a `@protect`-decorated
+    function is a no-op for gate-time errors — the exception is
+    raised by the `@protect` wrapper before the body runs, never
+    reaches the `with` block, and the process exits with a raw
+    traceback instead of the four-line developer report.
 
 !!! warning "Don't pass `cost_cents` to `track_llm`"
     The SDK strips it before sending. Cost is recomputed on the
     backend from `input_tokens + output_tokens + org pricing policy`.
     `tokens` is the only valid unit on the wire.
-
-!!! warning "Don't use `money_outflow(argument="amount_cents")` on a `float` parameter"
-    `float` is rejected outright. `Decimal` for major units, `int`
-    for minor units — the unit discriminator (`units="minor"` vs
-    `units="major"`) is **explicit** and does not flip when you
-    change the type annotation.
-
-!!! danger "Don't use `money_outflow(units="major")` on an `int` parameter"
-    `int` is rejected. `int` is only valid under `units="minor"`.
-    The explicit unit discriminator is the same review that
-    rejected implicit-from-type — a future refactor of the
-    signature (`int` → `Decimal`) must not silently flip the
-    meaning from cents to dollars.
 
 !!! warning "Don't call `set_chain_id("my-custom-id")`"
     `chain_id` MUST be a UUID v4 string per CLAUDE.md §6. The
@@ -631,14 +443,13 @@ with nullrun.chain(chain_id, op="start"):           # soft-mode budget
 - [SDK API](sdk-api.md) — top-level symbol table, exceptions, manual
   tracking, transport hooks
 - [Sensitive tools (concept)](../concepts/sensitive-tools.md) —
-  `@sensitive` vs `ToolBlock`, why the SDK does not ship a built-in
-  sensitive list
+  `ToolBlock` server-side policy and how `@protect` interacts with it
 - [Human approval](../concepts/human-approval.md) — typed predicates
   (`money_amount`, `tool_parameters`) and `action_digest`
 - [Workflows](../concepts/workflow.md) — dashboard-side view of a
   workflow (budget cap, API keys, executions, traces)
 - [Custom tracking](../how-to/custom-tracking.md) — when to use
-  `track_llm` / `track_tool` / `track_event` instead of
+  `track_llm` / `track_tool` / `track` instead of
   auto-instrumentation
 - [Use with LangGraph](../how-to/langgraph.md) — LangGraph auto-patch
-  and the LangGraph extra
+  and how `@protect` instruments a graph

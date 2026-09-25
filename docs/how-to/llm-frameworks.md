@@ -28,20 +28,20 @@ decision).
 
 ## Coverage matrix
 
-| Provider | Install extra | Auto-instrumented | Tested end-to-end | Patcher |
-| --- | --- | --- | --- | --- |
-| OpenAI (`openai`) | none — httpx URL-keyed | ✅ | ✅ | `httpx` transport hook |
-| Anthropic (`anthropic`) | none — httpx URL-keyed | ✅ | ✅ | `httpx` transport hook |
-| OpenAI Agents (`openai-agents`) | `nullrun[agents]` | ✅ | ✅ | `patch_openai_agents` |
-| Mistral (`mistralai`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | per-vendor extractor |
-| Gemini (`google-genai`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | per-vendor extractor |
-| Cohere (`cohere`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | per-vendor extractor |
-| AWS Bedrock (`boto3`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | `httpx` extractor on `bedrock-runtime.amazonaws.com` |
-| LangChain (`langchain`) | `nullrun[langchain]` | ✅ | ✅ | `patch_langchain_callback` |
-| LangGraph (`langgraph`) | `nullrun[langgraph]` | ✅ | ✅ | `patch_langgraph_compiled` (auto on first `@protect` call) |
-| LlamaIndex (`llama-index`) | `nullrun[llama-index]` | ✅ | ⚠️ extractor only | `instrumentation.llama_index` |
-| CrewAI (`crewai`) | `nullrun[crewai]` | ✅ | ⚠️ extractor only | `instrumentation.crewai` |
-| AutoGen (`autogen-agentchat`) | `nullrun[autogen]` | ✅ | ⚠️ extractor only | `instrumentation.autogen` |
+| Provider | Auto-instrumented | Tested end-to-end | Patcher |
+| --- | --- | --- | --- |
+| OpenAI (`openai`) | ✅ | ✅ | `httpx` transport hook |
+| Anthropic (`anthropic`) | ✅ | ✅ | `httpx` transport hook |
+| OpenAI Agents (`openai-agents`) | ✅ | ✅ | `patch_openai_agents` |
+| Mistral (`mistralai`) | ✅ | ⚠️ extractor only | per-vendor extractor |
+| Gemini (`google-genai`) | ✅ | ⚠️ extractor only | per-vendor extractor |
+| Cohere (`cohere`) | ✅ | ⚠️ extractor only | per-vendor extractor |
+| AWS Bedrock (`boto3`) | ✅ | ⚠️ extractor only | `httpx` extractor on `bedrock-runtime.amazonaws.com` |
+| LangChain (`langchain`) | ✅ | ✅ | `patch_langchain_callback` |
+| LangGraph (`langgraph`) | ✅ | ✅ | `patch_langgraph_compiled` (auto on first `@protect` call) |
+| LlamaIndex (`llama-index`) | ✅ | ⚠️ extractor only | `instrumentation.llama_index` |
+| CrewAI (`crewai`) | ✅ | ⚠️ extractor only | `instrumentation.crewai` |
+| AutoGen (`autogen-agentchat`) | ✅ | ⚠️ extractor only | `instrumentation.autogen` |
 
 > "Tested end-to-end" means: a multi-roundtrip test exists that
 > verifies tokens flow from the vendor response into `/api/v1/track`.
@@ -51,14 +51,16 @@ decision).
 
 ## Install everything
 
+Install `nullrun` once, then install any framework package whose
+hook you want — the framework hook attaches lazily on the first
+`@protect` call when the framework is present in the environment:
+
 ```bash title="shell"
-pip install "nullrun[all]"
+pip install nullrun langgraph langchain-openai openai-agents crewai llama-index-core 'autogen-agentchat[openai]'
 ```
 
-Installs every vendor extra (the ones that actually pull a vendor
-package — `[agents]`, `[crewai]`, `[langgraph]`, `[langchain]`,
-`[llama-index]`, `[autogen]`). The `[all]` meta-extra lives at
-`pyproject.toml` and pulls every individual extra in one go.
+The framework packages are installed independently of `nullrun` —
+no install extra, no `pyproject.toml` opt-in.
 
 ## How the httpx transport hook works
 
@@ -115,10 +117,11 @@ Bedrock calls must be reported via `track_llm` manually.
 
 ### LangGraph
 
-The `nullrun[langgraph]` extra wraps `Pregel.invoke` / `.ainvoke` /
+LangGraph integration wraps `Pregel.invoke` / `.ainvoke` /
 `.stream` / `.astream` so every node that calls an LLM goes through
-the gate. The patch is auto-applied on the first `@protect` call.
-See [Protect a LangGraph agent](langgraph.md) for the canonical
+the gate. The patch is auto-applied on the first `@protect` call
+when `langgraph` is installed in the environment. See
+[Protect a LangGraph agent](langgraph.md) for the canonical
 wiring pattern.
 
 ### CrewAI / AutoGen
@@ -146,6 +149,6 @@ without the runtime seeing a single `track_llm` event, the SDK logs
 ## See also
 
 - [Protect a LangGraph agent](langgraph.md) — full LangGraph example
-- [Use with OpenAI Agents](openai-agents.md) — `openai-agents` extra
+- [Use with OpenAI Agents](openai-agents.md) — `openai-agents` framework hook
 - [Use with FastAPI](fastapi.md) — request-scoped SDK context
-- [Manual cost / event tracking](custom-tracking.md) — `track_llm` / `track_tool` / `track_event`
+- [Manual cost / event tracking](custom-tracking.md) — `track_llm` / `track_tool` / `track`

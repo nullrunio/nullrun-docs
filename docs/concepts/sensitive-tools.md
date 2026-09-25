@@ -1,6 +1,6 @@
 title: Sensitive tools
 maturity: stable
-description: The `@protect` decorator auto-attaches a default tool_params extractor so every protected tool is eligible for ToolParameters Approval Rules. The `@sensitive(impact=...)` factory form stamps a typed BusinessImpact + digest-bound approval.
+description: How `@protect` plus the server-side ToolBlock policy enforce "this tool needs review" without any SDK-side sensitive list.
 # Sensitive tools
 
 A **sensitive tool** is one that should never run without a human
@@ -15,30 +15,27 @@ them.
 
 !!! info "The canonical entry point is `@protect`"
     Every protected tool is automatically eligible for ToolParameters
-    Approval Rules — `@protect` stamps a default
-    `ToolParamsExtractor(include_all=True)` so the kwargs of every
-    call reach the gate without any second decorator. The
-    `@sensitive(impact=...)` factory form stamps a typed
-    `BusinessImpact` + digest-bound approval flow.
+    Approval Rules — `@protect` ships `tool_name + args + kwargs` on
+    the wire, and the backend reads argument values out of `kwargs`
+    by `param_name`. No SDK-side extractor or extra decorator is
+    required.
 
-!!! info "`@sensitive(impact=...)` vs `ToolBlock`"
-    Two distinct mechanisms, often confused:
+!!! info "ToolBlock vs typed predicates"
+    Two complementary mechanisms, often confused:
 
-    - **`@sensitive(impact=...)` (SDK-side)** — a factory decorator
-      that stamps a typed `BusinessImpact` extractor on the
-      function. Used with **approval rules** that evaluate a typed
-      predicate (`money_amount` / `tool_parameters`) + the SHA-256
-      `action_digest` for tamper-proof approval. Affects the SDK
-      only; the gate still has the final say.
     - **`ToolBlock` (server-side)** — a policy rule evaluated by
       the gate on every `/gate` call. The gate fails-CLOSED if it
       cannot reach Redis or the policy cache to evaluate. This is
       the canonical "this tool is forbidden" mechanism.
+    - **Typed predicates (`money_amount`, `tool_parameters`)** —
+      built into approval rules in the dashboard. The gate
+      evaluates a DNF over argument values, bound to the
+      SHA-256 `action_digest` for tamper-proof approval. Use these
+      for finer-grained rules ("refunds over $500 need
+      approval", "sends to non-internal recipients need review").
 
-    Use `@sensitive(impact=...)` when you want a typed
-    `BusinessImpact` approval flow (e.g. "refunds over $500 need
-    approval"). Use `ToolBlock` when you want a hard rule ("never
-    call `bash`").
+    Use `ToolBlock` for hard rules ("never call `bash`"). Use typed
+    predicates when the rule depends on the call's arguments.
 
 ## What a sensitive tool is, in policy terms
 
@@ -47,27 +44,23 @@ enforcement decision is evaluated by the gate on every `/gate` call,
 so you can't accidentally miss a tool you didn't register locally.
 You express "sensitive" with one of two complementary mechanisms:
 
-- **`@protect` (SDK-side, canonical)** — auto-attaches a default
-  `ToolParamsExtractor(include_all=True)` so the kwargs of every
-  call flow into the `BusinessImpact` predicate bag used by
-  ToolParameters approval rules (free-form typed predicates — no
-  argument renaming, every kwarg flows through). Use this when you
-  want a free-form predicate — e.g. "the `uid` parameter must equal
-  `42`".
-- **`@protect @sensitive(impact=...)` (SDK-side)** — stamps a
-  typed `BusinessImpact` extractor (`money_outflow(...)` or
-  `tool_params({...})`) so the gate evaluates a typed predicate
-  (`money_amount` / `tool_parameters`) and the SHA-256
-  `action_digest` for digest-bound approval flow. Use this when you
-  want the typed predicate — e.g. "refunds over $500 need
-  approval".
+- **`@protect` (SDK-side, canonical)** — wraps a function and
+  ships `tool_name + args + kwargs` on the wire. The backend
+  reads argument values out of `kwargs` by `param_name` for
+  ToolParameters approval rules. No SDK-side extractor is needed.
 - **`ToolBlock` (server-side)** — a policy rule evaluated by the
   gate. The gate fails-CLOSED if it cannot reach Redis or the policy
   cache to evaluate. Use this for hard rules — "never call `bash`".
+- **Approval rules with typed predicates (server-side)** — for
+  finer-grained control, an approval rule references `param_name`
+  and the gate evaluates a DNF of up to 5 named parameters against
+  Equals / OneOf / NumericRange / Regex / Exists matchers. The
+  grant is bound to the SHA-256 `action_digest` of the live
+  payload; the post-approval `/execute` re-check refuses on
+  drift.
 
-For the typed predicate wiring, see
-[Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-typed-impact-digest)
-and [`money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact).
+For the typed-predicate wiring, see
+[Human approval → typed predicates](human-approval.md#typed-predicates).
 
 Recommended starter patterns (see
 [Tool catalog → Recommended ToolBlock starter list](../reference/llm-tool-catalog.md#recommended-toolblock-starter-list)
@@ -100,8 +93,8 @@ inverts this:
 
 The gate **does not inspect tool arguments** — it cannot distinguish
 two calls to the same tool by payload. If you want a narrower rule
-(e.g. "block refunds over $500"), use a typed `BusinessImpact`
-predicate: the SDK extracts the argument bag and the gate evaluates
+(e.g. "block refunds over $500"), use a typed `tool_parameters`
+predicate: the SDK ships `kwargs` on the wire and the gate evaluates
 a DNF of up to 5 named parameters against Equals / OneOf /
 NumericRange / Regex / Exists matchers. See
 [Human approval → typed predicates](human-approval.md#typed-predicates).
@@ -120,7 +113,7 @@ A ToolBlock policy matches **tool name only** — not:
 
 - prompt content or semantic intent
 - the recipient of a payment (use a typed predicate instead)
-- tool arguments beyond the `BusinessImpact` extraction
+- tool arguments beyond the `kwargs` the SDK ships on the wire
 - the tool's runtime sandbox (that's your infrastructure concern)
 
 Read operations are never sensitive regardless of the tool. The
@@ -163,15 +156,13 @@ is bound to the exact action payload the SDK sent on `/gate`. See
 
 ## See also
 
-- [Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-typed-impact-digest)
-  — the `@sensitive(impact=...)` factory form, the
-  `money_outflow(...)` / `tool_params(...)` impact extractors, and
-  the `_nullrun_extractor` contract that ties them to `/execute`.
 - [Tool policies](tool-policies.md) — the actual rule structure
 - [Tool catalog](../reference/llm-tool-catalog.md) — recommended
   patterns with risk ratings
-- [Human approval](human-approval.md) — the safer alternative to
-  disabling a ToolBlock rule
+- [Human approval](../concepts/human-approval.md) — the safer
+  alternative to disabling a ToolBlock rule
+- [Decorators & context managers](../reference/decorators.md) —
+  `@protect` wire payload and how the gate receives `kwargs`
 - [Circuit breaker → fail-CLOSED matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable)
 
 !!! info "Deep dive"
@@ -193,12 +184,7 @@ is bound to the exact action payload the SDK sent on `/gate`. See
     (`business_impact_validate`, `orchestrator.rs`) validates the
     envelope first; malformed payloads return
     `BUSINESS_IMPACT_INVALID` before any approval-rule evaluation or
-    budget reservation. The `@sensitive(impact=...)` factory form on
-    the SDK side stamps a typed extractor (`money_outflow(...)` or
-    `tool_params({...})`) on the function; the `/check` request
-    carries the extracted envelope so the gate can evaluate a typed
-    predicate (`money_amount` / `tool_parameters`) against the
-    request payload.
+    budget reservation.
 
     ToolBlock is ALWAYS Hard — `orchestrator.rs` codifies this:
     regardless of `enforcement_mode`, the orchestrator returns
@@ -227,13 +213,13 @@ is bound to the exact action payload the SDK sent on `/gate`. See
     `unknown`) propagate from the SDK's tool catalog onto the
     `tool_policies` row in the database, so a pattern like
     `mcp://*/delete` covers every MCP server's delete tool without
-    operators having to enumerate them. The `tools_params`
-    extractor (auto-attached on every `@protect` as
-    `ToolParamsExtractor(include_all=True)`) makes every kwarg
-    eligible for `ToolParameters` approval rules — the SDK doesn't
-    have to declare an extractor to participate. ToolBlock is
-    enforced server-side in both `/check` and `/track`; the
-    SDK-side enforcement (the `set_call_context(tools=[...])`
+    operators having to enumerate them. The SDK ships the
+    `kwargs` payload on `/execute` — typed predicates in approval
+    rules read values directly from there by `param_name`, no
+    SDK-side extractor required.
+
+    ToolBlock is enforced server-side in both `/check` and `/track`;
+    the SDK-side enforcement (the `set_call_context(tools=[...])`
     annotation) is opt-in for early rejection.
 
     The chosen path is "ToolBlock is server-side, always Hard" —
@@ -256,22 +242,20 @@ is bound to the exact action payload the SDK sent on `/gate`. See
     (`enforcement/approval_eval.rs`) into the orchestrator.
 
     ToolBlock matches tool name only — it does not inspect tool
-    arguments beyond the `BusinessImpact` extraction. Two calls to
-    the same tool with different payloads are indistinguishable at
-    the glob-match step; the narrow rule "block refunds over $500"
-    requires a typed `BusinessImpact` predicate (DNF of up to 5
-    named parameters against Equals / OneOf / NumericRange / Regex
-    / Exists matchers). The orchestrator's fail-CLOSED posture on
-    policy_cache_miss means that a Redis cache flush mid-traffic
-    will surface as `TOOL_BLOCKED` for every `/check` until the
-    cache repopulates — the trade-off is "no silent miss" over "no
-    false positives". Pre-flight blocking on `/gate` is opt-in via
-    SDK `set_call_context(tools=[...])`; legacy SDKs that don't
-    call `set_call_context` skip `/gate` ToolBlock enforcement
+    arguments beyond the `kwargs` the SDK ships on `/execute`.
+    Two calls to the same tool with different payloads are
+    indistinguishable at the glob-match step; the narrow rule
+    "block refunds over $500" requires a typed `tool_parameters`
+    predicate (DNF of up to 5 named parameters against Equals /
+    OneOf / NumericRange / Regex / Exists matchers). The
+    orchestrator's fail-CLOSED posture on policy_cache_miss means
+    that a Redis cache flush mid-traffic will surface as
+    `TOOL_BLOCKED` for every `/check` until the cache repopulates —
+    the trade-off is "no silent miss" over "no false positives".
+    Pre-flight blocking on `/gate` is opt-in via SDK
+    `set_call_context(tools=[...])`; SDKs that don't call
+    `set_call_context` skip `/gate` ToolBlock enforcement
     entirely — `/track` cost-event ingestion still catches them
-    downstream, but only after the LLM call has fired. The
-    `@sensitive(impact=...)` factory form is mandatory since SDK
-    0.18.2; bare `@sensitive` raises `NotImplementedError` at
-    decoration time. ToolBlock patterns cannot reference
-    `tool_class`-scoped predicates; the typed-predicate layer is
-    where class-aware rules live.
+    downstream, but only after the LLM call has fired. ToolBlock
+    patterns cannot reference `tool_class`-scoped predicates; the
+    typed-predicate layer is where class-aware rules live.

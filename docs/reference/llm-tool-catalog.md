@@ -8,8 +8,9 @@ description: Per-model input and output pricing for every LLM NullRun understand
 A reference list of the tool names LLM agents commonly expose, tagged
 with a default risk rating you can use as a starting point when you
 configure approval-rule patterns. `@protect` is the canonical entry
-point; every protected tool auto-attaches a default
-`ToolParamsExtractor` for ToolParameters rules.
+point; every protected tool ships `tool_name + args + kwargs` on
+the wire, and ToolParameters approval rules read argument values
+directly out of `kwargs` by `param_name`.
 
 The catalog covers three sources that NullRun sees in production:
 
@@ -29,7 +30,7 @@ Risk rating:
 | --- | --- |
 | `low` | Read-only or reversible. Safe to call without a policy decision. |
 | `medium` | Mutates external state but the change is reversible (issue created, draft email, S3 put). |
-| `high` | **Side effects you can't easily undo** — files written or deleted, money moved, messages sent, code executed, infra changed. Mark with `@protect` (auto-attaches the default `ToolParamsExtractor` for ToolParameters rules) and route through a human approval gate. |
+| `high` | **Side effects you can't easily undo** — files written or deleted, money moved, messages sent, code executed, infra changed. Mark with `@protect` and route through a human approval gate. |
 
 ## Search & retrieval
 
@@ -243,14 +244,11 @@ approval for sends to non-`@internal` addresses"), use the typed
     (`tool_canonical.rs`); a pattern like `bash.*` blocks any
     bash call regardless of the shell command.
 
-    SDK 0.18.1+ attaches a default
-    `ToolParamsExtractor(include_all=True)` on every
-    `@protect`-decorated function so the wire payload carries
-    `tool_name + params` without a second decorator. Bare
-    `@sensitive` raises `NotImplementedError` since SDK 0.18.2 —
-    the factory form `@sensitive(impact=...)` is mandatory. The
-    dotted-prefix smart match is `bash.*` matches `bash`,
-    `bash.foo`, `bash.foo.bar` — bare `bash` AND dotted
+    `@protect` ships `tool_name + args + kwargs` on every call.
+    ToolParameters approval rules read argument values directly
+    from `kwargs` by `param_name`; no SDK-side extractor is
+    required. The dotted-prefix smart match is `bash.*` matches
+    `bash`, `bash.foo`, `bash.foo.bar` — bare `bash` AND dotted
     continuations (`orchestrator.rs`). Templates seed
     `bash.*`, `shell.*`, `code.*` patterns; operators expect
     them to catch the bare name. Multi-`*` drop-patterns:
@@ -258,9 +256,8 @@ approval for sends to non-`@internal` addresses"), use the typed
     `s3.execute_drop` — the trailing `_` is load-bearing per
     `glob_match_multi_star_drop_pattern_unanchored_ends` test.
     For command-level rules (e.g. "block refunds over $500"),
-    use the typed `tool_parameters` predicate via
-    `@sensitive(impact=money_outflow(argument="amount"))` rather
-    than glob patterns.
+    use the typed `tool_parameters` predicate in the approval
+    rule editor rather than glob patterns.
 
     The catalog covers three sources: LangChain built-in
     toolkits (search/SQL/Gmail/Slack/GitHub), Anthropic/OpenAI
@@ -278,9 +275,9 @@ approval for sends to non-`@internal` addresses"), use the typed
 
     Glob match is name-only — arguments are NOT inspected. For
     command-level rules you need the typed `tool_parameters`
-    predicate (`@sensitive(impact=money_outflow(...))`); glob
-    patterns cannot express "this argument only". `**` is
-    treated literally per `glob_match_no_double_star_support`
+    predicate (referenced by `param_name` in the dashboard rule
+    editor); glob patterns cannot express "this argument only".
+    `**` is treated literally per `glob_match_no_double_star_support`
     (`gate/internal.rs`). `?` is literal — regex-style
     single-char wildcards are not supported; an operator who
     writes `ba?h` matches the literal 4-char string, not `bash`
@@ -290,5 +287,5 @@ approval for sends to non-`@internal` addresses"), use the typed
     of truth for canonical form, not the catalog. TB-1
     fail-CLOSED on empty `tools`: SDKs that omit `tools` while
     the per-key policy has patterns are blocked (defensive
-    against bypass) — pre-fix behaviour let legacy SDKs slip
-    past `tool_pattern` enforcement entirely.
+    against bypass) — a missing `tools` field would otherwise
+    let the SDK slip past `tool_pattern` enforcement entirely.

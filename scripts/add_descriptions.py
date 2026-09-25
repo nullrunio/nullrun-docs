@@ -37,7 +37,7 @@ DESCRIPTIONS = {
 
     "concepts/circuit-breaker.md": "How NullRun's circuit breaker trips on a budget overrun, recovers after a cooldown, and propagates a kill signal across in-flight calls.",
     "concepts/budgets.md": "Hard and soft budget enforcement, billing-period rollover, and the reserve / consume invariant that protects against implicit re-reservation.",
-    "concepts/sensitive-tools.md": "The `@protect` decorator auto-attaches a default tool_params extractor so every protected tool is eligible for ToolParameters Approval Rules. The `@sensitive(impact=...)` factory form is the advanced API for typed BusinessImpact + digest-bound approval. Bare `@sensitive` is deprecated in SDK 0.18.1.",
+    "concepts/sensitive-tools.md": "How `@protect` plus the server-side ToolBlock policy enforce \"this tool needs review\" without any SDK-side sensitive list.",
     "concepts/workflow.md": "Group agent calls into a named workflow, propagate parent_trace_id, and bind cost to a logical unit instead of a single session.",
     "concepts/tracing.md": "OpenTelemetry-style spans for every gate decision, with parent_trace_id propagation so the dashboard renders a true waterfall.",
     "concepts/control-plane.md": "Real-time WebSocket channel for kill, pause, and approval_resolved — the operator's runtime control surface for live agents.",
@@ -48,7 +48,7 @@ DESCRIPTIONS = {
     "concepts/error-handling.md": "The full NullRun exception hierarchy, kill-signal semantics, and the multi-layer fail-CLOSED contract that protects production traffic.",
 
     "how-to/langgraph.md": "Auto-instrument a LangGraph agent with @protect, or wrap nodes manually when you need fine-grained control over the gate decision.",
-    "how-to/openai-agents.md": "Install the nullrun[agents] extra and gate every tool call from an OpenAI Agents SDK workflow.",
+    "how-to/openai-agents.md": "Install nullrun alongside the OpenAI Agents SDK and gate every tool call from an Agents workflow.",
     "how-to/crewai.md": "Wrap CrewAI tools and tasks with @protect so the NullRun gate evaluates every crew action before it executes.",
     "how-to/fastapi.md": "Bind a FastAPI request to a NullRun workflow, propagate trace context, and map gate errors to the right HTTP status code.",
     "how-to/llm-frameworks.md": "Coverage matrix for OpenAI, Anthropic, Mistral, Gemini, Cohere, Bedrock, LangChain, LlamaIndex, CrewAI, AutoGen, and the raw openai SDK.",
@@ -56,10 +56,10 @@ DESCRIPTIONS = {
     "how-to/multi-agent.md": "Run multiple agents in one workflow, propagate parent_trace_id, and aggregate cost across the team.",
     "how-to/multi-agent-orchestration.md": "Orchestrate sub-agents with shared kill semantics: a top-level trip propagates to every child through the control plane.",
     "how-to/streaming.md": "Use @protect on a stream iterator so the gate's Cancel decision can stop a live response the moment an overrun is detected.",
-    "how-to/custom-tracking.md": "Manually report cost and events with track_llm, track_tool, and track_event when auto-instrumentation doesn't fit your runtime.",
+    "how-to/custom-tracking.md": "Manually report cost and events with track_llm, track_tool, and track when auto-instrumentation doesn't fit your runtime.",
     "how-to/ci-cd.md": "Fail-CLOSED gate integration in CI, with smoke-test scripts that verify the gate is reachable before a deploy.",
 
-    "reference/sdk-api.md": "Reference for every NullRun SDK symbol: init, @protect (canonical entry point), @sensitive(impact=...) (advanced API), workflow, chain, exceptions, manual tracking, and transport hooks. SDK 0.18.1: bare @sensitive is deprecated.",
+    "reference/sdk-api.md": "Reference for every NullRun SDK symbol: @protect (canonical entry point, takes no parameters), the workflow / span / chain / attempt context managers, exceptions, manual tracking, and transport hooks.",
     "reference/http-api.md": "Every NullRun HTTP endpoint: /api/v1/gate, /api/v1/track, /api/v1/capabilities, /api/v1/heartbeat, and the control-plane WebSocket protocol.",
     "reference/errors.md": "Full NullRun error-code reference: NR-B004 budget blocks, NR-T001 transport errors, NR-R001 refusals, and decision vs infrastructure classes.",
     "reference/llm-tool-catalog.md": "Per-model input and output pricing for every LLM NullRun understands, with capability flags for streaming, tools, and structured output.",

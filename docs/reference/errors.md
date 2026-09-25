@@ -21,9 +21,9 @@ There are **two parallel taxonomies** you may see:
   exception. The full catalog is below in *NR-* error code catalog*.
 
 For the **three-layer error model** (structured exceptions →
-`on_error` hook → `format_user_message` / `@guarded`) and the
-boundary between developer-facing and end-user-facing wording, see
-[Concepts → Error handling](../concepts/error-handling.md).
+`on_error` hook → `format_user_message` / `with nullrun.handle():`)
+and the boundary between developer-facing and end-user-facing
+wording, see [Concepts → Error handling](../concepts/error-handling.md).
 
 ## Gateway error codes (`error` field on every non-2xx response)
 
@@ -114,9 +114,8 @@ required.
 |---|---|---|
 | `init_or_die(api_key=...)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
 | `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) — **recommended** form |
-| `@guarded` | Any `NullRunError` raised inside the wrapped function | Decorator equivalent of `handle()` |
 
-All three helpers propagate non-`NullRunError` exceptions (anything
+Both helpers propagate non-`NullRunError` exceptions (anything
 that isn't an SDK error) as honest tracebacks. `NullRunError`
 subclasses — including the kill signal `NullRunWorkflowKilledError` —
 are caught and rendered as the **structured four-line developer
@@ -264,7 +263,6 @@ you don't care about the exact cause.
 | --- | --- | --- | --- |
 | `NR-B001` | Transport-layer network error (timeout, ConnectError, DNS failure) | 500 | `NullRunTransportError` (default) |
 | `NR-B002` | Gateway 5xx | 500/503 | `NullRunBackendError` |
-| `NR-B003` | `@sensitive(impact=...)` business_impact extraction failed (tool param shapes unsupported) | 403 | `NullRunBlockedException` (raised from `decorators.py`) |
 | `NR-B005` | Local SDK circuit breaker tripped — short-circuits before the wire call | 503 | `NullRunBackendError` (with `source = BREAKER_OPEN`) |
 | `NR-R001` | Per-workflow rate limit hit (gateway returned 429 with `Retry-After`) | 429 | `RateLimitError` (subclass of `NullRunTransportError` — infrastructure class despite the 429 status) |
 | `NR-R002` | Rate-limit Redis unavailable (aggregate per-org rate-limit fail-CLOSED) | 503 | `NullRunRateLimitRedisError` |

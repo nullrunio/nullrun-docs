@@ -75,15 +75,15 @@ Two predicate kinds are supported on `action_predicate`:
    }
    ```
 
-The `tool_parameters` predicate rides on the SDK's
-`ToolParamsExtractor`. With the default `include_all=True` mode,
-every kwarg of `@protect`-decorated functions flows into the
-predicate bag (positional args are dropped; `f64` / set / custom
-objects are filtered; PII-masked sentinels like `"***"` for
-`password` / `token` / `api_key` keys are stripped before wire).
-`@protect` auto-attaches the default extractor, so no second
-decorator is needed to make a tool eligible for `tool_parameters`
-rules.
+The `tool_parameters` predicate reads values out of `kwargs` the
+SDK ships on `/execute`. Every `@protect`-decorated function ships
+`tool_name + args + kwargs` on the wire — the predicate references
+the value by `param_name` in the dashboard rule editor and the
+gate evaluates it directly. Positional args are dropped; `float` /
+`set` / custom objects are filtered; PII-masked sentinels like
+`"***"` for `password` / `token` / `api_key` keys are stripped
+before wire. No second decorator is needed to make a tool
+eligible for `tool_parameters` rules.
 
 ## `action_digest` — tamper-evident binding
 
@@ -266,19 +266,24 @@ immutable anchor that proves the operator approved the exact payload
 the SDK sent on `/gate` (not "any refund" — the exact amount and
 arguments).
 
-## SDK-side extraction
+## SDK-side envelope
 
-The `action_digest` is **produced** by the SDK at extraction time.
-For the Python SDK, this happens inside `@sensitive(impact=...)`
-when you attach a typed `BusinessImpact` extractor — see
-[Decorators & extractors → `money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact)
-and [Decorators & extractors → `tool_params(...)`](../reference/decorators.md#tool_params-free-form-argument-bag).
+The `action_digest` is **produced** by the SDK on every `@protect`
+call. The envelope is the canonical NoImpact payload
+(`BusinessImpact.no_impact()` — `{"kind": "none"}`); the SDK
+canonicalises it (compact JSON, `nullrun/v1/business_impact:`
+prefix) and SHA-256-hashes it. The digest flows onto the wire on
+both `/gate` and `/execute`, and the backend re-computes the
+digest from the live payload to verify the grant.
 
-The extracted `BusinessImpact` is canonicalised (keys sorted
-recursively, compact JSON, `nullrun/v1/business_impact:` prefix)
-and SHA-256-hashed; the digest flows onto the wire on both
-`/gate` and `/execute`. A drift between SDK and backend is a P0
-security regression covered by the SDK's source-pin tests.
+The NoImpact envelope is the same for every `@protect` call — the
+SDK is policy-blind and ships only `tool_name + args + kwargs`.
+Approval rules reference `param_name` in the dashboard to read
+argument values for typed predicates (`money_amount` /
+`tool_parameters`). No SDK-side extractor or factory is needed.
+
+A drift between SDK and backend canonicalisation is a P0 security
+regression covered by the SDK's source-pin tests.
 
 ## See also
 

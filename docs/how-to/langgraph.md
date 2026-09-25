@@ -9,7 +9,7 @@ The SDK auto-patches LangGraph on the **first `@protect` call** —
 no manual wrapper needed for the common case.
 
 ```bash title="shell"
-pip install "nullrun[langgraph]" langgraph langchain-openai
+pip install nullrun langgraph langchain-openai
 ```
 
 ```python title="langgraph_agent.py"

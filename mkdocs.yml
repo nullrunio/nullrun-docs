@@ -93,6 +93,7 @@ theme:
     - content.code.copy
     - content.code.annotate
     - content.tabs.link
+    - content.tooltips
     - toc.follow
   # Open Graph / Twitter card preview when a doc URL is pasted into
   # Slack / Twitter / Discord. `image` is the global fallback; per-page
@@ -162,6 +163,7 @@ nav:
   - 6. Troubleshooting: troubleshooting.md
   - 7. Operations:
       - 7.1. Performance & limits: operations/performance.md
+      - 7.2. Framework & ecosystem positioning: operations/framework-positioning.md
 
 # No announcement banner — banner removed on 2026-08-30 per design
 # decision. (Old: Plan-rebalance 2026-06-24 dismissible banner. Removed.)

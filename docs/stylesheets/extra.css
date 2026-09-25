@@ -120,6 +120,14 @@
   --focus-ring: #9A9893;
   --focus-ring-color: #F1EDDA;
 
+  /* Shadow color — in light scheme = ink, same as fg (current behaviour
+     preserved). Used by the brutalist offset shadows on plates; borders
+     intentionally stay on --md-default-fg-color for crisp contour, shadow
+     uses this softer / darker token for depth. See --nr-shadow in slate
+     block for the dark-scheme override that turns near-white shadows
+     into a muted gray. */
+  --nr-shadow: #1A1A1A;
+
   /* Selection — FLAG base at 0.25 alpha */
   --selection-bg: #E6AF1E;
   --selection-alpha: 0.25;
@@ -199,6 +207,16 @@
 
   --focus-ring: #ADADAD;                   /* lifted neutral for AA */
   --focus-ring-color: #1A1A1A;
+
+  /* Shadow color — muted neutral gray so the brutalist offset shadow
+     reads as depth, not as a glowing near-white plate. Lighter than
+     ink (#1A1A1A = --md-default-bg-color), darker than --fg-default
+     (#EBEBEB = --md-default-fg-color). Same value as
+     --md-default-fg-color--lighter so it harmonises with the muted
+     chrome already used in the dark scheme. Borders stay on
+     --md-default-fg-color for crisp contour — shadow is the soft
+     element. */
+  --nr-shadow: #6B6B6B;
 
   --selection-bg: #E6AF1E;
   --selection-alpha: 0.35;
@@ -456,13 +474,13 @@ svg {
   padding: 4px;
   list-style: none;
   background: var(--md-default-bg-color);
-  border: 2px solid var(--ink, var(--md-default-fg-color));
+  border: 2px solid var(--md-default-fg-color);
   border-radius: 0;
   font-size: 0.85rem;
   color: var(--md-default-fg-color);
   min-width: 100px;
   display: none;
-  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+  box-shadow: 4px 4px 0 0 var(--nr-shadow);
 }
 .nr-theme:hover .nr-theme-list,
 .nr-theme:focus-within .nr-theme-list { display: block; }
@@ -821,14 +839,79 @@ article.md-content__inner,
 }
 
 /* Code blocks — dark ink bg + FLAG-yellow text. Terminal aesthetic.
-   2px ink border + 4px offset shadow for the brutalist plate look. */
+   2px ink border + 4px offset shadow for the brutalist plate look.
+
+   HTML structure emitted by pymdownx.superfences for fenced blocks
+   with a `title="..."` attribute:
+     <div class="language-X highlight">
+       <span class="filename">{title}</span>
+       <pre><code>...</code></pre>
+     </div>
+
+   The plate (border + shadow + ink background) lives on the .highlight
+   container so the filename label and the <pre> body feel like ONE
+   unit, not two stacked boxes with mismatched chrome. Pre blocks
+   INSIDE .highlight drop their own border/shadow/background (they'd
+   double up). Top-level <pre> without a title keeps the fallback
+   chrome so fenced blocks without a label still render. */
+.md-typeset .highlight {
+  position: relative;
+  background: var(--md-code-bg-color) !important;
+  background-color: var(--md-code-bg-color) !important;
+  color: var(--md-code-fg-color) !important;
+  border: 2px solid var(--md-code-border-color) !important;
+  box-shadow: 4px 4px 0 0 var(--nr-shadow) !important;
+  border-radius: 0 !important;
+  margin: 1em 0;
+  overflow: hidden;
+}
+.md-typeset .highlight > .filename {
+  display: block !important;
+  font-family: var(--md-code-font) !important;
+  font-size: 0.78em !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--md-default-fg-color) !important;
+  background: var(--accent-flag) !important;
+  background-color: var(--accent-flag) !important;
+  padding: 4px 12px !important;
+  border-bottom: 2px solid var(--md-default-fg-color);
+  border-radius: 0 !important;
+  line-height: 1.4;
+  margin: 0 !important;
+}
+.md-typeset .highlight pre {
+  background: transparent !important;
+  background-color: transparent !important;
+  color: var(--md-code-fg-color) !important;
+  padding: 14px 16px;
+  border: none !important;
+  border-radius: 0;
+  box-shadow: none !important;
+  overflow-x: auto;
+  font-size: 0.88em;
+  line-height: 1.55;
+  font-family: var(--md-code-font);
+  margin: 0 !important;
+}
+.md-typeset .highlight pre code {
+  background: transparent !important;
+  color: inherit;
+  padding: 0;
+  border: none;
+}
+
+/* Top-level <pre> without a .highlight parent (e.g. code blocks
+   without a title= label). Keep the chrome so unfenced blocks still
+   render in the brutalist plate style. */
 .md-typeset pre {
   background: var(--md-code-bg-color);
   color: var(--md-code-fg-color);
   padding: 14px 16px;
   border-radius: 0;
   border: 2px solid var(--md-code-border-color);
-  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+  box-shadow: 4px 4px 0 0 var(--nr-shadow);
   overflow-x: auto;
   font-size: 0.88em;
   line-height: 1.55;
@@ -874,7 +957,7 @@ article.md-content__inner,
   border-radius: 0;
   padding: 14px 18px;
   margin: 1em 0;
-  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+  box-shadow: 4px 4px 0 0 var(--nr-shadow);
 }
 .md-typeset .admonition.note,
 .md-typeset .admonition.info {
@@ -931,7 +1014,7 @@ article.md-content__inner,
   max-width: 720px;
   height: auto;
   border: 2px solid var(--md-default-fg-color);
-  box-shadow: 6px 6px 0 0 var(--md-default-fg-color);
+  box-shadow: 6px 6px 0 0 var(--nr-shadow);
   display: block;
 }
 
@@ -961,20 +1044,20 @@ article.md-content__inner,
 .nr-hero__cta a.primary {
   background: var(--md-default-fg-color);
   color: var(--md-default-bg-color);
-  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+  box-shadow: 4px 4px 0 0 var(--nr-shadow);
 }
 .nr-hero__cta a.primary:hover {
   transform: translate(-2px, -2px);
-  box-shadow: 6px 6px 0 0 var(--md-default-fg-color);
+  box-shadow: 6px 6px 0 0 var(--nr-shadow);
 }
 .nr-hero__cta a.secondary {
   background: var(--accent-flag);
   color: var(--md-default-fg-color);
-  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+  box-shadow: 4px 4px 0 0 var(--nr-shadow);
 }
 .nr-hero__cta a.secondary:hover {
   transform: translate(-2px, -2px);
-  box-shadow: 6px 6px 0 0 var(--md-default-fg-color);
+  box-shadow: 6px 6px 0 0 var(--nr-shadow);
   background: var(--accent-flag-ink);
 }
 
@@ -1007,7 +1090,7 @@ article.md-content__inner,
   padding: 20px;
   background: var(--md-default-bg-color--light);
   border: 2px solid var(--md-default-fg-color);
-  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+  box-shadow: 4px 4px 0 0 var(--nr-shadow);
   border-radius: 0;
 }
 .nr-feature__icon {
@@ -1019,7 +1102,7 @@ article.md-content__inner,
   background: var(--accent-flag);
   color: var(--md-default-fg-color);
   border: 2px solid var(--md-default-fg-color);
-  box-shadow: 2px 2px 0 0 var(--md-default-fg-color);
+  box-shadow: 2px 2px 0 0 var(--nr-shadow);
   border-radius: 0;
 }
 .nr-feature__icon svg {
@@ -1118,7 +1201,7 @@ article.md-content__inner,
   margin: 24px auto;
   max-width: 100%;
   border: 2px solid var(--md-default-fg-color);
-  box-shadow: 6px 6px 0 0 var(--md-default-fg-color);
+  box-shadow: 6px 6px 0 0 var(--nr-shadow);
   background: var(--md-default-bg-color);
   overflow: hidden;
 }
@@ -1179,17 +1262,17 @@ body[data-md-color-scheme="slate"] .nr-shot img.nr-shot__dark  { display: block;
   background: var(--md-default-fg-color);
   border: 2px solid var(--md-default-fg-color);
   border-radius: 0;
-  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+  box-shadow: 4px 4px 0 0 var(--nr-shadow);
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 120ms ease;
 }
 .nr-print-btn:hover {
   transform: translate(-2px, -2px);
-  box-shadow: 6px 6px 0 0 var(--md-default-fg-color);
+  box-shadow: 6px 6px 0 0 var(--nr-shadow);
 }
 .nr-print-btn:active {
   transform: translate(2px, 2px);
-  box-shadow: 0 0 0 0 var(--md-default-fg-color);
+  box-shadow: 0 0 0 0 var(--nr-shadow);
 }
 
 /* On the print page itself, hide the right-side "On this page" TOC
@@ -1300,6 +1383,7 @@ body.nr-print-page .md-content {
      ink and look messy. Keep the 2px ink borders for table cells /
      code blocks where they aid legibility. */
   .md-typeset pre,
+  .md-typeset .highlight,
   .md-typeset .admonition,
   .nr-shot,
   .nr-feature,
@@ -1557,7 +1641,8 @@ body.nr-print-page .md-content {
 
   /* Code blocks — tighter padding + smaller font so the brutalist
      4px offset shadow doesn't eat into the 288px content area. */
-  .md-typeset pre {
+  .md-typeset pre,
+  .md-typeset .highlight pre {
     padding: 12px 14px;
     font-size: 0.82em;
   }
@@ -1606,7 +1691,7 @@ body.nr-print-page .md-content {
   max-width: 100%;
   background: var(--md-default-bg-color--light);
   border: 2px solid var(--md-default-fg-color);
-  box-shadow: 4px 4px 0 0 var(--md-default-fg-color);
+  box-shadow: 4px 4px 0 0 var(--nr-shadow);
   padding: 16px;
   margin: 1em 0;
 }
@@ -1620,6 +1705,6 @@ body.nr-print-page .md-content {
      into the 288px content area; tighter padding. */
   .mermaid {
     padding: 10px;
-    box-shadow: 2px 2px 0 0 var(--md-default-fg-color);
+    box-shadow: 2px 2px 0 0 var(--nr-shadow);
   }
 }

@@ -11,7 +11,7 @@ this guide targets — earlier versions get some legacy telemetry via
 `step_callback` / `task_callback` instead):
 
 ```bash title="shell"
-pip install "nullrun[crewai]"
+pip install nullrun crewai
 ```
 
 The current patch subscribes to the crewai `EventBus` and translates

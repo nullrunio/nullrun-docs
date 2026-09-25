@@ -58,7 +58,7 @@ If you use the zero-boilerplate helpers from the SDK, you don't have
 to write any of this — `with nullrun.handle():` catches the standard
 exceptions (including the kill signal), prints the structured
 four-line developer report, and exits 1. To handle kill distinctly,
-use the un-`@guarded` `protect()` form.
+use bare `@protect` with an explicit `except NullRunWorkflowKilledError:` arm.
 
 ## When the gateway is unreachable
 

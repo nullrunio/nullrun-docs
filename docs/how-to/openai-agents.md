@@ -1,6 +1,6 @@
 ---
 title: Openai Agents
-description: Install the nullrun[agents] extra and gate every tool call from an OpenAI Agents SDK workflow.
+description: Install nullrun alongside the OpenAI Agents SDK and gate every tool call from an Agents workflow.
 ---
 
 # Use with OpenAI Agents
@@ -9,7 +9,7 @@ Install (the OpenAI Agents framework hook is the only one that
 needs a vendor package — `openai-agents`):
 
 ```bash title="shell"
-pip install "nullrun[agents]" openai-agents
+pip install nullrun openai-agents
 ```
 
 Wrap the `Runner.run_sync` call (or any sync / async runner) with

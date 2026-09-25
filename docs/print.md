@@ -68,19 +68,21 @@ Sign in at [nullrun.io](https://nullrun.io), open **API keys**, and create a key
 
 ```python title="app.py"
 from openai import OpenAI
-from nullrun import guarded, protect, workflow, shutdown
+from nullrun import protect, workflow, shutdown, handle
 
 client = OpenAI()
 
 with workflow("my-first-agent"):       # scopes the gate to a workflow
-    @guarded                           # catches NullRunError, prints
     @protect                           # the catalog user-message,
-    def answer(prompt: str) -> str:    # sys.exit(1) — zero boilerplate
+    def answer(prompt: str) -> str:    # routes every call through /gate
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
         )
         return response.choices[0].message.content
+
+# Wrap the call site in `with nullrun.handle():` to get the
+# structured 4-line developer report on failure (sys.exit(1)).
 
 if __name__ == "__main__":
     try:
@@ -157,12 +159,11 @@ Wrap any function with **`@nullrun.protect`** to track its cost, tools, and beha
 
 ```python title="app.py"
 from openai import OpenAI
-from nullrun import guarded, protect, workflow, shutdown
+from nullrun import protect, workflow, shutdown, handle
 
 client = OpenAI()
 
 with workflow("my-first-agent"):
-    @guarded
     @protect
     def answer(prompt: str) -> str:
         response = client.chat.completions.create(
@@ -170,9 +171,14 @@ with workflow("my-first-agent"):
             messages=[{"role": "user", "content": prompt}],
         )
         return response.choices[0].message.content
+
+
+if __name__ == "__main__":
+    with handle():
+        print(answer("hello"))
 ```
 
-Every call inside `answer()` is cost-attributed and governed by your workspace policy. On any policy outcome (budget cap, tool block, rate limit, transport outage), `@guarded` prints the catalog wording on stderr and exits `1`.
+Every call inside `answer()` is cost-attributed and governed by your workspace policy. On any policy outcome (budget cap, tool block, rate limit, transport outage), `with nullrun.handle():` prints the catalog wording on stderr and exits `1`.
 
 ### What gets tracked
 
@@ -383,15 +389,19 @@ nullrun.on_error(my_error_handler)
 
 The hook fires for every SDK-raised exception before it bubbles up.
 
-### Layer 3 — `@guarded` + `format_user_message`
+### Layer 3 — `with nullrun.handle():` + `format_user_message`
 
-The zero-boilerplate path. `@guarded` catches every SDK exception, formats a user-friendly message with `format_user_message`, prints it to stderr, and exits `1`.
+The zero-boilerplate path. `with nullrun.handle():` catches every SDK exception inside the block, formats a user-friendly message with `format_user_message`, prints it to stderr, and exits `1`.
 
 ```python
-@guarded
 @protect
 def answer(prompt):
     ...
+
+
+if __name__ == "__main__":
+    with handle():
+        answer(user_input)
 ```
 
 For programmatic use, `format_user_message(exc)` returns a single-line string suitable for showing to an end user.
@@ -671,8 +681,8 @@ The Python SDK exposes the following public surface:
 | `init_or_die(api_key, ...)` | Same as `init()`, but `sys.exit(1)` if the key is missing or invalid. |
 | `shutdown()` | Flush pending telemetry, close HTTP pool. Idempotent. |
 | `workflow(name)` | Context manager. Binds every `@protect` call inside to `name`. |
-| `protect(fn=None, *, tool_name=None)` | Decorator. Wraps `fn` so every call passes through `/gate`. |
-| `guarded(fn=None)` | Decorator. Catches `NullRunError`, prints user message, `sys.exit(1)`. |
+| `protect(fn=None)` | Decorator. Wraps `fn` so every call passes through `/gate`. Takes no kwargs. |
+| `handle(*, exit_code=1)` | Context manager. Catches `NullRunError` inside the block, prints user message, `sys.exit(exit_code)`. |
 
 ### Exceptions
 
@@ -782,7 +792,7 @@ The workflow has hit its budget cap. Two options:
 
 ### `RateLimitError` with `retry_after` set
 
-You're calling too fast. The SDK surfaces `.retry_after` (seconds) on the exception. The default handler `@guarded` honours it.
+You're calling too fast. The SDK surfaces `.retry_after` (seconds) on the exception. The default handler `with nullrun.handle():` honours it.
 
 ### Gateway timeout (`NullRunTransportError`)
 

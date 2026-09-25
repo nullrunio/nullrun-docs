@@ -98,23 +98,23 @@ naming the three most likely root causes — no spam, warn-once.
 The plain `pip install nullrun` package covers every LLM provider
 (OpenAI, Anthropic, Mistral, Gemini, Cohere, Bedrock) via URL-keyed
 httpx extractors — those vendor SDKs are **never imported** by
-NullRun. The extras below are only needed when NullRun has to call
-into the vendor package directly (framework hooks, not HTTP hooks).
+NullRun. Framework hooks for LangGraph / CrewAI / OpenAI Agents /
+LangChain / LlamaIndex / AutoGen auto-attach at runtime when the
+framework package is installed in the same environment as `nullrun`;
+no install extra is needed.
 
 | Extra | Installs | When you need it |
 | --- | --- | --- |
-| `nullrun[agents]` | `openai-agents` | OpenAI Agents SDK framework hook |
-| `nullrun[crewai]` | `crewai` | CrewAI EventBus bridge |
-| `nullrun[langgraph]` | `langgraph` | LangGraph Pregel runtime hook |
-| `nullrun[llama-index]` | `llama-index-core` | LlamaIndex dispatcher hook |
-| `nullrun[autogen]` | `autogen-agentchat`, `autogen-ext[openai]` | AutoGen runtime hook |
-| `nullrun[langchain]` | `langchain-core` | LangChain callback manager hook |
 | `nullrun[opentelemetry]` | `opentelemetry-api`, `opentelemetry-sdk` | OTel span export |
-| `nullrun[fastapi]` | `fastapi`, `starlette`, `httpx` | Server-framework integration |
+| `nullrun[dev]` | `pytest`, `pytest-asyncio`, `respx`, `mypy`, `ruff`, `coverage` | Local development and CI |
+
+To pair NullRun with a framework hook, install the framework
+alongside `nullrun` — no extra is needed:
 
 ```bash title="shell"
-pip install "nullrun[langgraph]"
-pip install "nullrun[crewai]"
+pip install nullrun langgraph langchain-openai
+pip install nullrun crewai
+pip install nullrun openai-agents
 ```
 
 > **Extras that are no-ops:**

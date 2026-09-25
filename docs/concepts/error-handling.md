@@ -197,10 +197,9 @@ use the un-`handle()` form and add your own
 
 `handle()` is the recommended form: it gives a clearer scope,
 accepts an `exit_code` argument, and the four-line report is what it
-always renders. `@guarded` is the decorator equivalent of the same
-behaviour.
+always renders.
 
-`handle()` / `guarded()` are for scripts and one-shots. For
+`handle()` is for scripts and one-shots. For
 long-running services you want explicit handling — see
 [Server frameworks](#server-frameworks) below.
 
@@ -310,11 +309,11 @@ except NullRunError:
     log.error("agent failed", exc_info=True)
 ```
 
-`handle()` / `@guarded` catches kill via the standard `NullRunError`
+`handle()` catches kill via the standard `NullRunError`
 arm — it prints the structured four-line report and exits 1. To keep
 the process alive on kill (checkpoint, notify a supervisor, then
-exit), use the un-`@guarded` / un-`handle()` `protect()` form with
-your own `except NullRunWorkflowKilledError:` arm above.
+exit), use bare `@protect` with your own `except NullRunWorkflowKilledError:`
+arm above.
 
 ## See also
 
@@ -369,8 +368,8 @@ your own `except NullRunWorkflowKilledError:` arm above.
     per `infra::FailureMode`) instead of hanging 5–10s on
     `pool.acquire()`. The kill signal inherits from `NullRunError`,
     so `except Exception:` catches it alongside every other SDK
-    error; `handle()` / `@guarded` catch it via the standard
-    `NullRunError` arm and print the structured four-line developer
+    error; `with nullrun.handle():` catches it via the standard
+    `NullRunError` arm and prints the structured four-line developer
     report.
 
     Wire codes fall into three buckets: **decision** (block / allow /

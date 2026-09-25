@@ -35,20 +35,20 @@ SDK — TypeScript / JavaScript / Go have no equivalent.
 ## How-to
 
 - [Protect a LangGraph agent](https://docs.nullrun.io/how-to/langgraph/): auto-instrumentation + manual wrapper
-- [Use with OpenAI Agents](https://docs.nullrun.io/how-to/openai-agents/): `nullrun[agents]` extra
+- [Use with OpenAI Agents](https://docs.nullrun.io/how-to/openai-agents/): install nullrun alongside the OpenAI Agents SDK
 - [Use with FastAPI](https://docs.nullrun.io/how-to/fastapi/): request-scoped `workflow()`, error mapping
 - [LLM frameworks](https://docs.nullrun.io/how-to/llm-frameworks/): coverage matrix for OpenAI, Anthropic, Mistral, Gemini, Cohere, Bedrock, LangChain, LlamaIndex, CrewAI, AutoGen, raw openai SDK
 - [Set a hard cost cap](https://docs.nullrun.io/how-to/cost-cap/): per-workflow budget, alert thresholds
 - [Run multiple agents](https://docs.nullrun.io/how-to/multi-agent/): shared workflow, parent_trace_id propagation
 - [Multi-agent orchestration](https://docs.nullrun.io/how-to/multi-agent-orchestration/): sub-agents, kill propagation
 - [Stream responses](https://docs.nullrun.io/how-to/streaming/): `@protect`-decorated stream iterator
-- [Manual cost / event tracking](https://docs.nullrun.io/how-to/custom-tracking/): `track_llm`, `track_tool`, `track_event`
+- [Manual cost / event tracking](https://docs.nullrun.io/how-to/custom-tracking/): `track_llm`, `track_tool`, `track`
 - [CI / CD integration](https://docs.nullrun.io/how-to/ci-cd/): fail-CLOSED in CI, smoke-test scripts
 
 ## Reference
 
-- [SDK API](https://docs.nullrun.io/reference/sdk-api/): `@protect` (canonical), `@sensitive(impact=...)` (factory form), `workflow`, `chain`, exceptions, manual tracking
-- [Decorators & extractors](https://docs.nullrun.io/reference/decorators/): `@protect` (auto-attaches tool_params), `@sensitive(impact=...)` factory form, `@guarded`, `money_outflow`, `tool_params`, context managers, order of application
+- [SDK API](https://docs.nullrun.io/reference/sdk-api/): `@protect` (canonical, takes no parameters), `workflow`, `chain`, exceptions, manual tracking
+- [Decorators & context managers](https://docs.nullrun.io/reference/decorators/): `@protect`, `with nullrun.handle():`, `set_call_context`, context managers, order of application
 - [HTTP API](https://docs.nullrun.io/reference/http-api/): `/api/v1/gate`, `/api/v1/track`, `/api/v1/capabilities`, `/api/v1/heartbeat`, control-plane WebSocket
 - [Error codes](https://docs.nullrun.io/reference/errors/): `NR-B004`, `NR-T001`, `NR-R001`, full hierarchy + decision vs infrastructure
 - [LLM tool catalog](https://docs.nullrun.io/reference/llm-tool-catalog/): per-model pricing + capability flags

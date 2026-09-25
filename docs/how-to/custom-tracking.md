@@ -1,6 +1,6 @@
 ---
 title: Custom Tracking
-description: Manually report cost and events with track_llm, track_tool, and track_event when auto-instrumentation doesn't fit your runtime.
+description: Manually report cost and events with track_llm, track_tool, and track when auto-instrumentation doesn't fit your runtime.
 ---
 
 # Manual cost / event tracking
@@ -8,7 +8,7 @@ description: Manually report cost and events with track_llm, track_tool, and tra
 Most of the time auto-instrumentation handles cost tracking — the
 httpx transport hook reads `usage` from OpenAI / Anthropic / Gemini /
 Cohere responses and emits `track_llm` automatically. Use
-`track_llm`, `track_tool`, and `track_event` manually when:
+`track_llm`, `track_tool`, and `track` manually when:
 
 - your LLM client bypasses httpx (Bedrock via boto3, Cohere on a raw
   socket, an offline batch reading cached completions);
@@ -29,7 +29,7 @@ will fire and you'll double-count.
 | --- | --- | --- |
 | `track_llm(input_tokens, output_tokens, model, ...)` | Manual LLM cost | `input_tokens`, `output_tokens`; `model` recommended |
 | `track_tool(tool_name, duration_ms, ...)` | Manual tool cost | `tool_name` (must match `ToolBlock` patterns) |
-| `track_event(event_type, ...)` | Arbitrary observability | `event_type` (becomes a filterable category) |
+| `track({"type": ..., ...})` | Arbitrary observability | `type` (becomes a filterable event category) |
 
 Without `track_llm` the budget counter is never credited for the
 call — the next `/gate` may reject based on stale spend.
@@ -38,7 +38,7 @@ call — the next `/gate` may reject based on stale spend.
 
 ```python title="track_custom.py"
 import nullrun
-from nullrun import track_llm, track_tool, track_event
+from nullrun import track_llm, track_tool, track
 
 # After your custom LLM call returns:
 track_llm(
@@ -58,8 +58,8 @@ track_tool(
 )
 
 # Arbitrary business events:
-track_event("agent.milestone", step="research_complete", elapsed_secs=42)
-track_event("agent.error", code="validation_failed", field="email")
+track({"type": "agent.milestone", "step": "research_complete", "elapsed_secs": 42})
+track({"type": "agent.error", "code": "validation_failed", "field": "email"})
 ```
 
 `track_tool`'s `tool_name` flows through the policy engine — a
@@ -99,6 +99,6 @@ def call_custom_llm(prompt):
 
 ## See also
 
-- [SDK API → track_llm / track_tool / track_event](../reference/sdk-api.md#track_llm-manual-usage)
+- [SDK API → track_llm / track_tool / track](../reference/sdk-api.md#track_llm-manual-usage)
 - [LLM frameworks](../how-to/llm-frameworks.md) — non-httpx vendors
   (Bedrock, Cohere) that use manual tracking
