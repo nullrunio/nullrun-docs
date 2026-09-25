@@ -50,7 +50,7 @@ Pick the pattern that matches what you have today:
 
 ```python title="my_agent.py"
 from openai import OpenAI
-from nullrun import protect, shutdown
+from nullrun import protect
 
 client = OpenAI()
 
@@ -67,16 +67,15 @@ def answer(prompt: str) -> str:
     return response.choices[0].message.content
 
 
-# shutdown() flushes pending events and closes the WS cleanly
-# — register via atexit in production scripts.
+# `init()` auto-registers `shutdown()` via `atexit`, so a clean WS
+# close happens on process exit without any explicit call. For a
+# CLI script that wants fail-fast on missing config, call
+# `nullrun.init(fail_on_exit=True)` instead.
 if __name__ == "__main__":
-    try:
-        with nullrun.handle():
-            print(answer("What does NullRun do?"))
-            # handle() prints the structured 4-line developer report
-            # on any NullRunError, then sys.exit(1).
-    finally:
-        shutdown()
+    with nullrun.handle():
+        print(answer("What does NullRun do?"))
+        # handle() prints the structured 4-line developer report
+        # on any NullRunError, then sys.exit(1).
 ```
 
 Every call inside `answer()` is cost-attributed. `@protect` is the

@@ -47,11 +47,13 @@ The SDK reads `NULLRUN_API_KEY` on the first `@protect` call. The HMAC
 secret is **not** a constructor argument — it is read from
 `NULLRUN_SECRET_KEY` or returned by `/api/v1/auth/verify`.
 
-> **Explicit `init()` / `init_or_die()`.** The first `@protect` call
-> creates the runtime lazily from `NULLRUN_API_KEY`. Call `init()`
-> directly when you want fail-fast on a missing key before the first
-> gate call (CI / smoke tests), or to bind an API key from a non-env
-> source. See [Reference → init / init_or_die](../reference/sdk-api.md#init--init_or_die)
+> **Explicit `init()`.** The first `@protect` call creates the
+> runtime lazily from `NULLRUN_API_KEY`. Call `init()` directly when
+> you want fail-fast on a missing key before the first gate call
+> (CI / smoke tests), or to bind an API key from a non-env source.
+> CLI scripts that want a clean `sys.exit(1)` on missing config can
+> pass `init(fail_on_exit=True)`. See
+> [Reference → init](../reference/sdk-api.md#init)
 > for the contract.
 
 For env-var setup (`NULLRUN_API_KEY`, `NULLRUN_SECRET_KEY`, and other
@@ -109,17 +111,10 @@ no install extra is needed.
 | `nullrun[dev]` | `pytest`, `pytest-asyncio`, `respx`, `mypy`, `ruff`, `coverage` | Local development and CI |
 
 To pair NullRun with a framework hook, install the framework
-alongside `nullrun` — no extra is needed:
+alongside `nullrun`:
 
 ```bash title="shell"
 pip install nullrun langgraph langchain-openai
 pip install nullrun crewai
 pip install nullrun openai-agents
 ```
-
-> **Extras that are no-ops:**
-> `nullrun[openai]`, `nullrun[anthropic]`, `nullrun[mistral]`,
-> `nullrun[gemini]`, `nullrun[cohere]`, `nullrun[bedrock]` install
-> but do nothing today. The SDK never imports those vendor packages
-> for the HTTP-level path — URL-keyed httpx extractors cover all
-> six without any vendor install.

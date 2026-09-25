@@ -90,9 +90,10 @@ def call_custom_llm(prompt):
 
 - **Buffering**: `track_*` events don't go straight to the gateway —
   they buffer in the runtime's event batch and flush on the next
-  `@protect` call or `flush_interval_ms`. If your process exits
-  before the flush, the events are lost; call
-  `shutdown(flush=True)` in your `finally` block.
+  `@protect` call or `flush_interval_ms`. `init()` auto-registers
+  `nullrun.shutdown(flush=True)` via `atexit`, so a clean process
+  exit always drains the buffer; an explicit `finally` block only
+  matters for early teardown.
 - **Idempotency**: each `track_*` call gets a fresh UUID. Calling it
   twice with the same payload produces two events. For retries, gate
   the call yourself.

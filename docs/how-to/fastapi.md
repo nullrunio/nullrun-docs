@@ -5,11 +5,10 @@ description: Bind a FastAPI request to a NullRun workflow, propagate trace conte
 
 # Use with FastAPI
 
-Install with the FastAPI extra (pulls in `fastapi`, `starlette`, and
-the `httpx`-based transport the SDK needs at runtime):
+Install FastAPI alongside `nullrun`:
 
 ```bash title="shell"
-pip install "nullrun[fastapi]" fastapi uvicorn
+pip install nullrun fastapi uvicorn
 ```
 
 `nullrun.integrations.fastapi.install(app)` is a one-line setup that
@@ -139,8 +138,7 @@ response is returned.
 ## Per-deployment wording overrides
 
 To brand the wording for a single deployment, call
-`nullrun.set_user_message(...)` once at the top of your entry point
-(or register via `atexit`):
+`nullrun.set_user_message(...)` once at the top of your entry point:
 
 ```python
 nullrun.set_user_message(

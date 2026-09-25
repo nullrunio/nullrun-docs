@@ -26,8 +26,6 @@ llm = ChatOpenAI(model="gpt-4o-mini")
 def chat(state: MessagesState):
     return {"messages": [llm.invoke(state["messages"])]}
 
-# `StateGraph(MessagesState)` replaces the deprecated
-# `langgraph.graph.MessageGraph` (removed in langgraph 1.0).
 graph = StateGraph(MessagesState)
 graph.add_node("chat", chat)
 graph.add_edge("chat", END)

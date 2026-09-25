@@ -32,16 +32,16 @@ decision).
 | --- | --- | --- | --- |
 | OpenAI (`openai`) | ✅ | ✅ | `httpx` transport hook |
 | Anthropic (`anthropic`) | ✅ | ✅ | `httpx` transport hook |
-| OpenAI Agents (`openai-agents`) | ✅ | ✅ | `patch_openai_agents` |
+| OpenAI Agents (`openai-agents`) | ✅ | ✅ | `patch_openai_agents` (auto on first `@protect` call) |
 | Mistral (`mistralai`) | ✅ | ⚠️ extractor only | per-vendor extractor |
 | Gemini (`google-genai`) | ✅ | ⚠️ extractor only | per-vendor extractor |
 | Cohere (`cohere`) | ✅ | ⚠️ extractor only | per-vendor extractor |
 | AWS Bedrock (`boto3`) | ✅ | ⚠️ extractor only | `httpx` extractor on `bedrock-runtime.amazonaws.com` |
-| LangChain (`langchain`) | ✅ | ✅ | `patch_langchain_callback` |
+| LangChain (`langchain`) | ✅ | ✅ | `patch_langchain_callback` (auto on first `@protect` call) |
 | LangGraph (`langgraph`) | ✅ | ✅ | `patch_langgraph_compiled` (auto on first `@protect` call) |
-| LlamaIndex (`llama-index`) | ✅ | ⚠️ extractor only | `instrumentation.llama_index` |
-| CrewAI (`crewai`) | ✅ | ⚠️ extractor only | `instrumentation.crewai` |
-| AutoGen (`autogen-agentchat`) | ✅ | ⚠️ extractor only | `instrumentation.autogen` |
+| LlamaIndex (`llama-index`) | ✅ | ⚠️ extractor only | `instrumentation.llama_index` (auto on first `@protect` call) |
+| CrewAI (`crewai`) | ✅ | ⚠️ extractor only | `instrumentation.crewai` (auto on first `@protect` call) |
+| AutoGen (`autogen-agentchat`) | ✅ | ⚠️ extractor only | `instrumentation.autogen` (auto on first `@protect` call) |
 
 > "Tested end-to-end" means: a multi-roundtrip test exists that
 > verifies tokens flow from the vendor response into `/api/v1/track`.
@@ -58,9 +58,6 @@ hook you want — the framework hook attaches lazily on the first
 ```bash title="shell"
 pip install nullrun langgraph langchain-openai openai-agents crewai llama-index-core 'autogen-agentchat[openai]'
 ```
-
-The framework packages are installed independently of `nullrun` —
-no install extra, no `pyproject.toml` opt-in.
 
 ## How the httpx transport hook works
 

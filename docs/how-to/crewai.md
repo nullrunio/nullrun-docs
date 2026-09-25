@@ -5,18 +5,17 @@ description: Wrap CrewAI tools and tasks with @protect so the NullRun gate evalu
 
 # CrewAI
 
-Install (the SDK declares `crewai>=0.80,<2.0`; the EventBus
-subsystem used here was added in **CrewAI 1.15+**, which is what
-this guide targets — earlier versions get some legacy telemetry via
-`step_callback` / `task_callback` instead):
+Install (the SDK declares `crewai>=0.80,<2.0`; the guide targets
+**CrewAI 1.15+**, which exposes the EventBus subsystem used for
+lifecycle event tracking):
 
 ```bash title="shell"
 pip install nullrun crewai
 ```
 
-The current patch subscribes to the crewai `EventBus` and translates
-each lifecycle event into a `runtime.track_event` call. The runtime
-and the crewai EventBus hook are attached lazily on the first
+The patch subscribes to the crewai `EventBus` and translates each
+lifecycle event into a `nullrun.track(...)` call. The runtime and the
+crewai EventBus hook are attached lazily on the first
 `@protect` call:
 
 ```python title="crewai_crew.py"
@@ -53,8 +52,8 @@ metrics after kickoff — the SDK reports the canonical
 `(model, prompt_tokens, completion_tokens)` tuple on every billable
 row.
 
-When crewai's events module is not importable (pre-1.15 crewai or a
-stripped-down third-party build), only the per-event span bridge is
+When crewai's events module is not importable (a stripped-down
+third-party build), only the per-event span bridge is
 skipped; the post-run cost attribution still works.
 
 ## See also

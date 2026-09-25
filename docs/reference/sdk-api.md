@@ -20,28 +20,33 @@ Auto-instrumentation for httpx-based libraries (`openai`,
 ## Top-level
 
 ```python title="public_surface.py"
-from nullrun import init, init_or_die, protect, workflow, span, agent, chain, track_llm, track_tool, track
+from nullrun import init, protect, workflow, span, agent, chain, track_llm, track_tool, track
 ```
 
-### `init` / `init_or_die` {#init--init_or_die}
+### `init` {#init}
 
 The runtime is created lazily on the first `@protect` call from
-`NULLRUN_API_KEY` — most apps skip `init()` entirely. These helpers
-exist for the cases where you need early fail-fast before any
+`NULLRUN_API_KEY` — most apps skip `init()` entirely. `init()`
+exists for the cases where you need early fail-fast before any
 `@protect` call runs (CI / smoke tests, pre-flight validation, library
 authors wiring keys from a non-env source).
 
 | Helper | Behaviour | Use when |
 |---|---|---|
 | `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI). Library authors wiring an SDK key from a non-env source. |
-| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Catches the `NullRunAuthenticationError` exception, prints the catalog user-message to stderr, calls `sys.exit(exit_code)`. Returns the runtime otherwise. | One-shot scripts, CLI tools, smoke tests — anywhere a missing key is a hard error and you want a clean exit instead of a traceback. |
+| `init(api_key=None, api_url=None, debug=False, fail_on_exit=True)` | Prints the four-line developer report to stderr and calls `sys.exit(1)` if `api_key` is missing or env var unset. Otherwise identical to `init()`. | One-shot scripts, CLI tools, smoke tests — anywhere a missing key is a hard error and you want a clean exit instead of a traceback. |
 
-`init_or_die` is `init` plus a `try/except NullRunAuthenticationError → sys.exit(1)`. The `with nullrun.handle():` context manager does the same for callsite-level errors. Both helpers are also idempotent — calling `init()` twice returns the same singleton without re-running the lazy trigger.
+`init()` also auto-registers `nullrun.shutdown()` via `atexit`, so a
+clean WS close on process exit happens without an explicit call.
+Calling `shutdown()` manually remains safe and idempotent. The
+`with nullrun.handle():` context manager provides the same
+callsite-level error translation as `init(..., fail_on_exit=True)`,
+applied to a region of code rather than at startup. Calling `init()`
+twice returns the same singleton without re-running the lazy trigger.
 
 || Symbol | Purpose | In `__all__` |
 |---|---|---|---|
-| `init(api_key=None, api_url=None, debug=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
-| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Like `init` but exits cleanly with `exit_code` (default 1) if no API key is configured. See the table above. | ✅ |
+| `init(api_key=None, api_url=None, debug=False, fail_on_exit=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). With `fail_on_exit=True`, missing config prints the developer report and `sys.exit(1)` instead of raising. The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
 | `@protect` | Wrap a function for **gate** enforcement (control plane / budget / span / per-tool policy). Takes no kwargs. Every call routes through `/execute`; the backend decides allow / block / require-approval. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — ships `tool_name + args + kwargs` on the wire for every protected call. Wrap the call site in `with nullrun.handle():` for the structured 4-line dev report on failure. | ✅ |
 | `with nullrun.handle(*, exit_code=1):` | Context manager for friendly exit — catches any `NullRunError` raised inside the block, renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
@@ -56,7 +61,7 @@ authors wiring keys from a non-env source).
 | `format_user_message(exc)` | Render a `NullRunError` as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. | ✅ |
 | `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
 | `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
-| `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads. Safe to register via `atexit`. | ✅ |
+| `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads. Auto-registered with `atexit` inside `init()`, so long-running scripts get a clean WS close on process exit without an explicit call. Calling it manually is safe and idempotent. | ✅ |
 | `status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. Raises `NullRunConfigError` with `error_code="NR-C004"` if the runtime hasn't been initialised yet. | ✅ |
 
 Rows marked **lazy** are exposed under `nullrun.*` via `__getattr__`
@@ -134,7 +139,7 @@ below for `set_user_message` / `get_user_message` usage.
 The curated public surface in `dir(nullrun)` is the `__all__` list
 in `nullrun/__init__.py`: `__version__`, `init`, `protect`,
 `shutdown`, `on_error`, `status`, `format_user_message`,
-`set_user_message`, `handle`, `init_or_die`, plus the
+`set_user_message`, `handle`, plus the
 structured exception names `NullRunError`, `NullRunAuthError`,
 `NullRunConfigError`, `NullRunBackendError`, `NullRunBudgetError`,
 `NullRunToolBlockedError`, `WorkflowKilledInterrupt`, and the
@@ -190,8 +195,7 @@ from nullrun.breaker.exceptions import (
 )
 
 # init() is OPTIONAL — the first protect(...) below creates the
-# runtime lazily from NULLRUN_API_KEY. See
-# init / init_or_die above.
+# runtime lazily from NULLRUN_API_KEY. See `init` above.
 
 try:
     step()

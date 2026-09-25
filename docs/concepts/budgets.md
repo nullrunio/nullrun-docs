@@ -219,12 +219,9 @@ unavailable", never as `≈ $0 spent`.
     concurrent chains share one org overdraft counter — they do NOT
     multiply the cap.
 
-    The pre-ADR-026 path computed the period inside Lua via
-    `HGET polar:{org}` and a `2629800`-month approximation and was
-    REMOVED (ADR-026 / v3.64) because pre-ADR-026 callers could land
-    on different period buckets across `/gate` and `/track` for the
-    same execution (e.g. gate at 23:59:59, track at 00:00:01); the
-    binding-as-source-of-truth path eliminates that drift. The
+    The period-start is bound from the `org.billing.period_start`
+    column at reservation time (ADR-026), so `/gate` and `/track` for
+    the same execution always land on the same period bucket. The
     `ApproximateBudget` three-tier fallback (Redis → Postgres →
     last-known) was chosen over a single source because Redis can be
     unavailable during a period rollover and Postgres outbox lag is

@@ -112,7 +112,7 @@ required.
 
 | Helper | Catches | For |
 |---|---|---|
-| `init_or_die(api_key=...)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
+| `init(api_key=..., fail_on_exit=True)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
 | `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) — **recommended** form |
 
 Both helpers propagate non-`NullRunError` exceptions (anything

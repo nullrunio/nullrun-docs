@@ -183,76 +183,67 @@ a call you think should be allowed:
 
 !!! info "Deep dive"
 
-    ToolBlock policies flow through `check_tool_block`
-    (`backend/src/proxy/http/gate/orchestrator.rs`), which resolves
-    the canonical tool list as `effective_tools = req.tools ++
-    req.tool` (TB-1/TB-2/TB-3/TB-4 fail-CLOSED trajectory) — singular
-    `tool` is treated as the primary tool when `tools` is absent or
-    empty. The helper looks up the per-key `KeyPolicy.tool_patterns`
-    (set by the aggregator at `aggregate_policies` walking the
-    canonical `tool_pattern` / `blocked_tools` / `tools` keys) and
-    runs `glob_match` for every entry. `glob_match_single` handles
-    single-`*` patterns; `glob_match_multi` splits on every `*` and
-    requires each non-empty literal segment to appear in order
-    (v3.39 / DEF-POLFLOW-TB-06). On match, the orchestrator returns
-    `Block { TOOL_BLOCKED }` with `details.matched_pattern` so the
-    audit log records exactly which pattern fired; the bridge at
-    `alert/bridges.rs::dispatch_policy_violation_alert` spawns a
-    detached task so a missing db handle never blocks the gate
-    response. The tool name validation at `validate_tool_name`
-    rejects control / newline bytes on BOTH the singular `tool` and
-    every entry of `tools[]` (DEF-SDKT-002) BEFORE the policy check
-    runs.
+    ToolBlock policies flow through `check_tool_block`, which
+    resolves the canonical tool list as
+    `effective_tools = req.tools ++ req.tool` (TB-1/TB-2/TB-3/TB-4
+    fail-CLOSED trajectory) — singular `tool` is treated as the
+    primary tool when `tools` is absent or empty. The helper
+    looks up the per-key `KeyPolicy.tool_patterns` (set by the
+    aggregator at `aggregate_policies` walking the canonical
+    `tool_pattern` / `blocked_tools` / `tools` keys) and runs
+    `glob_match` for every entry. `glob_match_single` handles
+    single-`*` patterns; `glob_match_multi` splits on every `*`
+    and requires each non-empty literal segment to appear in
+    order. On match, the orchestrator returns
+    `Block { TOOL_BLOCKED }` with `details.matched_pattern` so
+    the audit log records exactly which pattern fired; the bridge
+    at `dispatch_policy_violation_alert` spawns a detached task
+    so a missing db handle never blocks the gate response. The
+    tool name validation at `validate_tool_name` rejects control /
+    newline bytes on BOTH the singular `tool` and every entry of
+    `tools[]` BEFORE the policy check runs.
 
     ToolBlock is ALWAYS Hard, regardless of `enforcement_mode`
     (CLAUDE.md §8). The orchestrator's Step 3 runs before the budget
     reserve, so a blocked tool never gets a budget envelope minted
     — the agent never runs an unverified sensitive operation.
     Pattern length is capped at **4096 bytes per entry**
-    (`MAX_POLICY_PATTERN_BYTES`,
-    `backend/src/proxy/http/validation.rs`); the cap exists because
-    the matcher scans every pattern on every gate call. The
-    validator rejects four fail-OPEN traps at policy creation:
-    `tool_pattern: ""` (DEF-POLBIZ-06-02), `tool_pattern: []`
-    (DEF-POLBIZ-06-01), `config: {}` (DEF-POLBIZ-06-03), and the
-    PLURAL `tool_patterns` key (DEF-COMBOFLOW-TB-01, closure
-    2026-08-10). The canonical key set is exactly
-    `{tool_pattern, blocked_tools, tools}` — any other key (typo like
-    `block_tools`, `tools_block`, `blocked_tool`) is rejected with a
-    `BadFormat` error (DEF-TS99-001, 2026-09-16), and the matcher is
-    case-insensitive against the canonical tool name (CLAUDE.md §8).
+    (`MAX_POLICY_PATTERN_BYTES`, `validation`); the cap exists
+    because the matcher scans every pattern on every gate call.
+    The validator rejects four fail-OPEN traps at policy creation:
+    `tool_pattern: ""`, `tool_pattern: []`, `config: {}`, and the
+    PLURAL `tool_patterns` key. The canonical key set is exactly
+    `{tool_pattern, blocked_tools, tools}` — any other key (typo
+    like `block_tools`, `tools_block`, `blocked_tool`) is rejected
+    with a `BadFormat` error, and the matcher is case-insensitive
+    against the canonical tool name (CLAUDE.md §8).
 
     Glob variants: `*` alone matches everything; `bash.*`
     smart-matches `bash` AND `bash.foo` / `bash.foo.bar` (templates
     ship this shape); `send_*` matches anything starting with
     `send_`; `*.drop_*` matches `s3.drop_table` because the
     multi-`*` matcher takes literal segments in order. Alternation
-    via `|` (`bash|sh|shell` collapses three patterns into one entry
-    in `orchestrator.rs`); no `**`, no `?`, no character classes —
-    those are rejected as literals. The aggregator HashSet-dedups
-    trimmed entries (TB-H2 closure, 2026-08-12) so `"bash"` and
-    `"bash "` (trailing space) collapse to one — purely a cache-bloat
-    fix, no semantic change. `check_tool_block` runs inside
+    via `|` (`bash|sh|shell` collapses three patterns into one
+    entry); no `**`, no `?`, no character classes — those are
+    rejected as literals. The aggregator HashSet-dedups
+    trimmed entries so `"bash"` and `"bash "` (trailing space)
+    collapse to one. `check_tool_block` runs inside
     `run_gate_orchestrator` Step 3, BEFORE Step 5 rate-limit and
     Step 9 budget reserve; a blocked tool never reaches the Lua
     `RESERVE` call.
 
-    Two designs were rejected. (1) **Pre-TB-1 fail-OPEN on missing
-    `tools`** — pre-fix, an SDK omitting the `tools` field while the
-    key had active `tool_patterns` slipped past `check_tool_block`
-    and proceeded to the budget reserve; the fix made the
-    absent-`tools` path fail-CLOSED whenever `tool_patterns` is
-    non-empty. (2) **Globbing the JSON config's argument bag** — the
-    matcher operates on the canonical tool name only
-    (`glob_match_does_not_look_at_tool_arguments`,
-    `orchestrator.rs`); operators do NOT write JSONPath rules over
-    tool payloads (CLAUDE.md §"What is NOT stored"). Per-policy
-    `action = require_approval` was rejected because the two rule
-    types have distinct config shapes; a ToolBlock policy never
-    produces `require_approval`. The 4096-byte cap was chosen
-    because a 10 MB pattern would burn CPU on every gate call —
-    4096 is the longest real-world pattern observed in templates +
-    operator overrides.
+    On the absent-`tools` path: when an SDK omits the `tools`
+    field and the key has active `tool_patterns`, the gate fails
+    CLOSED (`check_tool_block` runs). The matcher operates on the
+    canonical tool name only
+    (`glob_match_does_not_look_at_tool_arguments`); operators do
+    NOT write JSONPath rules over tool payloads (CLAUDE.md §"What
+    is NOT stored"). A ToolBlock policy never produces
+    `require_approval` because the two rule types (ToolBlock and
+    approval rule) have distinct config shapes. The 4096-byte
+    cap sits at the longest real-world pattern observed in
+    templates + operator overrides — a 10 MB pattern would burn
+    CPU on every gate call.
 
     `ToolBlock` policies are gated to **Growth+** plans (Lite /
     Starter cannot create them; the dashboard greys out creation

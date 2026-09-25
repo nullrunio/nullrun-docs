@@ -351,7 +351,7 @@ re-checks the digest on `/execute` and refuses on mismatch.
 | Audit log read | `runtime.audit.list(AuditQuery(event_type=..., since=..., limit=...))` |
 | Global error hook (Sentry, OTel) | `nullrun.on_error(my_handler)` — returns an idempotent unregister callable |
 | Snapshot runtime state | `nullrun.status()` — frozen `NullRunStatus` dataclass |
-| Graceful exit (WS close, flush events) | `nullrun.shutdown()` or `nullrun.shutdown(flush=False)` in tests |
+| Graceful exit (WS close, flush events) | `nullrun.shutdown()` — auto-registered via `atexit` inside `init()`; explicit calls only matter for tests (`shutdown(flush=False)`) or for early teardown |
 
 ---
 
@@ -377,17 +377,16 @@ def researcher(q):
 
 # ─── Top-level script entry with friendly exit (handle() preferred) ───
 import nullrun
-from nullrun import protect, shutdown
+from nullrun import protect
 
 @protect
 def main(prompt): ...
 
 if __name__ == "__main__":
-    try:
-        with nullrun.handle():               # canonical — 4-line report + exit 1
-            print(main("hello"))
-    finally:
-        shutdown()
+    with nullrun.handle():               # canonical — 4-line report + exit 1
+        print(main("hello"))
+# shutdown() is auto-registered via atexit inside init() —
+# no explicit call is needed for a clean WS close on exit.
 
 # ─── Full layering: chain → workflow → call context → @protect ───
 # The runtime is created lazily on the first @protect call.

@@ -68,7 +68,7 @@ Sign in at [nullrun.io](https://nullrun.io), open **API keys**, and create a key
 
 ```python title="app.py"
 from openai import OpenAI
-from nullrun import protect, workflow, shutdown, handle
+from nullrun import protect, workflow, handle
 
 client = OpenAI()
 
@@ -83,12 +83,10 @@ with workflow("my-first-agent"):       # scopes the gate to a workflow
 
 # Wrap the call site in `with nullrun.handle():` to get the
 # structured 4-line developer report on failure (sys.exit(1)).
+# `shutdown()` is auto-registered via `atexit` inside `init()`.
 
 if __name__ == "__main__":
-    try:
-        print(answer("What does NullRun do?"))
-    finally:
-        shutdown()
+    print(answer("What does NullRun do?"))
 ```
 
 > The `with workflow("..."):` block binds every `@protect` call inside to a named workflow — required, otherwise the SDK falls back to an ad-hoc `workflow_id` with no budget policy attached. For production, the workflow name should match the dashboard workflow your API key is bound to.
@@ -471,7 +469,7 @@ async def ask(prompt: str):
         return await call_openai(prompt)
 ```
 
-The `lifespan` block ensures `init()` runs once at startup and `shutdown()` flushes pending telemetry at shutdown. The `workflow("ask-api")` context scopes all calls inside the request handler to the `ask-api` workflow in the dashboard.
+The `lifespan` block ensures `init()` runs once at startup and `shutdown()` flushes pending telemetry at shutdown. `shutdown()` is also auto-registered via `atexit` inside `init()`, so the explicit `lifespan` call is a clean shutdown trigger before the atexit hook would fire on process exit. The `workflow("ask-api")` context scopes all calls inside the request handler to the `ask-api` workflow in the dashboard.
 
 ## 3.2 Set a hard cost cap
 
@@ -677,9 +675,8 @@ The Python SDK exposes the following public surface:
 
 | Name | Purpose |
 | --- | --- |
-| `init(api_key, api_url=None, debug=False)` | Bootstrap the SDK. Idempotent. |
-| `init_or_die(api_key, ...)` | Same as `init()`, but `sys.exit(1)` if the key is missing or invalid. |
-| `shutdown()` | Flush pending telemetry, close HTTP pool. Idempotent. |
+| `init(api_key, api_url=None, debug=False, fail_on_exit=False)` | Bootstrap the SDK. Idempotent. With `fail_on_exit=True`, prints the developer report and `sys.exit(1)` on missing config instead of raising. |
+| `shutdown()` | Flush pending telemetry, close HTTP pool. Idempotent. Auto-registered via `atexit` inside `init()`. |
 | `workflow(name)` | Context manager. Binds every `@protect` call inside to `name`. |
 | `protect(fn=None)` | Decorator. Wraps `fn` so every call passes through `/gate`. Takes no kwargs. |
 | `handle(*, exit_code=1)` | Context manager. Catches `NullRunError` inside the block, prints user message, `sys.exit(exit_code)`. |

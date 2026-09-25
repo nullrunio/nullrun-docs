@@ -22,7 +22,7 @@ from langgraph.graph import END, StateGraph
 from langchain_openai import ChatOpenAI
 
 import nullrun
-from nullrun import protect, workflow, shutdown
+from nullrun import protect, workflow
 
 # The first @protect call lazily creates the runtime from
 # NULLRUN_API_KEY and patches the LangGraph Pregel hook.

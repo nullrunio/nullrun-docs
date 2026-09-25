@@ -10,7 +10,7 @@ behaviour, and let NullRun halt it when it goes off the rails.
 
 ```python title="app.py"
 from openai import OpenAI
-from nullrun import protect, workflow, shutdown
+from nullrun import protect, workflow
 
 client = OpenAI()
 
@@ -24,12 +24,9 @@ with workflow("my-first-agent"):       # scopes the gate to a workflow
         return response.choices[0].message.content
 
 if __name__ == "__main__":
-    try:
-        with nullrun.handle():        # catches NullRunError, prints the
-            print(answer("What does NullRun do?"))
-            # structured 4-line developer report on failure, then sys.exit(1)
-    finally:
-        shutdown()
+    with nullrun.handle():        # catches NullRunError, prints the
+        print(answer("What does NullRun do?"))
+        # structured 4-line developer report on failure, then sys.exit(1)
 ```
 
 > **First `@protect` call builds the runtime.** It reads
@@ -39,8 +36,7 @@ if __name__ == "__main__":
 > (NR-C001) at the first gate call.
 
 > **`@protect` is the entry point.** For early fail-fast (CI / smoke
-> tests) before the first `@protect` call, see [Reference → init /
-> init_or_die](../reference/sdk-api.md#init--init_or_die).
+> tests) before the first `@protect` call, see [Reference → init](../reference/sdk-api.md#init).
 
 > The `with workflow("..."):` block binds every `@protect` call inside
 > to a named workflow — required, otherwise the SDK falls back to an

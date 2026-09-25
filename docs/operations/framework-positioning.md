@@ -61,10 +61,9 @@ SDK README:
 - **Hard budget gate.** Redis Lua `reserve_v3.lua` reserves cents
   atomically against the period-bound counter
   `org:{org_id}:bp:{period_start_ts}:cost_cents` (with a parallel
-  `cost_millicents` precision counter — 1 cent = 1 000 millicents;
-  see `backend/src/redis/scripts/reserve_v3.lua:327,331`) before
-  the LLM/tool call. Server fails-CLOSED on Redis outage (402
-  `BUDGET_REDIS_UNAVAILABLE`), never on the client.
+  `cost_millicents` precision counter — 1 cent = 1 000 millicents)
+  before the LLM/tool call. Server fails-CLOSED on Redis outage
+  (402 `BUDGET_REDIS_UNAVAILABLE`), never on the client.
   ([Performance & limits → Redis failure](performance.md#redis-failure))
 - **Tool policy.** Declarative `ToolBlock` patterns + `approval_rules`.
   Block / allow / require_approval are server-side decisions; the SDK
@@ -443,7 +442,7 @@ editing, update the date and add a row below.
 | Hash chain only on `audit_events` (4-table separation) | `docs/adr/ADR-009-canonical-governance-audit-model.md:71` | ✅ verified |
 | v3.75 refusal-as-evidence (every gate decision leaves a row) | `backend/tests/audit_chain_e2e_tests.rs:197,235`; `backend/src/audit/governance.rs:255` | ✅ verified |
 | httpx transport hook covers ~95% of LLM traffic | `nullrun-sdk-python/src/nullrun/instrumentation/auto.py:10-11` | ✅ verified |
-| LangGraph auto-patch on first `@protect` / `init_or_die()` | `auto.py:1530-1845` (`patch_openai_agents`, `patch_langgraph_compiled`, `patch_crewai`, `patch_autogen`) | ✅ verified |
+| LangGraph auto-patch on first `@protect` | `auto.py:1530-1845` (`patch_openai_agents`, `patch_langgraph_compiled`, `patch_crewai`, `patch_autogen`) | ✅ verified |
 | LangGraph `interrupt()` + `Command(resume=...)` | [LangGraph Interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts); [skakarh.com (Jul 2026)](https://www.skakarh.com/blog/langgraph-human-in-the-loop) | ✅ verified |
 | Static `interrupt_before`/`interrupt_after` deprecated for HITL | [LangGraph Interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts) ("Static interrupts … are not recommended for HITL workflows") | ✅ verified |
 | LangChain AgentExecutor → LangGraph migration recommended | [LangChain v1.0 blog (Oct 2025)](https://www.langchain.com/blog/langchain-langgraph-1dot0); [Migrating Classic LangChain Agents](https://dev.to/focused_dot_io/migrating-classic-langchain-agents-to-langgraph-a-how-to-nea) | ✅ verified |

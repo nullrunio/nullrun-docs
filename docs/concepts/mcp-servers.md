@@ -139,10 +139,11 @@ that qualify as drift:
    someone added tools without re-probing. Write approval rules
    for any destructive verb before they are used.
 2. **`disappeared` mismatch with prior SDK activity** — the
-   probe once succeeded AND the SDK used to call this source, but
-   the calls have stopped in the last 30 days. Usually means an
-   upstream server upgrade. Review to confirm it isn't the agent
-   silently failing over to a different server.
+   probe succeeded at least once AND the SDK has called this
+   source before, but the calls have stopped in the last 30
+   days. Usually means an upstream server upgrade. Review to
+   confirm it isn't the agent silently failing over to a
+   different server.
 3. **`schema_drift === true`** — an action's input schema (keys
    and types of its argument bag) changed within the window. Pin
    the new schema before allowing the action.
@@ -181,65 +182,57 @@ probe scheduler on it.
 !!! info "Deep dive"
 
     The page is one row per Action Source (`mcp://<server_name>`),
-    not two parallel surfaces. ADR-007 collapsed the prior
-    "registry vs observation" split — the operator thinks in
-    Action Sources, not in two underlying tables. Each row has a
-    `verification` block (operator-registered
+    not two parallel surfaces — the operator thinks in Action
+    Sources, not in two underlying tables. Per ADR-007, each row
+    has a `verification` block (operator-registered
     `mcp_discovery_configs`) and an `observation` block
     (SDK-driven `mcp_observed_tools`).
 
     The list endpoint is
-    `GET /api/v1/orgs/:org_id/action-sources`
-    (`proxy/http/routes.rs`, ADR-007), wired to
-    `list_active_action_sources_handler` in
-    `proxy/http/mcp/active_action_sources.rs`. The SQL is one
+    `GET /api/v1/orgs/:org_id/action-sources` (ADR-007), wired
+    to `list_active_action_sources_handler`. The SQL is one
     INNER + LEFT JOIN with a 30-day `window_days` filter;
     orphans (observed but not registered) surface in a separate
     "Discovered but not registered" panel via
     `list_discovered_only_per_org`. A new row only appears once
-    the operator registers or enrolls — the runtime is forbidden
-    from silently materialising registered entries (page mirrors
-    the operator's world, not the SDK's).
+    the operator registers or enrolls — the runtime does not
+    silently materialise registered entries (page mirrors the
+    operator's world, not the SDK's).
 
-    Discovery probe (`proxy/http/mcp/discovery_probe.rs`) is a
-    synchronous JSON-RPC handshake against the MCP Streamable
-    HTTP transport: `POST initialize` (`Accept:
-    application/json, text/event-stream`, JSON-only — refuse
-    parser maintenance burden) then `POST tools/list`, with a
-    10s wall-clock timeout (`PROBE_TIMEOUT`). Per the
-    user-facing Commit 1 plan (sync probe + hard timeout), no
-    async job queue is spawned here — that's a Commit 4 concern.
-    The `ProbeScheduler` (`probe_scheduler.rs`) wakes every 60s
-    (`DEFAULT_SWEEP_INTERVAL_SECONDS`), skip-the-first-tick on
-    boot, and re-probes any server whose `poll_interval_seconds`
-    has elapsed. The per-row cadence lives on the column; the
-    constant governs how often the table is consulted.
+    Discovery probe is a synchronous JSON-RPC handshake against
+    the MCP Streamable HTTP transport: `POST initialize` (`Accept:
+    application/json, text/event-stream`, JSON-only) then
+    `POST tools/list`, with a 10s wall-clock timeout
+    (`PROBE_TIMEOUT`). No async job queue is spawned here. The
+    `ProbeScheduler` wakes every 60s
+    (`DEFAULT_SWEEP_INTERVAL_SECONDS`), skips the first tick
+    on boot, and re-probes any server whose
+    `poll_interval_seconds` has elapsed. The per-row cadence
+    lives on the column; the constant governs how often the
+    table is consulted.
 
-    The observation helper
-    (`observation.rs::record_observation`) is fire-and-forget
-    from the gate: `tokio::spawn`'d so /check latency is
-    untouched. UPSERT is
+    The observation helper (`record_observation`) is
+    fire-and-forget from the gate: `tokio::spawn`'d so /check
+    latency is untouched. UPSERT is
     `ON CONFLICT (organization_id, server_name, tool_name) DO UPDATE`
     that bumps `call_count` and `last_seen_at = NOW()`, with
     `COALESCE(EXCLUDED.api_key_id, …)` preserving the
     FIRST-seen audit-bound key.
 
-    Signature hashes live in
-    `proxy/http/mcp/signature.rs::compute_schema_hash` —
-    SHA-256 of the canonicalised argument-bag SHAPE (keys
-    sorted lexicographically, type tags only, NOT values). So
+    Signature hashes — `compute_schema_hash` is SHA-256 of
+    the canonicalised argument-bag SHAPE (keys sorted
+    lexicographically, type tags only, NOT values). So
     `{"x": 1}` and `{"x": "1"}` are different schemas (integer
     vs string), but `{"a": 1, "b": 2}` and `{"b": 2, "a": 1}`
     collapse to the same digest.
     `compute_description_hash` is literal SHA-256 of the
     description text — whitespace matters; a trailing space is
-    drift. The drift detector
-    (`drift_worker.rs::find_drifts`) returns `(org, server,
-    tool)` triples whose distinct `(schema_hash,
+    drift. The drift detector (`find_drifts`) returns `(org,
+    server, tool)` triples whose distinct `(schema_hash,
     description_hash)` count is `>1` within the window. Opt-in
-    via `NULLRUN_MCP_SIGNATURE_DRIFT=1` — default OFF (legacy):
-    the system still records every signature row, the cron
-    that emits the alert just doesn't run.
+    via `NULLRUN_MCP_SIGNATURE_DRIFT=1` — default OFF: the
+    system still records every signature row, the cron that
+    emits the alert just doesn't run.
 
     Probe timeout 10s — fits inside the typical 30-60s upstream
     keep-alive window so a slow server surfaces as
@@ -256,7 +249,7 @@ probe scheduler on it.
     Probe transport is allow-listed — `http://` and `https://`
     only; `stdio://`, `file://`, anything else returns
     `ProbeError::UnsupportedTransport` at the wire boundary
-    (`discovery_registration_handler::validate_transport_url`).
+    (`validate_transport_url`).
     `disappeared` with no prior SDK activity is NOT drift —
     there is no baseline to compare against; it renders as
     `N verification pending — not drift`, and the `Unverified`
@@ -264,10 +257,11 @@ probe scheduler on it.
 
     Three drift states are surfaced on the Drift card:
     `unannounced` (SDK called tools not in last probe catalog),
-    `disappeared` (probe once succeeded AND SDK used to call,
-    no calls in 30d), and `schema_drift` (input schema
-    keys/types changed within window). The "Discovered but not
-    registered" panel renders orphans with an Enroll CTA that
+    `disappeared` (probe succeeded at least once AND SDK has
+    called this source before, no calls in 30d), and
+    `schema_drift` (input schema keys/types changed within
+    window). The "Discovered but
+    not registered" panel renders orphans with an Enroll CTA that
     pre-fills the source URL the SDK last used. The per-action
     `Create approval rule` deep link routes to
     `/control-center/policies/approval-rules?prefill_source=…&prefill_action=…`
@@ -277,19 +271,16 @@ probe scheduler on it.
     `Probe + observed` — distinguishing "what the upstream
     catalog says" from "what the SDK actually called".
 
-    Considered an SSE parser for the streaming MCP transport
-    and rejected for Commit 1 — maintainability burden
-    outweighs the functional gain at current scale. Considered
-    hashing values, not shape, and chose shape-only
-    canonicalisation so "value flipped" is not drift. The
-    canonicaliser is intentionally NOT RFC 8785 JSON
-    canonicalisation — the drift detector wants "shape changed",
-    not "bytes differ". Considered an async worker probe queue
-    and deferred — sync probe + 60s sweep is sufficient at
-    current traffic; queueing is a Commit 4 concern. Considered
-    two parallel surfaces (registry + observation) and chose
-    one Action Source row with two parallel sub-blocks —
-    ADR-007's mental-model refactor.
+    The SSE parser for the streaming MCP transport is out of
+    scope — the JSON-only transport keeps the parser maintenance
+    burden low. Shape-only canonicalisation keeps "value
+    flipped" from being treated as drift. The canonicaliser is
+    intentionally NOT RFC 8785 JSON canonicalisation — the
+    drift detector wants "shape changed", not "bytes differ".
+    Sync probe + 60s sweep handles the current scale without an
+    async worker probe queue. ADR-007 collapses registry +
+    observation into one Action Source row with two parallel
+    sub-blocks rather than two parallel surfaces.
 
     `schema_hash` is shape-only — value-level drift (e.g. a
     `--force` flag flipping `true → false`) is NOT detected.
@@ -298,13 +289,12 @@ probe scheduler on it.
     single trailing-space changes are surfaced as drift even
     when functionally benign. The probe scheduler reads the
     whole per-org footprint without LIMIT/OFFSET
-    (`drift_worker::find_drifts` paginates per-org via the
-    caller's cron); for multi-tenant operators with thousands
-    of orgs, the per-org footprint stays bounded but the total
-    cron work is linear in org count. The 30-day observation
-    window is hardcoded in the handler as
-    `let window_days: i32 = 30;` — change requires a separate
-    runbook per `CLAUDE.md §17` (wire-stable window). A
-    `disappeared` + no prior SDK activity source is
-    intentionally NOT classified as drift — verification-pending
-    is the right bucket.
+    (`find_drifts` paginates per-org via the caller's cron);
+    for multi-tenant operators with thousands of orgs, the
+    per-org footprint stays bounded but the total cron work is
+    linear in org count. The 30-day observation window is
+    hardcoded in the handler as `let window_days: i32 = 30;` —
+    change requires a separate runbook per `CLAUDE.md §17`
+    (wire-stable window). A `disappeared` + no prior SDK
+    activity source is intentionally NOT classified as drift
+    — verification-pending is the right bucket.

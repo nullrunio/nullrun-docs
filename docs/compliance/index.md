@@ -40,10 +40,8 @@ rationale. A regression on either layer is a compliance incident.
     Both layers fail CLOSED. On the geo-block, missing/unreadable
     GeoIP database returns 503 `geoip_unavailable`
     (`geo_block.rs`); an unparseable peer / XFF returns 403
-    `client_ip_unresolvable` (post-NR-124 fix). Per CLAUDE.md §4,
-    enforcement paths fail-CLOSED by default — this replaces the
-    pre-2026-07-08 `allow, log loudly` posture that allowed the
-    sanctioned-jurisdiction VPN signup bypass. Sanctions
+    `client_ip_unresolvable`. Per CLAUDE.md §4, enforcement paths
+    fail-CLOSED by default. Sanctions
     screening is ON by default: the operator-level override
     env var set to `1` (or case-insensitive `true`) disables;
     unset or any other value leaves it ON (`sanctions.rs`).

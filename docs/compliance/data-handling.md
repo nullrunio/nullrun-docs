@@ -355,8 +355,7 @@ tar encrypted with GPG before upload.
 **Audit immutability bypass:** within the same tx, `DISABLE TRIGGER
 trg_reject_audit_event_update + trg_reject_audit_event_delete`,
 `DELETE` rows, `ENABLE ALWAYS TRIGGER` (re-hardens to
-`tgenabled = 'A'`). Pre-fix used function name as trigger name — bug
-fixed 2026-09-18 per migration 344.
+`tgenabled = 'A'`). Trigger names are pinned by migration 344.
 
 ### 8.2 User account deletion
 

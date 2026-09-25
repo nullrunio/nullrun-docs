@@ -206,9 +206,9 @@ disable the gate — bypassing it is a dev/test opt-out.
     rewrite the call sites, which means `read_binding` now takes an
     explicit mode parameter (FailClosed for orchestrator
     parent_ownership, Degraded for `/track` re-read). The 30%
-    anti-DoS `RESERVED_CAP_EXCEEDED` check was moved into the
-    soft-pass branch (v3.21) because pre-fix soft-mode bypass could
-    accumulate unbounded reservations and silently bypass the cap.
+    anti-DoS `RESERVED_CAP_EXCEEDED` check lives in the soft-pass
+    branch (v3.21) — soft-mode bypass can otherwise accumulate
+    unbounded reservations and silently bypass the cap.
 
     Per-org breaker state is a deliberate non-feature — the
     Postgres breaker is per-binary global, not per-org, which is

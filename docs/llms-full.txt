@@ -266,7 +266,7 @@ Pick the pattern that matches what you have today:
 
 ```python title="my_agent.py"
 from openai import OpenAI
-from nullrun import protect, shutdown
+from nullrun import protect
 
 client = OpenAI()
 
@@ -283,16 +283,15 @@ def answer(prompt: str) -> str:
     return response.choices[0].message.content
 
 
-# shutdown() flushes pending events and closes the WS cleanly
-# — register via atexit in production scripts.
+# `init()` auto-registers `shutdown()` via `atexit`, so a clean WS
+# close happens on process exit without any explicit call. For a
+# CLI script that wants fail-fast on missing config, call
+# `nullrun.init(fail_on_exit=True)` instead.
 if __name__ == "__main__":
-    try:
-        with nullrun.handle():
-            print(answer("What does NullRun do?"))
-            # handle() prints the structured 4-line developer report
-            # on any NullRunError, then sys.exit(1).
-    finally:
-        shutdown()
+    with nullrun.handle():
+        print(answer("What does NullRun do?"))
+        # handle() prints the structured 4-line developer report
+        # on any NullRunError, then sys.exit(1).
 ```
 
 Every call inside `answer()` is cost-attributed. `@protect` is the
@@ -624,11 +623,13 @@ The SDK reads `NULLRUN_API_KEY` on the first `@protect` call. The HMAC
 secret is **not** a constructor argument — it is read from
 `NULLRUN_SECRET_KEY` or returned by `/api/v1/auth/verify`.
 
-> **Explicit `init()` / `init_or_die()`.** The first `@protect` call
-> creates the runtime lazily from `NULLRUN_API_KEY`. Call `init()`
-> directly when you want fail-fast on a missing key before the first
-> gate call (CI / smoke tests), or to bind an API key from a non-env
-> source. See [Reference → init / init_or_die](../reference/sdk-api.md#init--init_or_die)
+> **Explicit `init()`.** The first `@protect` call creates the
+> runtime lazily from `NULLRUN_API_KEY`. Call `init()` directly when
+> you want fail-fast on a missing key before the first gate call
+> (CI / smoke tests), or to bind an API key from a non-env source.
+> CLI scripts that want a clean `sys.exit(1)` on missing config can
+> pass `init(fail_on_exit=True)`. See
+> [Reference → init](../reference/sdk-api.md#init)
 > for the contract.
 
 For env-var setup (`NULLRUN_API_KEY`, `NULLRUN_SECRET_KEY`, and other
@@ -675,31 +676,24 @@ naming the three most likely root causes — no spam, warn-once.
 The plain `pip install nullrun` package covers every LLM provider
 (OpenAI, Anthropic, Mistral, Gemini, Cohere, Bedrock) via URL-keyed
 httpx extractors — those vendor SDKs are **never imported** by
-NullRun. The extras below are only needed when NullRun has to call
-into the vendor package directly (framework hooks, not HTTP hooks).
+NullRun. Framework hooks for LangGraph / CrewAI / OpenAI Agents /
+LangChain / LlamaIndex / AutoGen auto-attach at runtime when the
+framework package is installed in the same environment as `nullrun`;
+no install extra is needed.
 
 | Extra | Installs | When you need it |
 | --- | --- | --- |
-| `nullrun[agents]` | `openai-agents` | OpenAI Agents SDK framework hook |
-| `nullrun[crewai]` | `crewai` | CrewAI EventBus bridge |
-| `nullrun[langgraph]` | `langgraph` | LangGraph Pregel runtime hook |
-| `nullrun[llama-index]` | `llama-index-core` | LlamaIndex dispatcher hook |
-| `nullrun[autogen]` | `autogen-agentchat`, `autogen-ext[openai]` | AutoGen runtime hook |
-| `nullrun[langchain]` | `langchain-core` | LangChain callback manager hook |
 | `nullrun[opentelemetry]` | `opentelemetry-api`, `opentelemetry-sdk` | OTel span export |
-| `nullrun[fastapi]` | `fastapi`, `starlette`, `httpx` | Server-framework integration |
+| `nullrun[dev]` | `pytest`, `pytest-asyncio`, `respx`, `mypy`, `ruff`, `coverage` | Local development and CI |
+
+To pair NullRun with a framework hook, install the framework
+alongside `nullrun`:
 
 ```bash title="shell"
-pip install "nullrun[langgraph]"
-pip install "nullrun[crewai]"
+pip install nullrun langgraph langchain-openai
+pip install nullrun crewai
+pip install nullrun openai-agents
 ```
-
-> **Extras that are no-ops:**
-> `nullrun[openai]`, `nullrun[anthropic]`, `nullrun[mistral]`,
-> `nullrun[gemini]`, `nullrun[cohere]`, `nullrun[bedrock]` install
-> but do nothing today. The SDK never imports those vendor packages
-> for the HTTP-level path — URL-keyed httpx extractors cover all
-> six without any vendor install.
 
 
 ---
@@ -719,7 +713,7 @@ behaviour, and let NullRun halt it when it goes off the rails.
 
 ```python title="app.py"
 from openai import OpenAI
-from nullrun import protect, workflow, shutdown
+from nullrun import protect, workflow
 
 client = OpenAI()
 
@@ -733,12 +727,9 @@ with workflow("my-first-agent"):       # scopes the gate to a workflow
         return response.choices[0].message.content
 
 if __name__ == "__main__":
-    try:
-        with nullrun.handle():        # catches NullRunError, prints the
-            print(answer("What does NullRun do?"))
-            # structured 4-line developer report on failure, then sys.exit(1)
-    finally:
-        shutdown()
+    with nullrun.handle():        # catches NullRunError, prints the
+        print(answer("What does NullRun do?"))
+        # structured 4-line developer report on failure, then sys.exit(1)
 ```
 
 > **First `@protect` call builds the runtime.** It reads
@@ -748,8 +739,7 @@ if __name__ == "__main__":
 > (NR-C001) at the first gate call.
 
 > **`@protect` is the entry point.** For early fail-fast (CI / smoke
-> tests) before the first `@protect` call, see [Reference → init /
-> init_or_die](../reference/sdk-api.md#init--init_or_die).
+> tests) before the first `@protect` call, see [Reference → init](../reference/sdk-api.md#init).
 
 > The `with workflow("..."):` block binds every `@protect` call inside
 > to a named workflow — required, otherwise the SDK falls back to an
@@ -916,7 +906,7 @@ If you use the zero-boilerplate helpers from the SDK, you don't have
 to write any of this — `with nullrun.handle():` catches the standard
 exceptions (including the kill signal), prints the structured
 four-line developer report, and exits 1. To handle kill distinctly,
-use the un-`@guarded` `protect()` form.
+use bare `@protect` with an explicit `except NullRunWorkflowKilledError:` arm.
 
 ## When the gateway is unreachable
 
@@ -982,6 +972,108 @@ disable the gate — bypassing it is a dev/test opt-out.
   for sensitive operations you actually want to allow
 - [Troubleshooting](../troubleshooting.md) — common "why is my
   agent blocked?" questions
+
+!!! info "Deep dive"
+
+    The circuit breaker is the `/api/v1/gate` enforcement pipeline in
+    `backend/src/proxy/http/gate/`, with three independent paths that
+    can trip it. **Budget exceeded** is enforced atomically by
+    `reserve_v3.lua` (`backend/src/redis/scripts/reserve_v3.lua`) —
+    Lua §6a runs an always-strict org ceiling, §6 runs the workflow
+    ceiling, then the period-bound counter check, all in one `EVAL`;
+    on overflow the binding status flips to `blocked` (ADR-016 §2.6)
+    and the gate returns a 5-tuple diagnostic `{spent, budget,
+    projected}` to the orchestrator. **Tool block** is enforced by
+    `check_tool_block` in `backend/src/proxy/http/gate/orchestrator.rs`
+    — it resolves the canonical tool list from `req.tools ++ req.tool`
+    (TB-1/TB-4 fail-CLOSED fixes), looks up the per-key
+    `KeyPolicy.tool_patterns`, and runs `glob_match` against every
+    pattern. **Operator kill** flows through
+    `kill_workflow_handler` (`backend/src/proxy/handlers.rs`) →
+    `CircuitBreaker::kill_legacy` (`backend/src/decision/mod.rs`),
+    which validates the `State::Killed` transition per ADR-007,
+    flips state, and publishes a
+    `WorkflowEventPayload::StateChanged { new_state: "killed" }` to
+    the EventBus; `ws_control.rs` consumes that envelope and pushes
+    `WsMessage::StateChange` with `WsWorkflowState::Killed` over the
+    per-org WebSocket so the SDK raises `WorkflowKilledInterrupt`.
+    ADR-055 (shipped 2026-09-21) wired `RedisCircuitBreaker` and
+    `PostgresCircuitBreaker` into 9 Redis + 19 Postgres hot-path
+    sites, so a Redis or Postgres partition now short-circuits
+    sub-100ms instead of hanging 5–10s on `pool.acquire()`.
+
+    Every rejection on the budget and ToolBlock paths is fail-CLOSED.
+    `reserve_v3.lua` rejects `EXECUTION_NOT_BOUND` /
+    `EXECUTION_ORG_MISMATCH` / `EXECUTION_KEY_MISMATCH` before
+    touching any counter, and `check_tool_block`'s TB-1 / TB-4
+    branches reject when `tools` is absent while `tool_patterns` is
+    non-empty or when the policy cache is unavailable. Per-org
+    aggregate rate limit is FailClosed (Hard); the per-key default is
+    FailOpen with the budget gate as the authoritative backstop
+    (ADR-029 §2). `/gate` is idempotent on retry via `IdempotencyStore`
+    at `gate.rs` (atomic SETNX + atomic Lua mutate) so network retries
+    return the stored response instead of minting a fresh
+    `reservation_id` (IDEM-01, 2026-09-11). `execution_id` is
+    server-minted (UUIDv7 at
+    `backend/src/proxy/http/gate/execution_id.rs`) and bound to
+    `(org_id, api_key_id)` in `execution:{id}` — the binding is the
+    single source of truth for the reserve/consume pair (ADR-003),
+    and the kill signal inherits from `NullRunError` so
+    `except Exception:` catches it alongside every other SDK error.
+
+    Server-minted identity threads through the whole pipeline. The
+    canonical tool name matcher at `validate_tool_name` rejects
+    control characters on both the singular `tool` field and every
+    entry of the plural `tools[]` array (DEF-SDKT-002), and ToolBlock
+    patterns use the `glob_match` family: `*` alone matches
+    everything, `prefix.*` smart-matches `prefix` AND
+    `prefix.anything`, and multi-`*` patterns split on every star and
+    require literal segments in order — `*.drop_*` matches
+    `s3.drop_table` (v3.39 / DEF-POLFLOW-TB-06). The orchestrator at
+    `run_gate_orchestrator` runs in priority order: workflow_active
+    → parent_ownership → cycle_depth_check → tool_block →
+    business_impact_validate → rate_limit → budget_reserve, with
+    the first non-`Allow` decision winning (`Block > RequireApproval
+    > Allow` per ADR-011). For multi-wf shared org budgets, ADR-050
+    ships a single per-org counter shared by all workflows so
+    exhausting the org budget via workflow A naturally blocks
+    workflow B (enforced in Lua §6a via `org_budget_cents` from
+    `AggregatedPolicy.org_budget_cents`).
+
+    Two design alternatives were considered and rejected: (1)
+    **Inline arms in `gate_internal` (pre-v3.56)** — each enforcement
+    step was a flat arm in the monolithic `gate_internal` function,
+    and the unified orchestrator now composes the same checks via
+    lifted helpers but keeps the inline arms until the H.1 dispatcher
+    activation lands (wire shape unchanged at runtime); (2)
+    **Per-org circuit-breaker state** — rejected because Redis /
+    Postgres are global infra and per-org breakers would be premature
+    optimization (ADR-055 §"Not changed"). ADR-055 chose to wrap
+    existing `pool.acquire()` calls in `RedisCircuitBreaker::execute()`
+    and `PostgresCircuitBreaker::execute_with_degraded()` rather than
+    rewrite the call sites, which means `read_binding` now takes an
+    explicit mode parameter (FailClosed for orchestrator
+    parent_ownership, Degraded for `/track` re-read). The 30%
+    anti-DoS `RESERVED_CAP_EXCEEDED` check lives in the soft-pass
+    branch (v3.21) — soft-mode bypass can otherwise accumulate
+    unbounded reservations and silently bypass the cap.
+
+    Per-org breaker state is a deliberate non-feature — the
+    Postgres breaker is per-binary global, not per-org, which is
+    acceptable for infra failure (Postgres down = all orgs affected).
+    In-flight partial reservations before circuit trip rely on
+    envelope TTL (24h) for cleanup, a documented trade-off
+    (ADR-055 PR-C §"Trade-offs"). The breaker is wired into 9 Redis
+    + 19 Postgres sites but enforcement sites outside that set
+    (workers, outbox processor) rely on the worker pool's natural
+    backpressure. The WS push for kill delivery has its own transport
+    fallback: if the WebSocket is down, the SDK's heartbeat polling
+    picks up the kill — so delivery latency is bounded by the
+    heartbeat interval, not zero. `reserve_v3.lua`'s
+    `RESERVED_SCANNED_PARTIAL` return fires if the inline SCAN over
+    `budget:reserved:{org_id}:*` exceeds 256 iterations (NR-015
+    audit) — fail-CLOSED, with the partial-scan rate on the dashboard
+    as the cue to scale up.
 
 
 ---
@@ -1168,6 +1260,78 @@ unavailable", never as `≈ $0 spent`.
 - [Policies](policies.md) — rate limits (separate from budget) and soft-mode fields
 - [Troubleshooting](../troubleshooting.md#why-is-my-call-being-rejected-with-nullrunblockedexception)
 
+!!! info "Deep dive"
+
+    The authoritative counter is `org:{id}:bp:{period_start_ts}:cost_cents`
+    in Redis (mirrored by `:cost_millicents` for sub-cent precision per
+    DEF-07-02), with `period_start_ts` computed server-side by
+    `compute_calendar_month_period` and passed to `reserve_v3.lua` as
+    `ARGV[21]` / `ARGV[22]` (ADR-026 / v3.64) — the script reads
+    `redis.call('TIME')` for `now` but trusts the backend-computed
+    period so no `2629800` approximation runs in the production path.
+    `/track` flows through `consume_v3.lua`, which parses the
+    `cjson.encode`d reservation record from `budget:reserved:{org}:{exec}`
+    to recover `authorized_cents` and compares `actual` against
+    `authorized + epsilon_cents` (fixed cents, default 1¢ — ADR-005); on
+    `actual > authorized + ε` the script INCRBYs the period counter on
+    actual spend, DELs the envelope, stamps
+    `consumed_at = "overage_unreconciled"` + `status = "overage"`, and
+    returns `CONSUME_OVERBUDGET` (HTTP 422). The 4-table audit separation
+    (ADR-009) keeps the period counter in Redis for fast enforcement
+    while `cost_events` flows through the Postgres outbox for durable
+    history; the `ApproximateBudget` endpoint at
+    `backend/src/proxy/http/budget.rs` walks Redis → Postgres outbox →
+    last-known cache and returns 503 `BUDGET_DATA_UNAVAILABLE` (5s
+    `Retry-After`) when all three miss.
+
+    The reserve / consume pair is atomic in Lua: `reserve_v3.lua` HSETs
+    `reserved_cents` on the binding before the period INCRBY so a retry
+    between Lua return and Rust outbox commit sees `status='reserved'`
+    and returns `{prior_cents, "OK", "REPLAY"}` instead of double-INCRBY
+    (AUDIT P0-05), and `/track` idempotency keys on the binding's
+    `status` field (`consumed` → `IDEMPOTENT_REPLAY`; `overage` →
+    `CONSUME_OVERBUDGET` with the same 5-tuple the first call produced).
+    The aggregator at `backend/src/proxy/policy_cache.rs::aggregate_policies_with_mode`
+    runs `min()` over `budget_cents` across both scopes but stores the
+    wf-only and org-only minima independently (`wf_budget_cents`,
+    `policy_org_ceiling_cents`); Lua §6a enforces the always-strict
+    org ceiling first, §5.5 pre-computes the wf ceiling state, and §6
+    enforces it (Hard mode) or inside the soft-pass branch (Soft mode,
+    gated on `enforcement_mode=Soft` + active `chain_id` + projected
+    within `max_overdraft_cents` AND `max_overdraft_percent`). N
+    concurrent chains share one org overdraft counter — they do NOT
+    multiply the cap.
+
+    The period-start is bound from the `org.billing.period_start`
+    column at reservation time (ADR-026), so `/gate` and `/track` for
+    the same execution always land on the same period bucket. The
+    `ApproximateBudget` three-tier fallback (Redis → Postgres →
+    last-known) was chosen over a single source because Redis can be
+    unavailable during a period rollover and Postgres outbox lag is
+    sub-second to ~2s — three confidence bands (`High` / `Medium` /
+    `Low`) let the UI render the value with the right caveat.
+    Percentage ε was considered and rejected (ADR-005 §"Why fixed
+    cents") because the abuse surface is unbounded — fixed 1¢ caps
+    the drift to a single cent regardless of reserve size, with a
+    per-policy override wired via `policies.consume_epsilon_cents` for
+    the rare operator that needs it.
+
+    The `ApproximateBudget` endpoint is advisory only — never feed a
+    gate, rate-limit, or agent-side decision off it; an outage of all
+    three sources returns 503, NOT `≈ $0 spent`. The reservation
+    envelope TTL is 300s (or operator-configured); a `/track` arriving
+    after TTL expiry returns `RESERVATION_NOT_FOUND` and the operator
+    must retry with a fresh `/gate`. `consume_v3.lua`'s
+    orphan-tolerance invariant (`pkey TTL'd → RESERVATION_NOT_FOUND`)
+    treats a malformed reservation record as missing by design, since
+    the cap check is reserved for the gate-bypass case only. Consume
+    time can never revalidate the reserve's commitment against a new
+    operator-tightened cap: the cap is fresh at `/track` (re-fetched
+    in Rust) but the `authorized_cents` ceiling is sealed at `/gate`
+    time. `ε > 5¢` produces a warning at startup (ADR-005) —
+    operators that need wider tolerance should re-evaluate the reserve
+    projection rather than raise ε.
+
 
 ---
 
@@ -1176,7 +1340,7 @@ unavailable", never as `≈ $0 spent`.
 
 title: Sensitive tools
 maturity: stable
-description: The `@protect` decorator auto-attaches a default tool_params extractor so every protected tool is eligible for ToolParameters Approval Rules. The `@sensitive(impact=...)` factory form stamps a typed BusinessImpact + digest-bound approval.
+description: How `@protect` plus the server-side ToolBlock policy enforce "this tool needs review" without any SDK-side sensitive list.
 # Sensitive tools
 
 A **sensitive tool** is one that should never run without a human
@@ -1191,30 +1355,27 @@ them.
 
 !!! info "The canonical entry point is `@protect`"
     Every protected tool is automatically eligible for ToolParameters
-    Approval Rules — `@protect` stamps a default
-    `ToolParamsExtractor(include_all=True)` so the kwargs of every
-    call reach the gate without any second decorator. The
-    `@sensitive(impact=...)` factory form stamps a typed
-    `BusinessImpact` + digest-bound approval flow.
+    Approval Rules — `@protect` ships `tool_name + args + kwargs` on
+    the wire, and the backend reads argument values out of `kwargs`
+    by `param_name`. No SDK-side extractor or extra decorator is
+    required.
 
-!!! info "`@sensitive(impact=...)` vs `ToolBlock`"
-    Two distinct mechanisms, often confused:
+!!! info "ToolBlock vs typed predicates"
+    Two complementary mechanisms, often confused:
 
-    - **`@sensitive(impact=...)` (SDK-side)** — a factory decorator
-      that stamps a typed `BusinessImpact` extractor on the
-      function. Used with **approval rules** that evaluate a typed
-      predicate (`money_amount` / `tool_parameters`) + the SHA-256
-      `action_digest` for tamper-proof approval. Affects the SDK
-      only; the gate still has the final say.
     - **`ToolBlock` (server-side)** — a policy rule evaluated by
       the gate on every `/gate` call. The gate fails-CLOSED if it
       cannot reach Redis or the policy cache to evaluate. This is
       the canonical "this tool is forbidden" mechanism.
+    - **Typed predicates (`money_amount`, `tool_parameters`)** —
+      built into approval rules in the dashboard. The gate
+      evaluates a DNF over argument values, bound to the
+      SHA-256 `action_digest` for tamper-proof approval. Use these
+      for finer-grained rules ("refunds over $500 need
+      approval", "sends to non-internal recipients need review").
 
-    Use `@sensitive(impact=...)` when you want a typed
-    `BusinessImpact` approval flow (e.g. "refunds over $500 need
-    approval"). Use `ToolBlock` when you want a hard rule ("never
-    call `bash`").
+    Use `ToolBlock` for hard rules ("never call `bash`"). Use typed
+    predicates when the rule depends on the call's arguments.
 
 ## What a sensitive tool is, in policy terms
 
@@ -1223,27 +1384,23 @@ enforcement decision is evaluated by the gate on every `/gate` call,
 so you can't accidentally miss a tool you didn't register locally.
 You express "sensitive" with one of two complementary mechanisms:
 
-- **`@protect` (SDK-side, canonical)** — auto-attaches a default
-  `ToolParamsExtractor(include_all=True)` so the kwargs of every
-  call flow into the `BusinessImpact` predicate bag used by
-  ToolParameters approval rules (free-form typed predicates — no
-  argument renaming, every kwarg flows through). Use this when you
-  want a free-form predicate — e.g. "the `uid` parameter must equal
-  `42`".
-- **`@protect @sensitive(impact=...)` (SDK-side)** — stamps a
-  typed `BusinessImpact` extractor (`money_outflow(...)` or
-  `tool_params({...})`) so the gate evaluates a typed predicate
-  (`money_amount` / `tool_parameters`) and the SHA-256
-  `action_digest` for digest-bound approval flow. Use this when you
-  want the typed predicate — e.g. "refunds over $500 need
-  approval".
+- **`@protect` (SDK-side, canonical)** — wraps a function and
+  ships `tool_name + args + kwargs` on the wire. The backend
+  reads argument values out of `kwargs` by `param_name` for
+  ToolParameters approval rules. No SDK-side extractor is needed.
 - **`ToolBlock` (server-side)** — a policy rule evaluated by the
   gate. The gate fails-CLOSED if it cannot reach Redis or the policy
   cache to evaluate. Use this for hard rules — "never call `bash`".
+- **Approval rules with typed predicates (server-side)** — for
+  finer-grained control, an approval rule references `param_name`
+  and the gate evaluates a DNF of up to 5 named parameters against
+  Equals / OneOf / NumericRange / Regex / Exists matchers. The
+  grant is bound to the SHA-256 `action_digest` of the live
+  payload; the post-approval `/execute` re-check refuses on
+  drift.
 
-For the typed predicate wiring, see
-[Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-typed-impact-digest)
-and [`money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact).
+For the typed-predicate wiring, see
+[Human approval → typed predicates](human-approval.md#typed-predicates).
 
 Recommended starter patterns (see
 [Tool catalog → Recommended ToolBlock starter list](../reference/llm-tool-catalog.md#recommended-toolblock-starter-list)
@@ -1276,8 +1433,8 @@ inverts this:
 
 The gate **does not inspect tool arguments** — it cannot distinguish
 two calls to the same tool by payload. If you want a narrower rule
-(e.g. "block refunds over $500"), use a typed `BusinessImpact`
-predicate: the SDK extracts the argument bag and the gate evaluates
+(e.g. "block refunds over $500"), use a typed `tool_parameters`
+predicate: the SDK ships `kwargs` on the wire and the gate evaluates
 a DNF of up to 5 named parameters against Equals / OneOf /
 NumericRange / Regex / Exists matchers. See
 [Human approval → typed predicates](human-approval.md#typed-predicates).
@@ -1296,7 +1453,7 @@ A ToolBlock policy matches **tool name only** — not:
 
 - prompt content or semantic intent
 - the recipient of a payment (use a typed predicate instead)
-- tool arguments beyond the `BusinessImpact` extraction
+- tool arguments beyond the `kwargs` the SDK ships on the wire
 - the tool's runtime sandbox (that's your infrastructure concern)
 
 Read operations are never sensitive regardless of the tool. The
@@ -1339,16 +1496,109 @@ is bound to the exact action payload the SDK sent on `/gate`. See
 
 ## See also
 
-- [Decorators & extractors → `@sensitive`](../reference/decorators.md#sensitive-typed-impact-digest)
-  — the `@sensitive(impact=...)` factory form, the
-  `money_outflow(...)` / `tool_params(...)` impact extractors, and
-  the `_nullrun_extractor` contract that ties them to `/execute`.
 - [Tool policies](tool-policies.md) — the actual rule structure
 - [Tool catalog](../reference/llm-tool-catalog.md) — recommended
   patterns with risk ratings
-- [Human approval](human-approval.md) — the safer alternative to
-  disabling a ToolBlock rule
+- [Human approval](../concepts/human-approval.md) — the safer
+  alternative to disabling a ToolBlock rule
+- [Decorators & context managers](../reference/decorators.md) —
+  `@protect` wire payload and how the gate receives `kwargs`
 - [Circuit breaker → fail-CLOSED matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable)
+
+!!! info "Deep dive"
+
+    ToolBlock lives as Step 3 of the gate orchestrator's 10-step
+    priority list (`backend/src/proxy/http/gate/orchestrator.rs`,
+    ADR-011). The `check_tool_block` helper reads the per-key
+    `KeyPolicy.tool_patterns` cache (populated by
+    `policy_cache::aggregate_policies`), then matches each pattern
+    against the request's tool list using `glob_match` /
+    `glob_match_single` / `glob_match_multi`. The matcher encodes
+    three rules: `|` separates alternatives (`bash|sh`); a single
+    `*` pattern splits into prefix + suffix where `prefix.*`
+    matches both the bare name and any dotted continuation;
+    multi-`*` patterns split on every `*` and require each
+    non-empty literal segment to appear as a substring of `value` in
+    order (the DEF-POLFLOW-TB-06 fix). When the SDK supplies
+    `BusinessImpact` on `/check`, Step 4
+    (`business_impact_validate`, `orchestrator.rs`) validates the
+    envelope first; malformed payloads return
+    `BUSINESS_IMPACT_INVALID` before any approval-rule evaluation or
+    budget reservation.
+
+    ToolBlock is ALWAYS Hard — `orchestrator.rs` codifies this:
+    regardless of `enforcement_mode`, the orchestrator returns
+    `Block { TOOL_BLOCKED }` whenever the helper returns a
+    `ToolBlockDecision` with `decision == "block"`. The structured
+    `details` JSON is forwarded verbatim, so the SDK sees the same
+    wire shape pre- and post-v3.56. The orchestrator's
+    policy_cache_miss path returns `TOOL_BLOCKED` if the policy
+    cache has no entry for the key — fail-CLOSED, never fail-OPEN.
+    The `dispatch_policy_violation_alert` bridge fires on every
+    authoritative block (`orchestrator.rs`) so the operator's
+    configured notification channels actually see real blocks (the
+    "6 decorative toggles" audit fixed the dead bridge). The
+    tool_patterns aggregate honors the per-policy scope: ToolBlock
+    rows with `scope = "workflow"` MUST carry a non-NULL
+    `workflow_id` (ADR-047); the three-layer invariant enforces
+    this at `create_policy` validation, the `list_by_workflow` SQL
+    filter, and the `is_policy_applicable_to_workflow` predicate.
+
+    ToolBlock patterns union across applicable policies
+    (`policy_aggregates.blocked_tools` is a flat dedup of every
+    matching pattern). The most-restrictive-wins principle only
+    applies within a single policy type; cross-policy-type the
+    orchestrator steps pick the first non-Allow in priority order.
+    `tool_class` annotations (`mcp` / `builtin` / `custom` /
+    `unknown`) propagate from the SDK's tool catalog onto the
+    `tool_policies` row in the database, so a pattern like
+    `mcp://*/delete` covers every MCP server's delete tool without
+    operators having to enumerate them. The SDK ships the
+    `kwargs` payload on `/execute` — typed predicates in approval
+    rules read values directly from there by `param_name`, no
+    SDK-side extractor required.
+
+    ToolBlock is enforced server-side in both `/check` and `/track`;
+    the SDK-side enforcement (the `set_call_context(tools=[...])`
+    annotation) is opt-in for early rejection.
+
+    The chosen path is "ToolBlock is server-side, always Hard" —
+    the SDK ships zero built-in sensitive-tool list because any
+    such list would silently be wrong for tools not on it. The
+    alternative considered was a per-SDK registration API:
+    `nullrun.register_tool(name, risk=...)` — rejected because it
+    would force every framework to register against NULLRUN's
+    expectations, and a missed registration would be silently wrong.
+    The glob matcher (`glob_match` / `glob_match_multi`) was chosen
+    over a regex matcher because globs are the vocabulary operators
+    see in the dashboard; the alternative considered (allow regex
+    for power users) was rejected for ADR-008 scope — operators
+    who want narrower predicates should use the `BusinessImpact`
+    typed-predicate machinery, not a more powerful glob. The
+    pre-v3.71 Step 7 stub was a regression where the
+    `approval_rule_eval` arm was hardcoded to `let matched_rule =
+    None` — silent fail-OPEN on operator-authored approval rules,
+    fixed in v3.71 by wiring the live `evaluate_rules`
+    (`enforcement/approval_eval.rs`) into the orchestrator.
+
+    ToolBlock matches tool name only — it does not inspect tool
+    arguments beyond the `kwargs` the SDK ships on `/execute`.
+    Two calls to the same tool with different payloads are
+    indistinguishable at the glob-match step; the narrow rule
+    "block refunds over $500" requires a typed `tool_parameters`
+    predicate (DNF of up to 5 named parameters against Equals /
+    OneOf / NumericRange / Regex / Exists matchers). The
+    orchestrator's fail-CLOSED posture on policy_cache_miss means
+    that a Redis cache flush mid-traffic will surface as
+    `TOOL_BLOCKED` for every `/check` until the cache repopulates —
+    the trade-off is "no silent miss" over "no false positives".
+    Pre-flight blocking on `/gate` is opt-in via SDK
+    `set_call_context(tools=[...])`; SDKs that don't call
+    `set_call_context` skip `/gate` ToolBlock enforcement
+    entirely — `/track` cost-event ingestion still catches them
+    downstream, but only after the LLM call has fired. ToolBlock
+    patterns cannot reference `tool_class`-scoped predicates; the
+    typed-predicate layer is where class-aware rules live.
 
 
 ---
@@ -1514,6 +1764,99 @@ week and the same workflow handles it.
 - [Policies](policies.md) — what rules attach to a workflow
 - [Control plane](control-plane.md) — how Kill / Pause reach your agent
 - [API keys](api-keys.md) — how to mint a key bound to this workflow
+
+!!! info "Deep dive"
+
+    A workflow is a row in `workflows` plus a runtime `State` entry
+    in the per-execution in-memory map at
+    `backend/src/decision/mod.rs` (`pause`, `kill`, `resume`). When
+    the operator clicks **Pause** / **Resume** / **Kill**,
+    `pause_workflow_handler` / `resume_workflow_handler` /
+    `kill_workflow_handler` in `backend/src/proxy/http/workflows.rs`
+    mutate the runtime CB state, write the audit row via
+    `record_audit_event_simple`, then push the transition through
+    `EventBus::publish_with_origin` (canonical
+    `WorkflowEventPayload::StateChanged`,
+    `backend/src/proxy/http/event_bus.rs`). The WebSocket upgrade
+    handler at `backend/src/proxy/http/ws_control.rs` is subscribed
+    to that channel via `subscribe_for_ws`; the envelope is
+    converted by `convert_envelope_to_ws_message`
+    (`ws_control.rs`) and emitted as
+    `WsMessage::StateChange { state: WsWorkflowState }`. Chains are
+    stored in Redis as `chain:{org}:{chain_id}` and extended on
+    every `/check` with `idle_ttl = 300s`
+    (`backend/src/redis/chain.rs`, `backend/src/redis/mod.rs`); the
+    default `max_chain_duration_seconds = 3600` lives in
+    `backend/src/enforcement/unified_evaluator.rs`.
+
+    State transitions are validated through
+    `State::validate_transition` (`backend/src/decision/mod.rs`),
+    which makes `Killed → *` terminal — there is no path out.
+    `Killed` / `Paused` runtime events write `state = "KILLED"` /
+    `"PAUSED"` to the LIFECYCLE-only `workflows.state` column;
+    `Flagged` / `Tripped` CB events are gated on
+    `map_state_to_lifecycle_column` (None) and instead write
+    `cb_state` via `map_state_to_cb_state` (ADR-027 partition fix),
+    so the two column-truths never collide on the
+    `chk_workflows_state` CHECK constraint. The state field emitted
+    on the WS wire is PascalCase (`State::as_pascal_case`,
+    `decision/mod.rs`) so the SDK's `check_control_plane` comparison
+    matches; the HTTP-poll fallback `status_handler`
+    (`backend/src/proxy/handlers.rs`) emits the same PascalCase.
+    WebSocket frames are HMAC-signed with the per-org `secret_key`
+    (`SignedWsMessage::new`, `ws_control.rs`) and the WS upgrade
+    rejects API keys in query strings (SEC-7, `ws_control.rs`).
+    Cross-org envelope leakage is blocked by the `expected_org_id`
+    check in `convert_envelope_to_ws_message` (`ws_control.rs`,
+    NR-094). Chains are fail-safe via TTL only — Redis EXPIRE on
+    the chain key is the sole cleanup mechanism, with no worker
+    reaping stale rows.
+
+    Workflow lifecycle writes are split across three concerns: the
+    CB runtime (in-memory + Redis), the DB lifecycle row
+    (`update_workflow_state` with `chk_workflows_state`-safe
+    mapping), and the EventBus broadcast. Each handler emits a
+    `tracing::warn!` plus a `record_audit_event_simple` row carrying
+    `actor_type` / `actor_id` (kill: P0-19, pause: DEF-TS12GRT-001 —
+    see `workflows.rs`), so a manual kill surfaces in both
+    `docker logs` and `/control-center/audit-log`. The same
+    EventBus payload drives three downstream consumers: WS
+    subscribers, alert dispatch
+    (`crate::alert::dispatch_workflow_state_alert`), and the
+    policy-cache invalidation. Chain context is a separate, opt-in
+    construct — `with chain(...)` only matters when soft-mode budget
+    is on, and the chain dies on first of `op="end"` / 5-minute
+    idle TTL / max-duration TTL.
+
+    The v3.56 split (ADR-011) moved the orchestrator's 10 priority
+    steps into `backend/src/proxy/http/gate/orchestrator.rs`,
+    collapsing the prior 8934-line `gate_internal` into a 3-arm
+    dispatcher via `gate_wire_adapter`. The chosen path keeps the
+    wire contract identical
+    (`GateResponse::{allow, block, require_approval}` are preserved
+    verbatim) but unifies the internal `EvaluationDecision` enum
+    across gate / preview / shadow consumers — closing the 38-arm
+    mismatch where simulation could emit `FALLBACK` while production
+    gate emitted `REQUIRE_APPROVAL`. State separation between
+    `workflows.state` (lifecycle) and `workflows.cb_state` (CB
+    runtime, ADR-027) was the
+    alternative-considered-and-rejected pattern of "single state
+    column" — that column would have tripped CHECK constraints on
+    every CB trip.
+
+    The 5-minute chain idle TTL (`CHAIN_IDLE = 300`,
+    `redis/mod.rs`) is hard-coded; there is no per-organization
+    override, so long-running agents must call `POST /heartbeat`
+    every 30 seconds (`docs/adr/INDEX.md`, streaming ADR) or the
+    chain dies mid-run. The HTTP-poll fallback window is bounded by
+    the gate's `wf_active` cache TTL (60s) — a paused workflow
+    observed only via HTTP polling sees the new state at most one
+    minute late. WebSocket reconnect after a network blip is
+    auto-negotiated, but if both WS and polling are blocked the SDK
+    learns about the kill on the next `/gate` call only — kill
+    latency in the worst case is therefore one LLM-call duration.
+    `Killed` is terminal with no documented reactivation path; a
+    "re-killed" workflow must be re-created as a new workflow.
 
 
 ---
@@ -1701,9 +2044,11 @@ spans are recorded. Check the SDK logs for
 ### "My trace is incomplete — only some spans show up"
 
 The SDK buffers events and flushes on a timer. If your process
-crashes before the flush, the in-flight spans are lost. Use
-`nullrun.shutdown(flush=True)` in your `finally` block to ensure
-everything reaches the gateway.
+crashes before the flush, the in-flight spans are lost. `init()`
+auto-registers `nullrun.shutdown(flush=True)` via `atexit`, so a
+clean process exit always reaches the gateway; the explicit call
+only matters when you need an early teardown or a
+`shutdown(flush=False)` flush cancel between tests.
 
 ### "Why are some spans duplicated?"
 
@@ -1718,6 +2063,100 @@ the standard OpenAI / Anthropic / Gemini / Cohere clients.
 - [Error handling](error-handling.md) — errors that span blocks
 - [Reference → SDK API → track_*](../reference/sdk-api.md) — manual
   span creation
+
+!!! info "Deep dive"
+
+    The trace ingest path is `trace_middleware`. On every inbound
+    request the middleware reads the `traceparent` header (W3C
+    Trace Context format: `version-trace_id-span_id-flags`),
+    parses it via `TraceContext::from_traceparent`, and stashes it
+    in request extensions so handlers can read
+    `get_trace_id(request)` or `get_trace_context(request)`. The
+    parsed context is forwarded into the trace ingest at
+    `process_span_events_batch` (ADR-014) where
+    `traces.w3c_trace_id` and `spans.w3c_parent_span_id` get
+    populated as sibling columns — the SDK-minted UUID remains
+    the primary key (`TraceRow.w3c_trace_id` is nullable). The
+    read path is the traces handler — the org-scoped list
+    endpoint fetches trace summaries plus per-trace span batches
+    (capped by `MAX_SPANS_PER_TRACE`, default
+    `DEFAULT_SPANS_PER_TRACE = 10`) and redacts PII via
+    `proxy::redaction::Redactor` before serialization. The
+    single-trace endpoint
+    (`GET /api/v1/orgs/:org_id/traces/:trace_id`) reconstructs
+    the waterfall tree from `spans.parent_span_id` (DB schema
+    migration 141).
+
+    W3C header extraction is best-effort — a missing or malformed
+    `traceparent` MUST NOT block ingest (ADR-014 §"Compliance").
+    When the header is absent, `w3c_trace_id` is `NULL` and the
+    trace remains queryable by its SDK-minted UUID. The audit
+    chain retains the SDK-minted UUID as the canonical identity
+    even when `w3c_trace_id` is populated, so no JOIN / index /
+    FK is re-typed. A sparse partial index
+    `idx_traces_w3c_trace_id_partial` keeps the
+    secondary-identifier index bounded (ADR-014 §"Cons").
+    Per-plan retention is enforced by
+    `decision_history_retention` which reads
+    `plans.features.history_days` live from the DB; the canonical
+    values are 3 (Lite), 7 (Starter), 30 (Growth), 90 (Scale),
+    -1 unlimited (Enterprise) — pinned by migration 002 and the
+    inline `plans` table seeding. Span rows carry a typed
+    `verdict` column (`'allow'` / `'flag'` / `'block'` /
+    `'chain'`); the DB CHECK constraint enforces the four-value
+    domain.
+
+    The auto-instrumentation emits one span per LLM call and one
+    per `@protect` invocation; `with workflow()` / `with chain()`
+    / `with span()` context managers emit a parent span that the
+    per-call spans nest under. Sub-agent orchestration propagates
+    the W3C `traceparent` so a supervisor's child spans appear
+    under the supervisor's trace_id in the waterfall. Per-trace
+    PII redaction is applied at the read boundary (Redactor
+    usage) — the allowlist inside the config keeps well-known
+    identifier fields (`span_id`, `trace_id`, `w3c_trace_id`,
+    `w3c_parent_span_id`) intact, but everything else in
+    `metadata` / `name` / `error` / `root_span_name` runs through
+    the deny-list redactor before serialization. The `decision`
+    field on a span is `verdict` — never `metadata.policy_decision`.
+    When the SDK process crashes before the buffer flush,
+    in-flight spans are lost — `init()` auto-registers
+    `nullrun.shutdown(flush=True)` via `atexit`, so a clean
+    process exit always flushes.
+
+    Per ADR-014, the trace ingest carries sibling
+    `w3c_trace_id` / `w3c_parent_span_id` columns: existing SDKs
+    that don't extract `traceparent` continue to write `NULL`
+    (backward-compat), JOINs and audit-chain references are
+    unchanged (no FK changes), a future rename to W3C hex
+    becomes a key-swap rather than a re-typing (forward-compat),
+    and a future `nullrun-otlp-exporter` can read `w3c_trace_id`
+    and emit it as the OTLP trace ID (OTLP-friendly). The typed
+    `verdict` column (migration 274) keeps the audit log and
+    dashboard labels aligned on the same decision. Span retention
+    is per-plan, not global — Scale and Enterprise customers
+    have materially different cost-to-store trade-offs.
+
+    Retention is independent of the trace *generation* caps —
+    Lite throttles at 10 000 tokens/hour and 75 000
+    executions/month (`db` features payload), so traces stop
+    accumulating well before the 3-day window applies. After the
+    retention window expires, the trace is removed from the
+    dashboard; the aggregated cost information is summarized per
+    workflow per period and survives. The W3C header extraction
+    is best-effort on both ends — only SDKs that call the W3C
+    propagation helper populate `w3c_trace_id` (others leave it
+    `NULL`). The partial index on `w3c_trace_id` keeps lookup
+    bounded but means a full UUID join remains the path for SDKs
+    that do not populate the W3C context. The frontend's
+    `SpanRow.tsx` reads the backend's typed `verdict` column
+    directly. The trace ingest batches via
+    `process_span_events_batch` — there is no synchronous
+    per-span INSERT path; back-pressure on the batch buffer
+    shows up as dropped spans during high traffic. Per-trace
+    span count is capped (`MAX_SPANS_PER_TRACE`) and the response
+    marks truncated rows via `truncated_trace_ids` so the
+    dashboard can show a "show more" indicator.
 
 
 ---
@@ -1887,6 +2326,106 @@ and on every reconnect.
   approvals
 - [Troubleshooting](../troubleshooting.md) — "why did my workflow
   pause without me doing anything?"
+
+!!! info "Deep dive"
+
+    The control plane is a WebSocket at
+    `GET /ws/control/:organization_id` (`ws_control_handler`).
+    Auth is the same `X-API-Key` / `Authorization: Bearer` used on
+    `/gate` / `/track`; SEC-7 explicitly rejects API keys in query
+    strings because query params are routinely captured by
+    reverse-proxy access logs and HTTP referer headers. The upgrade
+    calls `ws.on_upgrade` and lands in `ws_control_socket`; the
+    socket subscribes to `EventBus` for the organization's channel
+    and converts every `WorkflowEventEnvelope` via
+    `convert_envelope_to_ws_message`. State changes are emitted as
+    `WsMessage::StateChange { state: WsWorkflowState, message_id:
+    Option<String> }` — `Paused` and `Killed` carry a `message_id`
+    so the SDK can ACK them. Approvals surface as
+    `WsMessage::ApprovalResolved { outcome: WsApprovalOutcome, note,
+    decided_by, organization_id, ... }`. Frames are HMAC-signed
+    per-org via `SignedWsMessage::new` using the canonical-serialize
+    (RFC 8785 JCS subset) bytes for the signing input. The
+    HTTP-poll fallback lives at
+    `GET /api/v1/status/:workflow_id` (`status_handler`) — it
+    emits `state` as PascalCase (`State::as_pascal_case`) so the
+    SDK's `check_control_plane` matches without casing drift.
+
+    State transitions are validated at the source via
+    `State::validate_transition`: `Killed → *` is terminal — no
+    transitions out, ever. The WS frame carries a `version` field
+    per `EventMetadata.sequence` so a re-syncing SDK can detect
+    missed events; the SDK calls `WsMessage::ResyncRequired` to
+    ask for a full re-fetch. Cross-org envelope leakage is blocked
+    at the converter: the `expected_org_id` parameter must match
+    the payload's `organization_id` for the four variants that
+    carry it (`StateChanged` / `PolicyInvalidated` / `KeyRotated` /
+    `ApprovalResolved`); a mismatch drops the event with a
+    `tracing::warn!` and never reaches the wire. WS frames are
+    HMAC-signed with a 5-minute max-age window
+    (`WS_HMAC_MAX_AGE_SECONDS = 300`); pre-auth error frames and
+    keepalive pongs are intentionally unsigned. The status-poll
+    endpoint re-emits state on every call so a disconnected SDK
+    picks up the most recent kill on reconnect, with the original
+    timestamp preserved in the audit log via
+    `record_audit_event_simple` on the kill handler.
+
+    The push flow on a kill: `kill_workflow_handler` →
+    `service.kill_workflow` (DB lifecycle UPDATE) →
+    `record_audit_event_simple("workflow.killed")` (audit
+    breadcrumb) → `EventBus::publish(StateChanged { new_state:
+    "killed" })` → `ws_control_socket` subscriber →
+    `convert_envelope_to_ws_message` →
+    `WsMessage::StateChange { state: WsWorkflowState::Killed,
+    message_id }` → SDK raises `WorkflowKilledInterrupt` on the
+    next yield. The same path applies to pause / resume, with
+    `WsWorkflowState::Paused` / `WsWorkflowState::Normal`
+    respectively. Approval resolution takes a parallel path:
+    `approve_handler` → `publish_approval_resolved` → in-process
+    broadcast + Redis pub/sub on `event_bus:approval_resolved`
+    (ADR-023 P0-3) → `WsMessage::ApprovalResolved { outcome:
+    "approved" }` → SDK's `_wait_for_approval_resolution`
+    `threading.Event` wakes up. The SDK's transport
+    auto-negotiates between WS push and HTTP polling; on a
+    persistent disconnect the SDK falls back to polling once per
+    second until the WS comes back.
+
+    WS push moves kill latency from the next polling tick to
+    frame delivery (sub-100ms in production). The HTTP-poll
+    fallback keeps the operator able to kill an agent through a
+    transient network blip instead of failing closed on WS
+    disconnect. The `message_id` ACK pattern means the gate's
+    StateChange events that trigger SDK exception raises are
+    reliably delivered — a lost kill frame would not silently
+    fail to kill an agent. Cross-org envelope validation at the
+    converter (`expected_org_id` check) is the in-process
+    defense-in-depth beyond the channel narrowing. The PascalCase
+    wire encoding (`State::as_pascal_case`) is the canonical
+    form (over the DB UPPERCASE variant) so the SDK's
+    `check_control_plane` comparison matches without casing
+    drift.
+
+    The HTTP-poll fallback is bounded by the gate's `wf_active`
+    cache TTL (60s) — a paused workflow observed only via polling
+    sees the new state at most one minute late. The WS reconnect
+    window after a persistent disconnect depends on the SDK's
+    auto-negotiation; if both WS and polling are blocked, the SDK
+    learns about the kill on the next `/gate` call only — kill
+    latency in the worst case is one LLM-call duration. The WS
+    HMAC `max_age_seconds = 300` is shared with the HTTP HMAC
+    config (`hmac_config.max_age_seconds`); a clock-skew >5min
+    between SDK and backend will reject otherwise-valid frames.
+    Keys with `secret_key = None` skip HMAC signing; for those
+    the server sends raw `WsMessage` (`send_signed_or_raw`
+    fallback) and increments `ws_unsigned_messages_total` so the
+    on-call sees the rotation signal. The
+    `WsMessage::ApprovalResolved` push is opt-in via
+    `?wait_for_approval=true` on the upgrade. Cross-replica
+    fan-out for approval events is best-effort Redis pub/sub — a
+    publish failure logs and is recovered by the next
+    `/approval-state/reconcile` (P1-4) tick. The `Killed`
+    terminal state means a re-killed workflow must be re-created
+    as a new workflow — there is no reactivation path.
 
 
 ---
@@ -2103,6 +2642,93 @@ exposing the secret.
 - [Configuration](../getting-started/configuration.md) — env vars
   for keys
 
+!!! info "Deep dive"
+
+    An API key is two independent secrets minted at create time
+    (`backend/src/proxy/http/api_keys.rs::create_api_key_handler`):
+    a raw key of shape `nr_live_<32 alphanumerics>` from
+    `auth/mod.rs::generate_api_key()` (62⁵² search space from
+    `OsRng`), and an HMAC secret of shape `<64 hex chars>` (32
+    random bytes) from `auth/mod.rs::generate_hmac_secret()`. The
+    HMAC secret is independent from the raw key — a 2026-07-06
+    bug-fix split them after a prior version reused
+    `generate_api_key()` for both, giving HMAC a 0-bit security
+    margin. Each request signs with
+    `HMAC-SHA256(secret, timestamp:api_key:body_hash)` and the
+    gateway verifies with constant-time compare via
+    `auth/hmac.rs::verify_hmac_signature`. Lookup is two-step:
+    `ApiKey::compute_fingerprint` returns `SHA-256(raw_key)[:16]`
+    hex for O(1) DB pre-check before Argon2 verify.
+
+    Multi-version rotation works through `HmacKeyStore`
+    (`auth/hmac.rs`): `load_key_versions_with_plaintext` keeps a
+    `HashMap<api_key_id, Vec<KeyVersion>>` in `Arc<RwLock>`, and
+    mutations publish `HmacKeyEvent` over Redis pub/sub channel
+    `nullrun:hmac:keys` so other pods re-apply via
+    `HmacKeySubscriber::spawn`. Plaintext never crosses pub/sub —
+    receivers re-fetch locally. Revocation is two-phase (ADR-010).
+    When `NULLRUN_AUTH_DRAIN_ENABLED=1`, the handler runs
+    `transition_to_rotating → drain_in_flight →
+    transition_to_revoked` via `proxy/auth_lifecycle/`. In-flight
+    count lives at `in_flight:{org_id}:{api_key_id}` and is bumped
+    via `redis/scripts/in_flight_inc_v1.lua` — Lua (not `INCR`)
+    because `INCR` drops TTL, which would leave a stuck counter
+    after a pod restart. Default TTL 300s aligns with
+    `AUTH_CACHE_TTL_SECS`.
+
+    HMAC timestamp freshness is a 5-minute sliding window
+    (`max_age_seconds = 300`) — replay protection via age check,
+    not nonce storage. Revoke is drain-aware: in-flight requests
+    finish before the key is terminal, so a long-running `/check`
+    cannot lose its reservation mid-flight. Redis hiccup during
+    in-flight increment is fail-CLOSED — the request is rejected
+    because the supervisor cannot guarantee accurate counts
+    during a future revoke
+    (`backend/src/redis/in_flight.rs::inc_in_flight`). The
+    server-mints `api_key_id` (UUIDv7) bound to `(org_id,
+    api_key_id)` in `organization_api_keys` — client-supplied IDs
+    are rejected. The HMAC secret is returned to the dashboard
+    ONCE at create time, stored as a hash on the server, and
+    never re-served.
+
+    Per-workflow binding (Phase 139): `workflow_id` column on
+    `organization_api_keys`, one key = one workflow, used as the
+    per-key group axis on `/control-center/api-keys`. Five scopes
+    are auto-assigned at create: `gate`, `execute`, `track`,
+    `verify`, `*`. A telemetry-only ingestor ships `track` only;
+    a CI checker ships `verify` only. `last_used_at` is updated
+    via the auth-cache hit path on every `/check` / `/execute` /
+    `/track` request that bears a valid `X-API-Key`. Per-plan key
+    cap (`seats_limit`-style lookup in
+    `dashboard::parse_plan_limits`): Lite = 10, Starter = 15,
+    Growth = 100, Scale = 350, Enterprise = unlimited. ADR-057
+    Lite Trial overlays Scale's cap for the trial window via
+    `resolve_plan_for_org_overlay_strict`.
+
+    Considered client-supplied `key_id` — rejected because of
+    ownership ambiguity on multi-tenant boundaries and a replay
+    surface against `consume_approved`. Considered a single-
+    version HMAC secret store — chosen multi-version instead so
+    an in-flight SDK can keep signing with the old secret while
+    the dashboard has already cut over to the new one (rotation
+    without downtime). Considered `INCR` + separate `EXPIRE` for
+    in-flight count — rejected because the gap between `INCR` and
+    `EXPIRE` lets a counter land without a TTL and never recover.
+    Lua serializes read-modify-write under Redis's executor so
+    `SET … EX ttl` is atomic.
+
+    The raw key value is shown exactly once — losing it forces
+    rotation (revoke + create). The HMAC secret is also shown
+    exactly once; losing it forces regeneration even if the raw
+    key is preserved. Cross-pod split-brain is a known trade-off:
+    a pub/sub outage leaves remote pods with a stale
+    `HmacKeyStore` until the next event (documented in
+    `auth/hmac.rs` as "stale peers until the next event" over
+    "blocking the SDK request behind a Redis call"). Two-phase
+    revoke is dormant behind `NULLRUN_AUTH_DRAIN_ENABLED=1`;
+    without the flag the handler falls through to immediate
+    revoke (preserves the pre-Phase-C wire contract).
+
 
 ---
 
@@ -2298,6 +2924,92 @@ see the exact request that triggered the decision.
   that produce `require_approval`
 - [Workflows](workflow.md) — where the merged policy is applied
 
+!!! info "Deep dive"
+
+    `aggregate_policies` is the single source of truth for the
+    gate's merged view. It iterates the
+    `policies` table once and applies per-type reduction:
+    `BudgetLimit` → `min()` on `config.budget_cents` (split by
+    scope into `budget_cents` / `wf_budget_cents` /
+    `org_budget_cents`); `RateLimit` → `min()` on
+    `max_calls_per_minute`; `ToolBlock` → union across
+    `tool_pattern` / `blocked_tools` / `tools` arrays
+    (HashSet-backed dedup, O(M+N) amortized). The result lands on
+    a `KeyPolicy` per `(org_id, api_key_id)` and is read on
+    every gate call. ADR-011 §"Decision priority" orders the
+    orchestrator at `run_gate_orchestrator` as
+    `Block > RequireApproval > Allow`: workflow_active →
+    parent_ownership → cycle_depth_check (ADR-036) → tool_block
+    (TB-1/TB-4 fail-CLOSED) → business_impact_validate →
+    rate_limit → budget_reserve, with the first non-`Allow`
+    short-circuiting the rest. Soft mode is folded into
+    BudgetLimit via three preconditions (`enforcement_mode=Soft`,
+    active chain, projected within `max_overdraft_cents` AND
+    `max_overdraft_percent`); when any precondition is missing
+    the gate behaves as Hard.
+
+    There is no "allow rule that overrides a block" — the system
+    is conservative on purpose (CLAUDE.md §"There is no allow
+    rule that overrides a block"). ToolBlock is always Hard
+    regardless of `enforcement_mode`: the orchestrator's Step 3
+    runs before the budget reserve, so a blocked tool never gets
+    a budget envelope minted. Approval rules are a SEPARATE rule
+    object — they do NOT share the ToolBlock config schema and
+    have no `action = require_approval` field on a ToolBlock
+    policy. Aggregator ordering is deterministic
+    (`aggregate_policies` runs synchronously on policy refresh
+    and writes into the cache before the gate sees the new
+    state). Per-org aggregate rate limit (ADR-029 §2) is Hard /
+    FailClosed; per-key is FailOpen with the budget gate as the
+    authoritative backstop. ADR-049 (policy aggregator
+    enforcement mode) restricts `enforcement_mode` aggregation to
+    BudgetLimit only — ToolBlock and RateLimit do not carry
+    `enforcement_mode`, so they cannot accidentally flip a Soft
+    BudgetLimit to Hard.
+
+    Both scopes apply at the same time (no "overrides"). The
+    dashboard's **Effective policy** tab calls
+    `workflows::aggregate_policies` which delegates to the same
+    `policy_cache::aggregate_policies` — single source of truth,
+    so the operator-visible merged set can never drift from the
+    gate's view. Per-key cap `KeyPolicy.max_budget_cents`
+    defaults to 0 (= no per-key budget → fall through to the org
+    plan cap), and `wf_budget_cents: Option<u64>` preserves the
+    `None`/`Some(0)`/`Some(n)` semantics: `None` means "no
+    policy applies, skip wf check"; `Some(0)` is a hard zero
+    ceiling that rejects every call; `Some(n)` enforces the cap.
+    The Rust `execute_with_degraded()` helper on
+    `RedisCircuitBreaker` / `PostgresCircuitBreaker` (ADR-055)
+    wraps every gate hot-path site so an infra partition
+    short-circuits sub-100ms instead of hanging 5–10s on
+    `pool.acquire()`.
+
+    The gate pipeline is the direct `check_tool_block → budget
+    check → Lua reservation` flow. Approval rules live in their
+    own table — a ToolBlock config has no typed `BusinessImpact`
+    predicate, so they cannot share a schema. Per ADR-029 §2,
+    per-key rate-limit is FailOpen (not FailClosed) because the
+    budget gate is the authoritative backstop and per-key rate-
+    limit is a secondary signal. The fixed-cents cap (default
+    1¢) for `max_overdraft_percent` is applied after the
+    percentage is multiplied by `max_budget_cents` and the two
+    are min'd (CLAUDE.md §"max_overdraft").
+
+    The aggregator cannot unblock a tool the org blocks — by
+    design; there is no "allow rule" precedence, only unions.
+    `ToolBlock` policies are gated to **Growth+** plans (Lite /
+    Starter cannot create them), and the gate enforces
+    `approval_rules = 0` server-side on Lite / Starter (even if a
+    key was minted on a higher tier and downgraded, rules are
+    retained for audit but no new rule can be created). The
+    aggregator's split-budget tracking (`wf_budget_cents` /
+    `org_budget_cents` / `policy_org_ceiling_cents`) carries
+    Option semantics end-to-end — `wf_budget = 0` is a hard zero
+    ceiling that rejects every call, not "no policy" (ADR-016
+    §2.10). The cache's `entry_version` field guards against
+    split-brain: a write with a stale `policy_version` is
+    rejected as cache miss (CLAUDE.md §31).
+
 
 ---
 
@@ -2487,6 +3199,86 @@ a call you think should be allowed:
 - [Human approval](human-approval.md) — the approval-rule path,
   distinct from ToolBlock
 
+!!! info "Deep dive"
+
+    ToolBlock policies flow through `check_tool_block`, which
+    resolves the canonical tool list as
+    `effective_tools = req.tools ++ req.tool` (TB-1/TB-2/TB-3/TB-4
+    fail-CLOSED trajectory) — singular `tool` is treated as the
+    primary tool when `tools` is absent or empty. The helper
+    looks up the per-key `KeyPolicy.tool_patterns` (set by the
+    aggregator at `aggregate_policies` walking the canonical
+    `tool_pattern` / `blocked_tools` / `tools` keys) and runs
+    `glob_match` for every entry. `glob_match_single` handles
+    single-`*` patterns; `glob_match_multi` splits on every `*`
+    and requires each non-empty literal segment to appear in
+    order. On match, the orchestrator returns
+    `Block { TOOL_BLOCKED }` with `details.matched_pattern` so
+    the audit log records exactly which pattern fired; the bridge
+    at `dispatch_policy_violation_alert` spawns a detached task
+    so a missing db handle never blocks the gate response. The
+    tool name validation at `validate_tool_name` rejects control /
+    newline bytes on BOTH the singular `tool` and every entry of
+    `tools[]` BEFORE the policy check runs.
+
+    ToolBlock is ALWAYS Hard, regardless of `enforcement_mode`
+    (CLAUDE.md §8). The orchestrator's Step 3 runs before the budget
+    reserve, so a blocked tool never gets a budget envelope minted
+    — the agent never runs an unverified sensitive operation.
+    Pattern length is capped at **4096 bytes per entry**
+    (`MAX_POLICY_PATTERN_BYTES`, `validation`); the cap exists
+    because the matcher scans every pattern on every gate call.
+    The validator rejects four fail-OPEN traps at policy creation:
+    `tool_pattern: ""`, `tool_pattern: []`, `config: {}`, and the
+    PLURAL `tool_patterns` key. The canonical key set is exactly
+    `{tool_pattern, blocked_tools, tools}` — any other key (typo
+    like `block_tools`, `tools_block`, `blocked_tool`) is rejected
+    with a `BadFormat` error, and the matcher is case-insensitive
+    against the canonical tool name (CLAUDE.md §8).
+
+    Glob variants: `*` alone matches everything; `bash.*`
+    smart-matches `bash` AND `bash.foo` / `bash.foo.bar` (templates
+    ship this shape); `send_*` matches anything starting with
+    `send_`; `*.drop_*` matches `s3.drop_table` because the
+    multi-`*` matcher takes literal segments in order. Alternation
+    via `|` (`bash|sh|shell` collapses three patterns into one
+    entry); no `**`, no `?`, no character classes — those are
+    rejected as literals. The aggregator HashSet-dedups
+    trimmed entries so `"bash"` and `"bash "` (trailing space)
+    collapse to one. `check_tool_block` runs inside
+    `run_gate_orchestrator` Step 3, BEFORE Step 5 rate-limit and
+    Step 9 budget reserve; a blocked tool never reaches the Lua
+    `RESERVE` call.
+
+    On the absent-`tools` path: when an SDK omits the `tools`
+    field and the key has active `tool_patterns`, the gate fails
+    CLOSED (`check_tool_block` runs). The matcher operates on the
+    canonical tool name only
+    (`glob_match_does_not_look_at_tool_arguments`); operators do
+    NOT write JSONPath rules over tool payloads (CLAUDE.md §"What
+    is NOT stored"). A ToolBlock policy never produces
+    `require_approval` because the two rule types (ToolBlock and
+    approval rule) have distinct config shapes. The 4096-byte
+    cap sits at the longest real-world pattern observed in
+    templates + operator overrides — a 10 MB pattern would burn
+    CPU on every gate call.
+
+    `ToolBlock` policies are gated to **Growth+** plans (Lite /
+    Starter cannot create them; the dashboard greys out creation
+    with an "Upgrade" link), and approval rules are a SEPARATE
+    feature gated by `approvals` (Growth: 20, Scale / Enterprise:
+    unlimited); the gate enforces `approval_rules = 0` server-side
+    on Lite / Starter. The matcher ignores whitespace inside
+    patterns (the LLM-facing tool name is stripped by the SDK before
+    `/check`), so operators who need to match a tool with whitespace
+    in its name must use a wildcard pattern instead of a literal.
+    The `*` pattern alone blocks EVERYTHING — narrowing is the
+    operator's responsibility; the "Effective policy" tab surfaces
+    the merged set so a misconfigured `*` is visible before it
+    ships. The validator's 4096-byte cap is per entry, so operators
+    that need longer patterns must split across multiple entries
+    (HashSet-dedup guarantees no duplicate enforcement).
+
 
 ---
 
@@ -2570,15 +3362,15 @@ Two predicate kinds are supported on `action_predicate`:
    }
    ```
 
-The `tool_parameters` predicate rides on the SDK's
-`ToolParamsExtractor`. With the default `include_all=True` mode,
-every kwarg of `@protect`-decorated functions flows into the
-predicate bag (positional args are dropped; `f64` / set / custom
-objects are filtered; PII-masked sentinels like `"***"` for
-`password` / `token` / `api_key` keys are stripped before wire).
-`@protect` auto-attaches the default extractor, so no second
-decorator is needed to make a tool eligible for `tool_parameters`
-rules.
+The `tool_parameters` predicate reads values out of `kwargs` the
+SDK ships on `/execute`. Every `@protect`-decorated function ships
+`tool_name + args + kwargs` on the wire — the predicate references
+the value by `param_name` in the dashboard rule editor and the
+gate evaluates it directly. Positional args are dropped; `float` /
+`set` / custom objects are filtered; PII-masked sentinels like
+`"***"` for `password` / `token` / `api_key` keys are stripped
+before wire. No second decorator is needed to make a tool
+eligible for `tool_parameters` rules.
 
 ## `action_digest` — tamper-evident binding
 
@@ -2761,19 +3553,24 @@ immutable anchor that proves the operator approved the exact payload
 the SDK sent on `/gate` (not "any refund" — the exact amount and
 arguments).
 
-## SDK-side extraction
+## SDK-side envelope
 
-The `action_digest` is **produced** by the SDK at extraction time.
-For the Python SDK, this happens inside `@sensitive(impact=...)`
-when you attach a typed `BusinessImpact` extractor — see
-[Decorators & extractors → `money_outflow(...)`](../reference/decorators.md#money_outflow-typed-money-impact)
-and [Decorators & extractors → `tool_params(...)`](../reference/decorators.md#tool_params-free-form-argument-bag).
+The `action_digest` is **produced** by the SDK on every `@protect`
+call. The envelope is the canonical NoImpact payload
+(`BusinessImpact.no_impact()` — `{"kind": "none"}`); the SDK
+canonicalises it (compact JSON, `nullrun/v1/business_impact:`
+prefix) and SHA-256-hashes it. The digest flows onto the wire on
+both `/gate` and `/execute`, and the backend re-computes the
+digest from the live payload to verify the grant.
 
-The extracted `BusinessImpact` is canonicalised (keys sorted
-recursively, compact JSON, `nullrun/v1/business_impact:` prefix)
-and SHA-256-hashed; the digest flows onto the wire on both
-`/gate` and `/execute`. A drift between SDK and backend is a P0
-security regression covered by the SDK's source-pin tests.
+The NoImpact envelope is the same for every `@protect` call — the
+SDK is policy-blind and ships only `tool_name + args + kwargs`.
+Approval rules reference `param_name` in the dashboard to read
+argument values for typed predicates (`money_amount` /
+`tool_parameters`). No SDK-side extractor or factory is needed.
+
+A drift between SDK and backend canonicalisation is a P0 security
+regression covered by the SDK's source-pin tests.
 
 ## See also
 
@@ -2838,8 +3635,7 @@ From left to right:
 
 1. **Prefix marker + workflow name + actor label** ("requested by X").
 2. **Hero amount** — for money-kind approvals, the spend line is
-   back on the row (reverted to inline from the dialog-only
-   placement) with the ▲ N× above $X limit relationship encoder
+   on the row with the ▲ N× above $X limit relationship encoder
    so the operator sees both the value and why it's over the
    limit in one glance. Tabular-nums at 28px semibold.
 3. **Why this needs approval** — the rule label, deep-linkable to
@@ -2885,14 +3681,12 @@ Dialog with the full detail panel:
 - Hero summary (amount / tool name + parameter bag).
 - **Why this needs approval** — the matched rule's human-readable
   predicate (`amount ≥ $50 USD`, `ANY(amount ≥ 5000, region IN [EU,US])`).
-- **Technical details** accordion — open by default after
-  2026-08-31, because the closed chevron alone failed to signal
-  that the rule_id / digest / execution_id rows lived behind the
-  disclosure. Rows: Action fingerprint, Execution ID, Rule +
-  rule label, Tool patterns, Per-call threshold, Rule priority
-  (lower = higher), Review window, Trust level chip
-  (`typed impact` / `LLM-cost only`), Rule created, and the
-  rendered Action predicate.
+- **Technical details** accordion — open by default. Rows:
+  Action fingerprint, Execution ID, Rule + rule label, Tool
+  patterns, Per-call threshold, Rule priority (lower = higher),
+  Review window, Trust level chip (`typed impact` /
+  `LLM-cost only`), Rule created, and the rendered Action
+  predicate.
 
 The Dialog intentionally has **no Approve / Deny controls** — the
 friction-level flow lives on the row, and the Dialog is for
@@ -2902,8 +3696,7 @@ review, not decision.
 
 The history view is the same page at `?tab=history` — a tab strip
 in the page header switches between **Pending** (default) and
-**History**. Old `/approvals/history` URLs redirect to
-`?tab=history` so existing links keep working.
+**History**.
 
 History rows are filtered to the last 30 days by default and
 support the same search / status filters as the pending feed.
@@ -2948,8 +3741,7 @@ curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/
 
 The full endpoint catalog — idempotency rules (`409
 approval_already_decided`), the post-approval `/execute`
-binding, and the digest-mismatch drift cases (`NR-A013` /
-`NR-A014`) — is in
+binding, and digest-mismatch drift cases — is in
 [HTTP API → approvals](../reference/http-api.md#approvals).
 
 ## Where to read next
@@ -2961,6 +3753,99 @@ binding, and the digest-mismatch drift cases (`NR-A013` /
 - [Audit log](error-handling.md#audit-trail) — every decision
   lands in the hash-chained audit log; the operator + `decided_by`
   UUID + `decided_at` are searchable.
+
+!!! info "Deep dive"
+
+    Every approval decision flows through the `approve_handler`
+    and `deny_handler`. Both extract the operator identity via
+    `extract_session_user_id`, then call
+    `ApprovalService::approve_with_method` or `approve` on
+    `SqlxApprovalRepository`. On success, `approve_handler` releases
+    the Redis envelope + decrements the pending-approval counter
+    (`compensate_envelope_and_counter`), then publishes
+    `EventBus::publish_approval_resolved`. The publish fans out
+    via both in-process broadcast (subscriber on the same replica)
+    and Redis pub/sub on `event_bus:approval_resolved`
+    (cross-replica fan-out, ADR-023 P0-3). On the receiving side,
+    `convert_envelope_to_ws_message` converts the envelope to
+    `WsMessage::ApprovalResolved { outcome, note, ... }` and pushes
+    it to the parked SDK agent. The auto-consume path (ADR-047)
+    is implemented by `consume_approval_handler` — it accepts an
+    `approval_id` and `organization_id` from the body, runs the
+    atomic `consume_approved_by_id_only` SQL UPDATE, and returns
+    one of `consumed` / `already_consumed` / `not_approved` (all
+    200 OK — the SDK treats all three as success). The expiry
+    sweeper cycles PENDING rows past `expires_at` to `EXPIRED`
+    (system-decider discriminator
+    `decided_by_kind = 'system_expiry'`, ADR-043) and
+    APPROVED+stale rows to the `REVOKED` status (ADR-056).
+
+    The approval row's `expires_at` is set at creation time from the
+    matched rule's `expires_in_seconds` (default 300s) — backend is
+    the source of truth, and the SDK reads `approval_timeout_seconds`
+    off the `/check` response. The approve handler's atomic UPDATE
+    flips status + `consumed_at` in a single SQL statement so the
+    `chk_consumed_at_status` constraint never observes a
+    half-stamped row. Cross-org IDOR is blocked at the SQL layer
+    (`service.get_approval(org_uuid, approval_uuid)`) — the repo
+    returns `None` on cross-org and the handler 404s with no
+    existence leak. Decision emission through `governance audit` is
+    best-effort fire-and-forget (`emit_approval_decision_audit`);
+    a transient DB blip never blocks the HTTP 204. The `decision`
+    field on the audit row is one of the typed `GovernanceDecision`
+    variants (`Approved` / `Denied`) — never a free-text string.
+    WS push is best-effort with the `/approval-state/reconcile`
+    fallback (P1-4) recovering missed events on the next reconcile
+    tick. Denial is terminal — the SDK raises
+    `WorkflowKilledInterrupt` (denial = kill for the originating
+    execution).
+
+    The terminal-feed UI reads from
+    `GET /api/v1/orgs/:org_id/approvals` which renders rows in
+    the `ApprovalStatusWire` enum (`Pending` / `Approved` /
+    `Denied` / `Expired` / `Consumed` / `Revoked`). The
+    `From<ApprovalStatus>` impl keeps `Consumed` distinctly from
+    `Expired`, so operators always see whether the SDK reused an
+    approved grant vs. the sweeper closed it. The friction-level
+    buttons map to `confirmation_method` values written to
+    `approvals.confirmation_method` and rendered verbatim
+    (`single_click` / `type_amount` / `type_action_amount`). The
+    SDK auto-consume endpoint closes `APPROVED` rows on the success
+    path of `mode="inline"` approvals, so inline approvals never
+    leave rows dangling past `expires_at`. The operator-cancel
+    path closes rows through the spawned cancel step.
+
+    The approval flow is two-phase: the gate returns
+    `require_approval`, then the operator decides, then WS push
+    resumes the SDK. `action_digest` (ADR-006) binds every
+    approval row to a SHA-256 of the `BusinessImpact` payload
+    (prefixed with `b"nullrun/v1/business_impact:"`); the
+    `/execute` re-check refuses any call whose recomputed digest
+    doesn't match. The auto-consume endpoint (ADR-047) closes
+    approved rows at the moment of truth (success path) instead
+    of after `expires_at + 60s`. The REVOKED status (ADR-056)
+    preserves the operator's `decided_by` so revocation does not
+    overwrite an explicit approve, keeping forensic convergence
+    on `audit_events`.
+
+    Approvals live behind the `approvals` plan feature (Growth+);
+    the `TierGate` prompt is rendered for plans below that. The
+    dashboard page is org-scoped via session cookie; SDK callers use
+    the org-less `/api/v1/approvals/{approval_id}/consume` path
+    because org identity is derived from the API key (no `{org_id}`
+    segment, unlike `/approve` / `/deny`). `confirmation_method` is
+    an unauthenticated audit-trail field — the server rejects
+    control characters at the handler edge
+    (`reject_control_chars_or_err`) to keep the audit-pollution
+    class closed on the approval surface. The expiry sweeper has
+    two cycles per tick (PENDING → EXPIRED and APPROVED+stale →
+    REVOKED); the §10.1 retraction guarantees `decided_by` /
+    `decided_at` are never overwritten on REVOKED. The WS push is
+    opt-in via `?wait_for_approval=true` on the upgrade. Cross-
+    replica fan-out is best-effort Redis pub/sub — a publish
+    failure logs and is recovered by the next periodic reconcile,
+    but the originating replica's in-process broadcast always
+    fires (so the local SDK agent always sees the event).
 
 
 ---
@@ -3127,7 +4012,7 @@ message on failure", use the no-boilerplate helpers. The first
 `@protect` call lazily creates the runtime:
 
 ```python
-from nullrun import protect, shutdown
+from nullrun import protect
 
 @protect
 def my_agent(prompt):
@@ -3135,11 +4020,8 @@ def my_agent(prompt):
 
 
 if __name__ == "__main__":
-    try:
-        with nullrun.handle():
-            print(my_agent("What does NullRun do?"))
-    finally:
-        shutdown()
+    with nullrun.handle():
+        print(my_agent("What does NullRun do?"))
 ```
 
 What your terminal looks like on a rate-limit hit. `handle()` prints
@@ -3167,10 +4049,9 @@ use the un-`handle()` form and add your own
 
 `handle()` is the recommended form: it gives a clearer scope,
 accepts an `exit_code` argument, and the four-line report is what it
-always renders. `@guarded` is the decorator equivalent of the same
-behaviour.
+always renders.
 
-`handle()` / `guarded()` are for scripts and one-shots. For
+`handle()` is for scripts and one-shots. For
 long-running services you want explicit handling — see
 [Server frameworks](#server-frameworks) below.
 
@@ -3178,8 +4059,7 @@ long-running services you want explicit handling — see
 
 If you want your own error messages (e.g. "You've used all your
 support credits" instead of the default wording), call
-`set_user_message` once at the top of your entry point (or register
-it via `atexit`):
+`set_user_message` once at the top of your entry point:
 
 ```python
 import nullrun
@@ -3280,11 +4160,11 @@ except NullRunError:
     log.error("agent failed", exc_info=True)
 ```
 
-`handle()` / `@guarded` catches kill via the standard `NullRunError`
+`handle()` catches kill via the standard `NullRunError`
 arm — it prints the structured four-line report and exits 1. To keep
 the process alive on kill (checkpoint, notify a supervisor, then
-exit), use the un-`@guarded` / un-`handle()` `protect()` form with
-your own `except NullRunWorkflowKilledError:` arm above.
+exit), use bare `@protect` with your own `except NullRunWorkflowKilledError:`
+arm above.
 
 ## See also
 
@@ -3294,6 +4174,81 @@ your own `except NullRunWorkflowKilledError:` arm above.
 - [Use with FastAPI](../how-to/fastapi.md) — exception handling
   inside ASGI handlers
 - [Tracing](tracing.md) — how errors map to spans
+
+!!! info "Deep dive"
+
+    Wire codes are minted by a single `GateErrorCode` enum. The
+    `#[serde(rename_all = "SCREAMING_SNAKE_CASE")]` derive guarantees
+    the on-the-wire string matches the variant name verbatim (e.g.
+    `BudgetHardBlocked` → `"BUDGET_HARD_BLOCKED"`), and the
+    `as_str()` match arm is the authoritative source of truth —
+    adding a variant is a minor-bump protocol change, renaming is a
+    major bump. HTTP status is per-code: money-math (402),
+    security / ownership (403), lineage lookup miss (404),
+    rate-limit (429), semantic validation (422). The wire envelope
+    shape is `{error_code, error_message, details, retry_after_ms}`;
+    `/gate` and `/execute` route through the same response helper
+    so block decisions carry their canonical HTTP 4xx status on
+    every endpoint. The kill path publishes a
+    `WorkflowEventPayload::StateChanged` to the EventBus, the WS
+    control plane pushes `WsMessage::StateChange` with
+    `WsWorkflowState::Killed`, and the SDK raises
+    `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`).
+
+    Every gate rejection is fail-CLOSED. The orchestrator runs the
+    steps in priority order (`Block > RequireApproval > Allow`) and
+    short-circuits on the first non-Allow, so the SDK sees a 4xx
+    block before any budget envelope is minted. The Lua
+    `RESERVE_SCRIPT` returns typed 5-tuple diagnostics
+    (`{spent, budget, projected}`) so operators can reconstruct the
+    rejection from logs alone. The Redis and Postgres
+    circuit-breakers wrap every gate hot-path site, so a partition
+    short-circuits sub-100ms (`FailClosed` / `Buffered` / `Degraded`
+    modes) instead of hanging on `pool.acquire()`. The kill signal
+    inherits from `NullRunError`, so `except Exception:` catches it
+    alongside every other SDK error; `with nullrun.handle():`
+    catches it via the standard `NullRunError` arm and prints the
+    structured four-line developer report.
+
+    Wire codes fall into three buckets: **decision** (block / allow /
+    require_approval), **infrastructure** (Redis-down, Postgres-down,
+    `BUDGET_REDIS_UNAVAILABLE`, `IDEMPOTENCY_REDIS_UNAVAILABLE`), and
+    **transport** (`INVALID_JSON` / `INVALID_FIELD` from JSON
+    rejection). The SDK's `exc.error_code` is the stable
+    machine-readable identifier; `exc.retryable` and
+    `exc.retry_after` drive the SDK's retry/backoff loop.
+    Approval-flow codes (`APPROVAL_NOT_FOUND`, `APPROVAL_DENIED`,
+    `APPROVAL_EXPIRED`, `APPROVAL_DIGEST_MISMATCH`,
+    `APPROVAL_TOOL_DIGEST_MISMATCH`, `APPROVAL_REPLAY_REJECTED`,
+    `APPROVAL_NOT_YET_APPROVED`) all share the 403 / 404 buckets
+    with other ownership / auth-family codes. The kill signal flows
+    through the WebSocket envelope as `WsWorkflowState::Killed` →
+    `WsApprovalOutcome::Denied` (or `Expired`) → SDK raises
+    `WorkflowKilledInterrupt`, and the `@nullrun.on_error` hook
+    fires once per `NullRunError`, **including the kill signal** —
+    filter on `error_code` (`"NR-W002"`) to skip it.
+
+    Wire codes are wire-shape-strict — renaming a `GateErrorCode`
+    variant is a major-bump protocol change because SDK switch
+    statements branch on the string. The HTTP status mapping is
+    per-code; HTTP 200 + block body is intentional for `/gate` (the
+    gate is a pre-flight probe, SDK branches on the body) but
+    `/execute` returns the same 4xx block body so SDKs that branch
+    on HTTP status first (`httpx.raise_for_status`) see the block.
+    The kill signal cannot be silently dropped —
+    `WorkflowKilledInterrupt` inherits from `NullRunError` and
+    `except Exception:` catches it; an SDK that catches only
+    `NullRunBlockedException` and swallows everything else will leak
+    the kill. The `on_error` hook fires for every `NullRunError`
+    including kill — operators who wire Sentry capture on the hook
+    will see kill events; filter on `error_code` (`"NR-W002"`) to
+    skip them. The `is_approximate: true` flag on
+    `ApproximateBudgetResponse` is mandatory — never render a 0¢
+    spend on the 503 path (`BUDGET_DATA_UNAVAILABLE`), only a "data
+    unavailable" CTA. Idempotency on `/gate` and `/track` routes
+    through `IdempotencyStore` (atomic SETNX + atomic Lua mutate)
+    so SDK network retries return the stored response instead of
+    minting a fresh `reservation_id`.
 
 
 ---
@@ -3442,10 +4397,11 @@ that qualify as drift:
    someone added tools without re-probing. Write approval rules
    for any destructive verb before they are used.
 2. **`disappeared` mismatch with prior SDK activity** — the
-   probe once succeeded AND the SDK used to call this source, but
-   the calls have stopped in the last 30 days. Usually means an
-   upstream server upgrade. Review to confirm it isn't the agent
-   silently failing over to a different server.
+   probe succeeded at least once AND the SDK has called this
+   source before, but the calls have stopped in the last 30
+   days. Usually means an upstream server upgrade. Review to
+   confirm it isn't the agent silently failing over to a
+   different server.
 3. **`schema_drift === true`** — an action's input schema (keys
    and types of its argument bag) changed within the window. Pin
    the new schema before allowing the action.
@@ -3480,6 +4436,126 @@ probe scheduler on it.
   drilldown lands here).
 - [Sensitive tools](sensitive-tools.md) — recommended starter
   patterns for destructive actions.
+
+!!! info "Deep dive"
+
+    The page is one row per Action Source (`mcp://<server_name>`),
+    not two parallel surfaces — the operator thinks in Action
+    Sources, not in two underlying tables. Per ADR-007, each row
+    has a `verification` block (operator-registered
+    `mcp_discovery_configs`) and an `observation` block
+    (SDK-driven `mcp_observed_tools`).
+
+    The list endpoint is
+    `GET /api/v1/orgs/:org_id/action-sources` (ADR-007), wired
+    to `list_active_action_sources_handler`. The SQL is one
+    INNER + LEFT JOIN with a 30-day `window_days` filter;
+    orphans (observed but not registered) surface in a separate
+    "Discovered but not registered" panel via
+    `list_discovered_only_per_org`. A new row only appears once
+    the operator registers or enrolls — the runtime does not
+    silently materialise registered entries (page mirrors the
+    operator's world, not the SDK's).
+
+    Discovery probe is a synchronous JSON-RPC handshake against
+    the MCP Streamable HTTP transport: `POST initialize` (`Accept:
+    application/json, text/event-stream`, JSON-only) then
+    `POST tools/list`, with a 10s wall-clock timeout
+    (`PROBE_TIMEOUT`). No async job queue is spawned here. The
+    `ProbeScheduler` wakes every 60s
+    (`DEFAULT_SWEEP_INTERVAL_SECONDS`), skips the first tick
+    on boot, and re-probes any server whose
+    `poll_interval_seconds` has elapsed. The per-row cadence
+    lives on the column; the constant governs how often the
+    table is consulted.
+
+    The observation helper (`record_observation`) is
+    fire-and-forget from the gate: `tokio::spawn`'d so /check
+    latency is untouched. UPSERT is
+    `ON CONFLICT (organization_id, server_name, tool_name) DO UPDATE`
+    that bumps `call_count` and `last_seen_at = NOW()`, with
+    `COALESCE(EXCLUDED.api_key_id, …)` preserving the
+    FIRST-seen audit-bound key.
+
+    Signature hashes — `compute_schema_hash` is SHA-256 of
+    the canonicalised argument-bag SHAPE (keys sorted
+    lexicographically, type tags only, NOT values). So
+    `{"x": 1}` and `{"x": "1"}` are different schemas (integer
+    vs string), but `{"a": 1, "b": 2}` and `{"b": 2, "a": 1}`
+    collapse to the same digest.
+    `compute_description_hash` is literal SHA-256 of the
+    description text — whitespace matters; a trailing space is
+    drift. The drift detector (`find_drifts`) returns `(org,
+    server, tool)` triples whose distinct `(schema_hash,
+    description_hash)` count is `>1` within the window. Opt-in
+    via `NULLRUN_MCP_SIGNATURE_DRIFT=1` — default OFF: the
+    system still records every signature row, the cron that
+    emits the alert just doesn't run.
+
+    Probe timeout 10s — fits inside the typical 30-60s upstream
+    keep-alive window so a slow server surfaces as
+    `ProbeError::Timeout`, not a 504 dragging out. Probe is
+    fail-CLOSED inside the keep-alive window — refuses to block
+    on a slow upstream. Schema hash is shape-only — value
+    changes don't trip drift; key add/remove does. Crucial for
+    cheap-model tokens where the value shifts but the contract
+    is stable. Description hash is whitespace-sensitive — even a
+    single trailing-space flip trips drift. The
+    canonicalisation layer (lowercasing, stripping) is
+    intentionally out of scope; better to flag
+    potentially-benign whitespace changes than miss real drift.
+    Probe transport is allow-listed — `http://` and `https://`
+    only; `stdio://`, `file://`, anything else returns
+    `ProbeError::UnsupportedTransport` at the wire boundary
+    (`validate_transport_url`).
+    `disappeared` with no prior SDK activity is NOT drift —
+    there is no baseline to compare against; it renders as
+    `N verification pending — not drift`, and the `Unverified`
+    filter is the right view.
+
+    Three drift states are surfaced on the Drift card:
+    `unannounced` (SDK called tools not in last probe catalog),
+    `disappeared` (probe succeeded at least once AND SDK has
+    called this source before, no calls in 30d), and
+    `schema_drift` (input schema keys/types changed within
+    window). The "Discovered but
+    not registered" panel renders orphans with an Enroll CTA that
+    pre-fills the source URL the SDK last used. The per-action
+    `Create approval rule` deep link routes to
+    `/control-center/policies/approval-rules?prefill_source=…&prefill_action=…`
+    so operators can write a typed-predicate rule for one
+    specific action without typing the path. The `Origin` badge
+    on each catalog row reads `Probe` / `Observed` /
+    `Probe + observed` — distinguishing "what the upstream
+    catalog says" from "what the SDK actually called".
+
+    The SSE parser for the streaming MCP transport is out of
+    scope — the JSON-only transport keeps the parser maintenance
+    burden low. Shape-only canonicalisation keeps "value
+    flipped" from being treated as drift. The canonicaliser is
+    intentionally NOT RFC 8785 JSON canonicalisation — the
+    drift detector wants "shape changed", not "bytes differ".
+    Sync probe + 60s sweep handles the current scale without an
+    async worker probe queue. ADR-007 collapses registry +
+    observation into one Action Source row with two parallel
+    sub-blocks rather than two parallel surfaces.
+
+    `schema_hash` is shape-only — value-level drift (e.g. a
+    `--force` flag flipping `true → false`) is NOT detected.
+    The contract is the argument shape; behavioural changes are
+    out of scope. `description_hash` is whitespace-sensitive —
+    single trailing-space changes are surfaced as drift even
+    when functionally benign. The probe scheduler reads the
+    whole per-org footprint without LIMIT/OFFSET
+    (`find_drifts` paginates per-org via the caller's cron);
+    for multi-tenant operators with thousands of orgs, the
+    per-org footprint stays bounded but the total cron work is
+    linear in org count. The 30-day observation window is
+    hardcoded in the handler as `let window_days: i32 = 30;` —
+    change requires a separate runbook per `CLAUDE.md §17`
+    (wire-stable window). A `disappeared` + no prior SDK
+    activity source is intentionally NOT classified as drift
+    — verification-pending is the right bucket.
 
 
 ---
@@ -3518,9 +4594,8 @@ down the live state:
 Zero-count tiers collapse out of the subtitle so a clean org
 shows just `0 active · 0 resolved` with no visual noise. The
 counts come from the unified `AlertListMeta` payload (per
-ADR-037); pre-fix, the **info** tier was silently dropped from
-the subtitle, which hid the third of three severities from
-operators.
+ADR-037) and always include the **info** tier alongside
+critical and warning — all three severities surface to operators.
 
 The header action is **Dismiss all (N)** when at least one active
 alert exists; clicking it opens a confirmation Dialog
@@ -3619,6 +4694,82 @@ API directly even if the page itself doesn't render.
   subscribe events.
 - [Audit log](error-handling.md#audit-trail) — every dismiss /
   snooze is recorded as an audit row.
+
+!!! info "Deep dive"
+
+    The Alerts page is served by the alerts HTTP handler.
+    `GET /api/v1/orgs/:org_id/alerts` returns
+    `{ data: AlertResponse[], meta: AlertListMeta }`. The wire
+    shape `AlertListMeta` carries `total`, `critical_count`,
+    `warning_count`, and `info_count` — all three severities
+    surface per ADR-037. The `Alert` domain model defines
+    `AlertSeverity = {Critical, Warning, Info}`, `AlertCategory`
+    = `{Prevented, System}`. Alerts flow in from three producer
+    groups: the `mirror_incident_to_alert` SQL trigger mirroring
+    `prevented_incidents` (Prevented kind), System producers
+    (spend thresholds 80/95/100; `api_key_revoked` classified
+    as Warning), and bridge-mirrored System events.
+
+    Severity classification is server-side: `api_key_revoked`
+    is classified as Warning; the severity ladder (80/95
+    Warning, 100 Critical) reserves Critical for hard-block
+    signals. The plan-tier gate is server-side: `Feature::Alerts`
+    is enforced on LIST, dismiss, snooze, and dismiss-all
+    handlers; a Lite user cannot enumerate alerts by API bypass
+    even though the dashboard link is hidden. Header counts
+    match listed rows: `critical_count` / `warning_count` /
+    `info_count` are scoped to the same `?category=` filter
+    so the operator never sees a count that disagrees with
+    what's on screen. Category invariant: System alerts MUST
+    have `workflow_id = None` and `workflow_name = None`; the
+    writer enforces before insert. Dismiss is idempotent:
+    dismissing an already-dismissed alert is a no-op; every
+    dismissal writes one audit row per ADR-009 four-table
+    separation.
+
+    The three-tier active set is
+    `dismissed = false AND (snoozed_until IS NULL OR snoozed_until < now())`
+    — the same predicate is reused by the three
+    `count_active_by_severity` calls, so the `info_count` field
+    reuses the active-set query. `?category=` rejects unknown
+    values: the handler returns 400 with the supported set. The
+    spend-threshold chip ladder is 80% Warning (`blue` tone
+    chip), 95% Warning (`yellow` tone chip), 100% Critical
+    (`red` tone chip) per ADR-037 §5; the wire shape is the
+    same, only the frontend `AlertChip["tone"]` ladder.
+    Severity × category are orthogonal: `prevented × critical`
+    (budget_block) and `system × info` (member_invited) are
+    both real combinations — severity is urgency, category
+    is ownership (ADR-037 §2).
+
+    ADR-037 codifies the `AlertIncidentKind` discriminated
+    union on the frontend mirroring the whitelisted
+    `incident_type` values from `prevented_incidents`, System
+    titles (spend thresholds, `api_key_revoked`), and bridge-
+    mirrored titles (`approval_required`, `workflow_state_change`,
+    `loop_detected`, `policy_violation`, `member_invited`,
+    `api_key_created`) plus catch-alls (`unrecognized`, `other`).
+    The unified `ALERT_DESCRIPTORS` lookup table maps each
+    kind to icon/label/chips/CTA. The taxonomy is enforced in
+    three places that MUST stay aligned: the backend producer
+    sites (the spend-threshold dispatcher, the API-key
+    revocation site, the bridge dispatchers, the cron-rule
+    dispatcher), the SQL mirror trigger
+    (`prevented_incidents` → `alerts`), and the frontend
+    `classifyAlert` classifier.
+
+    Coarse severity enum (3 tiers): no "Investigate" or "Watch"
+    tier between Warning and Info — the chroma ladder (`blue` /
+    `yellow` / `red`) is the only in-band signal between them.
+    Bridge rate-limit bucket of 1/15min/org per detector_type: a
+    burst of bridge alerts sharing a `detector_type` collapses;
+    rapid emissions are silently dropped at the channel layer.
+    Dismiss-all is org-wide: no per-workflow dismissal path —
+    the operator who wants workflow-scoped cleanup must dismiss
+    row-by-row. The snooze trail is column-only: who-snoozed-
+    when is in `alerts.snoozed_until` but the per-row snooze
+    actor is not surfaced on the alerts view — only in the
+    dedicated audit log.
 
 
 ---
@@ -3758,6 +4909,97 @@ alert-rules section, when split out).
 - [Alerts](alerts.md) — the read surface for what fired.
 - [Audit log](error-handling.md#audit-trail) — every channel and
   rule mutation is recorded as an audit row.
+
+!!! info "Deep dive"
+
+    Notification channels live in `backend/src/alert/`. Channel
+    rows are persisted in `alert_channels`; the `ChannelType`
+    enum (`backend/src/alert/models.rs`) is two-valued — `Slack`
+    and `Webhook` — after P1-43 (2026-08-17) removed the `Email`
+    variant because the email backends silently lost deliveries.
+    Slack uses OAuth via
+    `slack_installations.encrypted_bot_token`; webhook channels
+    carry an optional HMAC secret. `AlertManager::send_alert`
+    (`backend/src/alert/managers.rs`) is the dispatch entry — it
+    loads enabled channels, then calls `persist_bridge_alert`
+    which writes the row to the `alerts` table, then rate-limits
+    per `(org_id, detector_type)`, then delivers. The persist
+    step is the ADR-037 §6 fix that closes the "fresh-install org
+    with no channels sees zero rows" gap. Alert rules are
+    evaluated by the cron worker
+    (`backend/src/cron::run_alert_rule_check`), which calls
+    `dispatch_rule_to_channels`
+    (`backend/src/alert/dispatcher.rs`).
+
+    Channel delivery atomicity: `get_enabled_channels` reads
+    `enabled = true` rows and `test_mode = true` channels are
+    partitioned off (P1-26) so real detector emissions never
+    reach channels flagged as test-only. Per-detector rate
+    limit: Redis key
+    `alert:ratelimit:{org_id}:{detector_type}:{window}` enforces
+    1 alert per 15-minute window per org (one bucket per
+    detector kind). HMAC webhook integrity: outgoing webhooks
+    carry `X-NullRun-Signature`, `X-NullRun-Timestamp`,
+    `X-NullRun-Nonce`; the canonical signing string is
+    `<unix_ts>.<nonce>.<body>` and `HMAC-SHA256(secret, payload)`
+    is computed in constant time
+    (`backend/src/alert/webhook_signing.rs`). Replay defence:
+    5-minute clock-skew tolerance + 10-minute Redis nonce TTL —
+    the ledger TTL matches the timestamp-drift window so the
+    ledger can never outlive a valid timestamp. Fail-CLOSED on
+    `notification_settings` lookup: a DB transport error opts
+    the org out (silent opt-out) rather than amplifying during
+    a DB blip (`backend/src/alert/bridges.rs`); the
+    `record_alert_skipped_db_unavailable` counter surfaces the
+    degraded mode. Audit row is always written:
+    `persist_bridge_alert` runs BEFORE the empty-channels
+    early-return, so even an org with zero channels sees the
+    row on `/alerts` — this is the load-bearing placement.
+
+    Per-org opt-out flags: `notification_settings.notify_on_workflow_killed`,
+    `notify_on_approval_required`, etc. are checked by each
+    bridge before constructing the `AlertPayload`. A NULL row
+    reads as `TRUE` (default-on); a DB error reads as `false`
+    (fail-CLOSED). Slack shape: Slack incoming webhooks accept
+    POST JSON, so no Block Kit transform is applied — the same
+    generic JSON body lands in both Slack and Webhook channels.
+    Channel test: `POST /api/alert_channels/{id}/test` posts a
+    synthetic payload; the response surfaces the backend error
+    per channel. Bridge dispatch is fire-and-forget: bridge
+    dispatchers `tokio::spawn` so the calling site stays
+    synchronous — failures are best-effort and never block the
+    producer (`backend/src/alert/bridges.rs`).
+
+    The `Email` channel was removed (P1-43) because SendGrid
+    required explicit opt-in and SES/SMTP were permanent stubs
+    returning `Err`; operators saw deliveries silently lost. The
+    Postgres `alert_channels.channel_type` column kept the
+    `text` type (not ENUM) precisely so old `email` rows parse
+    to `Err("Unknown channel type")` rather than being silently
+    re-promoted to another type — surfaced as 400 on PATCH. The
+    Slack + Webhook pair was chosen because Slack's
+    incoming-webhook shape accepts JSON out of the box (no
+    Block Kit required) and webhook covers arbitrary HTTPS
+    receivers with HMAC verification for the operator who needs
+    PagerDuty / Datadog / oncall rotation. Legacy `pagerduty` /
+    `discord` aliases were removed in Y-3 because they silently
+    downgraded to Slack-shaped Block Kit JSON and never
+    triggered the upstream incident.
+
+    Two channel types only: Slack + Webhook. No native email /
+    SMS / PagerDuty / Discord; legacy aliases (`email`,
+    `pagerduty`, `discord`) surface as explicit `Err` on read.
+    Pre-existing `email` DB rows are read-only: the read path
+    returns `Err`, the write path returns 400, and an operator
+    must delete + re-create as `slack` / `webhook`. The
+    rate-limit bucket is per-detector coarse: bursts of
+    different alerts sharing a `detector_type` collapse to 1
+    per 15 minutes per org. The webhook receiver clock-skew
+    window is fixed at 5 minutes — receivers with more than
+    5-minute clock drift from the sender silently drop the
+    signature check, so the receiver MUST verify
+    `X-NullRun-Timestamp` drift before recomputing the
+    signature.
 
 
 ---
@@ -3931,6 +5173,102 @@ comparison table before being asked to pay.
 - [Workspace & Org](organization.md) — for changing the org
   name / contact email / DPA acceptance.
 
+!!! info "Deep dive"
+
+    The billing surface lives in `backend/src/billing/`. The
+    `BillingPlan` enum (`backend/src/billing/models.rs`) is the
+    canonical plan identifier — `Lite | Starter | Growth | Scale |
+    EnterpriseUnlimited`, with `enterprise_unlimited` as the
+    canonical id for the Enterprise tier. The legacy `enterprise`
+    string was reclaimed by migration 030 to carry Scale content;
+    the real Enterprise tier lives under `enterprise_unlimited`
+    in the `plans` table. Subscription lifecycle is driven by
+    `SubscriptionStatus` (`models.rs`) — 4-state machine `Active
+    | PastDue | Cancelled | Expired`. State transitions are
+    gated by `can_transition_to`: only `Active → {PastDue,
+    Cancelled, Expired}` and `PastDue → {Active, Cancelled,
+    Expired}` are valid. `Lite` is the implicit pre-checkout
+    state (no `billing_subscriptions` row). Polar integration is
+    in `backend/src/billing/polar.rs`; webhook signature
+    verification (`verify_webhook_signature`) uses
+    `t=<ts>,v1=<hex_hmac>` HMAC-SHA256 with a 5-minute replay
+    window.
+
+    The Polar customer portal is NOT a product surface:
+    `create_customer_session` was removed 2026-07-07
+    (`provider.rs` note, `polar.rs`); both **Manage
+    subscription** and **Update payment method** controls render
+    a `mailto:support@nullrun.io` deep-link with a pre-filled
+    subject + body. Auto-checkout on first mount is preserved
+    when `pending_checkout_plan` is set in sessionStorage. There
+    is no `Trialing` state — paid plans go straight to `Active`
+    after Polar checkout; Lite is free forever with no trial. The
+    subscription state machine is strict — invalid transitions
+    fail at `can_transition_to`; no implicit re-billing or status
+    rewind. ADR-039 wires yearly pricing: `BillingPeriod` enum
+    carries `"year"` / `"month"` end-to-end; the wire string is
+    `"year"` to match the frontend
+    `BillingData.billing_cycle: "monthly" | "year"` type.
+    ADR-039 also wires `yearly_price_cents` from the `plans`
+    table — no hard-coded literals. ADR-057 Lite Trial overlay:
+    mid-trial Lite orgs get Scale-equivalent caps
+    (`executions_limit`, `policies_limit`, etc.) without
+    changing `organizations.plan_id`.
+    `is_trial_active(started, expires, now)` is the resolver
+    invariant (`trial_bundle.rs`); `activate_subscription_atomic`
+    clears the trial in-tx (`db/mod.rs`). Deploy-day gated by
+    `NULLRUN_LITE_TRIAL_ENABLED=1`.
+
+    Single source of truth = `plans` table: both `price_cents`
+    and `polar_id` are read at runtime via
+    `Database::get_plan_config(plan)` (`models.rs`); no
+    hard-coded literals in code. `GET /api/v1/plans` is
+    unauthenticated and cacheable: used by both the dashboard
+    shell and the public pricing page. The endpoint lives
+    outside `createApiClient` so the page shell fetches it once
+    and threads it through both tabs. The canonical upgrade-
+    prompt redirect is `TierGate → ?tab=plan`: TierGate on a
+    gated page, the at-risk banner on any page, and the
+    `Upgrade plan` button in a feature empty-state all deep-link
+    to `?tab=plan`. Yearly prices are computed client-side:
+    `computeYearlyPriceCents` matches the public pricing page;
+    the wire value `billing_cycle: "year"` matches the backend
+    `BillingPeriod::Yearly.as_str()`.
+
+    The customer portal was retired because the Polar "cancel"
+    button always lost paid users (the portal didn't surface
+    what NullRun charged or why). Removing it forces
+    payment/cancel decisions to `mailto:support@nullrun.io`,
+    where support can route around churn rather than losing the
+    relationship to a vendor UI. The merge of `/billing` and
+    `/plan` into a single URL with `?tab=` came from the
+    operator pattern of asking "should I upgrade and how do I
+    pay" — two pages meant two round-trips for the same
+    decision. The Plan tab is comparison-only; the Billing tab
+    carries the action surface. Anything that looks like a
+    payment decision deep-links to Billing. The `enterprise` id
+    reclaim by migration 030 was a deliberate choice — the
+    legacy `enterprise` id was reused rather than deprecated to
+    avoid an old `subscription` row pointing at a now-missing
+    plan id (which would block `current_period_end`
+    calculations). New rows must use `enterprise_unlimited`;
+    old rows still resolve correctly because the `plans` table
+    carries the id mapping.
+
+    No self-service cancel: cancel is a `mailto:support@nullrun.io`
+    deep-link — `Manage subscription` no longer opens a portal.
+    No customer-side invoice-management portal: invoice
+    downloads are wrapped in `URL.createObjectURL` blobs
+    because `window.open` cannot carry the bearer token. The
+    `enterprise` id on the wire carries Scale content: only
+    `enterprise_unlimited` is the canonical Enterprise id;
+    operators querying by id must use the canonical form.
+    ADR-057 trial overlay is deploy-day gated: the code is
+    shipped (`98df0e5b` local commit) but
+    `NULLRUN_LITE_TRIAL_ENABLED=1` must be flipped before the
+    overlay takes effect for new signups — pre-flip, Lite
+    signups get the canonical Lite caps.
+
 
 ---
 
@@ -4044,6 +5382,97 @@ who did what to whom.
   upgrades are purchased.
 - [Audit log](error-handling.md#audit-trail) — every team
   mutation leaves a row.
+
+!!! info "Deep dive"
+
+    Four-role matrix in `backend/src/auth/rbac.rs::Role`
+    (`Viewer < Operator < Admin < Owner`, an `Ord` enum so
+    capability checks can compare tiers). Storage-side roles live
+    in `db::OrganizationRole` — three names match (`Viewer /
+    Admin / Owner`) and one diverges: `Operator` is a
+    runtime-action tier between Admin and Viewer, while `Member`
+    is the storage tier for "regular user". The two enums are
+    NOT isomorphic; the bridge `Role::to_organization_role`
+    returns `None` for `Operator` so callers must explicitly
+    decide whether to fall back to `Member` or reject. Migrations
+    345 + 346 add `CHECK` constraints on the DB column so the
+    storage side stays the source of truth.
+
+    Owner authority is **bootstrap**: the
+    `organizations.owner_user_id` column grants it regardless of
+    plan. Admin authority is gated on
+    `plan::contract::Capability::Rbac` —
+    `team.rs::check_caller_is_admin_or_owner` calls
+    `resolve_plan_for_org_overlay_strict()` (ADR-057
+    trial-aware) and returns 503 + `Retry-After: 5` on plan
+    lookup failure (fail-CLOSED per `CLAUDE.md §4`). The check
+    honours DB ownership first, then `members.role` — a
+    `role="admin"` row on a plan without `Capability::Rbac` is
+    treated as no admin authority (INV-4 / Sprint N+1 fix).
+
+    Seat quota lives on `plan.limits.seats` (migration 137) with a
+    defensive merge to `plan.features.seats` if `limits.seats` is
+    absent. ADR-057 overlays Scale's 50-seat cap for an active
+    Lite trial; `team.rs::invite_handler` reads
+    `db.get_org_trial_state` and substitutes `"scale"` before the
+    cap lookup, with `seats_used >= seats_limit` returning `429
+    seat_limit_exceeded`. Pending invites share the quota
+    (`list_organization_members` is the only counter — invites
+    incur a real cost). Invites fan out via three side-effects:
+    `db.create_organization_invite` writes the row + token,
+    `email::send_invite_email_async` dispatches SMTP and writes
+    `email_send_log` (migration 138), and
+    `alert::dispatch_member_invited_alert` fires the
+    notification bridge so the `member.invite` toggle in the
+    dashboard surfaces.
+
+    The sole-owner invariant is structural — migrations 345/346
+    add the `CHECK` constraint and the `check_role_minimum` gate
+    refuses to demote the last owner. Seat cap is hard
+    fail-OPEN-with-rev-429 — the operator sees the cap exceeded,
+    no silent seat overage. Self-invite / duplicate pending
+    invite / existing-member all reject with explicit 400s; each
+    path is a guard, not an upsert. `remove_member_handler`
+    immediately calls
+    `SessionManager::revoke_user_org_sessions(member_uuid,
+    org_uuid)` so the removed user cannot keep their cookie alive
+    in that org. Plan resolution down is fail-CLOSED with `503` +
+    `Retry-After` — never returns "false" (no silent fail-OPEN;
+    same family as the gate-side budget cache). ADR-057 trial
+    overlay applies only to *active* trials — a trial whose
+    `expires_at <= now` falls through to the canonical Lite cap.
+
+    Bootstrap owner authority: ownership column wins regardless
+    of plan; plan downgrade does NOT reassign ownership (the DB
+    invariant is preserved by the `update_plan`-time no-op on the
+    owner column). Per-key `last_used_at` updates flow through
+    the `X-API-Key` auth-cache hit path — no separate
+    usage-tracking worker. The sole-owner sole-member gate on
+    org delete (`organization.rs::delete_org_handler`) is
+    mirrored by the team-page DELETE precondition, so the two
+    surfaces can't disagree about who owns the org. Audit emit
+    fires on every invite / resend / revoke / role change /
+    removal — all under `action = team.*` for log search.
+
+    Considered three roles (drop Operator) and chose four:
+    Operator is the "can approve but not mutate" tier that the
+    approvals desk uses; collapsing loses that distinction.
+    Considered per-org plan-gated owner authority and chose
+    bootstrap authority — a downgrade should not strand the owner
+    outside their own org. Considered pending invites not
+    counting toward the seat cap and rejected it — admins need
+    to see the real-time cost of outstanding invites, not be the
+    one who finds out at accept time.
+
+    `Operator` does not exist in `db::OrganizationRole` — every
+    boundary that crosses enums MUST go through
+    `Role::to_organization_role`, never `as_str()` against the
+    sibling enum. Pending 2FA challenges live in memory by
+    default; the Redis-backed `TwoFaStore` (GROWTH-4) keeps
+    pending challenges alive across pod restarts but is opt-in
+    via `with_redis`. Cross-org membership is not modelled —
+    every row in `organization_members` belongs to exactly one
+    org, so the invite token binds a recipient to one org only.
 
 
 ---
@@ -4161,6 +5590,97 @@ subsequent tombstones.
   count.
 - [Audit log](error-handling.md#audit-trail) — every identity
   change leaves a row.
+
+!!! info "Deep dive"
+
+    Org identity is read by
+    `proxy/http/organization.rs::org_handler` in five steps:
+    (1) load org via
+    `get_organization_including_soft_deleted` (so soft-deleted
+    orgs still surface during the grace period), (2) resolve
+    `effective_ctx = resolve_plan_for_org(db, org_uuid, now)`
+    (the ADR-057 trial-aware resolver that overlays Scale
+    entitlements on Lite trials), (3) count members,
+    (4) count active workflows via `count_active_workflows`
+    (filters state + archived + deleted so tombstoned rows don't
+    inflate the count past the plan cap — v3.47 fix), (5) fetch
+    trial state separately rather than widening
+    `OrganizationRow` (one extra SELECT per page hit; the React
+    Query layer caches for 30s).
+
+    The update path (`update_org_handler`) requires at least one
+    of `name` or `contact_email`; an empty body returns 400 so
+    callers get a hard fail instead of a silent `updated_at`
+    bump. Contact email change triggers a confirmation re-auth
+    (password / 2FA). DPA acceptance is idempotent on
+    `(org_id, dpa_version)` — a re-click returns the existing
+    row with `created: false`. Two acceptance methods on the
+    wire: `in_product` (clicked through the dashboard) and
+    `signed_pdf` (offline acceptance ops imported). History is
+    rendered as `version · accepted_at · accepted_method`.
+
+    Delete (`delete_org_handler`) chains five steps before
+    returning `204 NO_CONTENT`: owner check via
+    `get_organization_including_soft_deleted` (404 on mismatch —
+    NOT 403, to avoid existence leak across orgs), sole-owner
+    sole-member gate via `count_active_members`
+    (`member_count > 1` → `409 ORG_HAS_MEMBERS` so the caller is
+    forced to `transfer_ownership` first), `db.delete_organization`,
+    invalidate + re-prime the policy cache for the org
+    (`refresh_org_keys_for_org` with a 500ms `tokio::time::timeout`
+    so the next `/gate` doesn't 402 on the cache-miss →
+    `max_budget_cents = 0` path — DEF-SDKT-006), and DEL the
+    audit hash chain head key (`audit_last_hash(org_id)`) so the
+    chain does not orphan.
+
+    The owner check is 404 not 403 — a non-owner who guesses an
+    org UUID cannot distinguish "no such org" from "you're not
+    the owner". The sole-owner sole-member gate is enforced by
+    the handler — the soft-delete path can never silently nuke a
+    co-member org. Post-delete audit rows are tombstoned, not
+    destroyed — the 30-day retention window still applies, so a
+    forensic query through support is still answerable. Cache
+    re-prime on delete is best-effort (timeout 500ms); a miss
+    falls through to the periodic ticker (fail-CLOSED for the
+    gate via DB fallback, not fail-OPEN). DPA acceptance is
+    idempotent — re-submission returns the same row.
+
+    Owner via `organizations.owner_user_id` (bootstrap
+    authority) — plan downgrade does NOT reassign. The pre-
+    delete cache invalidation pattern (`invalidate_org` +
+    re-prime with timeout) is shared by `delete_api_key_handler`,
+    `remove_member_handler`, `transfer_ownership_handler`, and
+    `delete_org_handler` — same timeout, same fallback. DPA
+    `version` is monotonic — acceptances for `v2026-06-25`
+    before any later `vYYYY-MM-DD` show as history lines. Audit
+    chain is PG-only (ADR-009 four-table separation) — the Redis
+    head key is best-effort cleanup (CACHE-3 / GROWTH-7).
+
+    Considered hard delete with cascade and chose soft-delete +
+    60-day grace + tombstone audit rows — soft-delete lets the
+    owner still DELETE / RESTORE a soft-deleted org within the
+    grace period via
+    `get_organization_including_soft_deleted`. Considered
+    revoking the caller's session on delete and removed it
+    2026-09-01 after a user-confirmed dead-end: the
+    `delete-account-modal` flow calls `DELETE /api/orgs/{id}`
+    and then `DELETE /api/auth/account` in the same session.
+    Revoking in step 1 401'd step 2. Other members lose access
+    at the data layer via the soft-delete filter. Considered a
+    hard `403 ORG_HAS_MEMBERS` on the member-count gate and
+    chose `409 ORG_HAS_MEMBERS` with a remediation hint so the
+    UI can render the right CTA (`Transfer ownership`).
+
+    Sole-owner sole-member only — co-member orgs must transfer
+    first via `transfer_ownership_handler`. There is no
+    auto-cleanup path that bypasses transfer. Soft-delete grace
+    period is 60 days; after that the org is hard purged (the
+    audit rows survive to the retention-window tombstone).
+    Redis head-key cleanup is best-effort — a stale head is
+    overwritten by the next write (impossible post-delete) or by
+    a `verify_chain` reconcile pass. The session is preserved
+    on delete-org-side on purpose — the caller may want to do
+    account deletion in the same modal flow.
 
 
 ---
@@ -4288,6 +5808,122 @@ window.
 - [Audit log](error-handling.md#audit-trail) — every profile
   change (password / 2FA / email / sessions) leaves a row.
 
+!!! info "Deep dive"
+
+    Per-user surface distinct from per-org Organization. Reads
+    actor from session cookie `__Host-nullrun_session` (prod) /
+    `nullrun_session` (dev) or `Authorization: Bearer
+    <session_token>`. Cookie name resolution is
+    `auth/cookies.rs::CookieEnv::current()` — fail-CLOSED on
+    missing env (defaults to `Prod`, the `__Host-` prefix +
+    `Secure` flag); the dev override requires
+    `NULLRUN_DEV_MODE=true` AND `NODE_ENV != "production"`. The
+    `OnceLock<CookieEnv>` is cached at first call so a missing
+    or late-loaded `.env.prod` cannot flip a prod pod to Dev
+    (a regression found 2026-07-15).
+
+    2FA setup (`user_security.rs`) generates a 20-byte TOTP
+    secret (RFC 4226 §4 R1), renders a base32-encoded
+    `otpauth://` URI plus a QR SVG, and waits for the first
+    6-digit code to confirm before promoting from pending to
+    active. Setup requires current password
+    (`requireCurrentPassword`). Recovery codes are 10 × 80-bit
+    random strings, shown ONCE at promotion, then stored as
+    `Argon2(password_hash, recovery_code)` pairs on the user
+    row. Pending 2FA challenges (login → 2FA → verify) live in
+    Redis (`PENDING_2FA` TTL 300s) since GROWTH-4 — the
+    `TwoFaStore::with_redis` variant persists them so a user
+    who hits pod B right after the challenge was issued by pod
+    A still sees a valid token. Pre-GROWTH-4 in-memory storage
+    meant the user would see `Invalid 2FA token` until they
+    re-issued.
+
+    Account deletion is `DELETE /api/v1/auth/account` (NOT
+    `/api/v1/me`) — wired in `proxy/http/routes.rs`. Body shape
+    (`DeleteAccountRequest`, ADR-048): typed `confirmation`
+    (exact name match), optional `current_password` (iff
+    `has_password`), optional `totp_code` (iff 2FA enabled), and
+    `ownership_decisions: HashMap<OrgUuid, OwnershipDecision>`
+    where the enum is `#[serde(tag = "action", rename_all =
+    "snake_case")]` with `Transfer { to_user_id }` or
+    `DeleteAndNotify`. Missing decisions for co-member owned
+    orgs return `400 OWNERSHIP_DECISION_REQUIRED` with the full
+    member roster. Session termination:
+    `SessionManager::revoke_all_user_sessions` clears every
+    `session:sess_*` whose data `user_id` matches, then follows
+    with the per-token `session_org:{token}:*` SCAN (B1 fix —
+    without this, the org-consistency cache would survive
+    revoke for up to 60s and let a revoked token re-enter).
+
+    Tombstoned user re-login returns `USER_NOT_FOUND` (ADR-041,
+    `isTombstonedAuthResponse` in
+    `frontend/lib/post-auth-redirect.ts`) — five BFF entry-points
+    honour it (login, login-2fa, register, github callback,
+    google callback). The `DeleteAndNotify` arm is fail-CLOSED
+    on Redis hiccup (ADR-048 §5): if ANY co-member's
+    session-revoke returns an error, the handler aborts with
+    `503 SERVICE_UNAVAILABLE` and the org is NOT soft-deleted —
+    the user's account is also not deleted. Two reasons: audit
+    retention (no dangling session keys past TTL) and
+    notification integrity (no unread "owner deleted the org"
+    email + still-usable session). The `Transfer` arm does NOT
+    revoke the new owner's session (they are now the owner);
+    `DeleteAndNotify` does NOT revoke the departing owner's
+    session (they're leaving anyway). TOTP secret is encrypted
+    at rest with `APP_ENCRYPTION_KEY`; decryption failure
+    surfaces as `APP_ENCRYPTION_KEY drift` (audit trail marker).
+    `revoke_all_user_sessions` clears BOTH the session key and
+    the derived `session_org:{token}:*` cache — single SCAN per
+    org, no stale-window bypass. FKs on user-owned rows go to
+    NULL on user delete (migration 203:
+    `organization_api_keys.created_by_user_id`; migration 204:
+    `admin_audit_log.actor_user_id`) so account delete is not
+    blocked by 23503. Audit rows authored by a deleted user stay
+    in the org's audit log (`decided_by` UUID preserved) —
+    forensic story is intact for the retention window.
+
+    Per-action audit emission via
+    `audit::persistence::record_security_audit_event` — every
+    profile mutation (password / 2FA / email / sessions) goes
+    through the typed wrapper so the policy-gated persistence
+    classes (`AuditPersistenceClass::SecurityEvidence`) are
+    uniformly enforced. Ownership cascade is single-pass per
+    owned org: iterate, decide, execute, with no remediation
+    round-trips (ADR-048 §4 — the earlier "POST then DELETE"
+    anti-pattern was rejected for race window + partial-failure
+    UX). `revoke_user_org_sessions(member_uuid, org_uuid)`
+    (single member, single org) is used by
+    `remove_member_handler` so member removal does not require
+    `revoke_all_user_sessions`.
+
+    Considered per-org POST/DELETE round-trip per conflict —
+    rejected (ADR-048 §4) for race window between two parallel
+    round-trips, partial-failure UX, and PUT-on-DELETE semantic
+    smell. Considered mandatory transfer (drop
+    `delete_and_notify`) — rejected: spec'd case-2 ("if no one
+    is selected for transfer → org deleted, all members kicked
+    out") and the last-active-owner scenario where closing is
+    the only viable action. Considered drop co-member support
+    — rejected: forces the user out of the deletion flow to do
+    prerequisite work in another part of the app. Considered
+    in-memory 2FA store and reverted to Redis-backed after
+    GROWTH-4 surfaced the cross-pod challenge-loss bug.
+
+    Wire change is a hard cutover — no protocol bump. The
+    `X-NULLRUN-PROTOCOL` header is bound to `/check` /
+    `/execute` / `/track` (ADR-013), not user-management
+    endpoints. Older clients without `ownership_decisions` fall
+    into the 400 path; the modal retries with decisions
+    automatically. The surface is browser-only — no third-party
+    SDK consumes `DeleteAccountRequest`, so the body shape
+    change is safe. `APP_ENCRYPTION_KEY` rotation requires a
+    runbook — it breaks 2FA + Slack (the encrypted TOTP secrets
+    and webhook signing keys are pinned to the old key).
+    `revoke_all_user_sessions` SCAN cost is bounded by
+    `session:sess_*` cardinality on Redis; for very large pods,
+    the count of revoked tokens is bounded by the user's own
+    session history.
+
 
 ---
 
@@ -4305,7 +5941,7 @@ The SDK auto-patches LangGraph on the **first `@protect` call** —
 no manual wrapper needed for the common case.
 
 ```bash title="shell"
-pip install "nullrun[langgraph]" langgraph langchain-openai
+pip install nullrun langgraph langchain-openai
 ```
 
 ```python title="langgraph_agent.py"
@@ -4322,8 +5958,6 @@ llm = ChatOpenAI(model="gpt-4o-mini")
 def chat(state: MessagesState):
     return {"messages": [llm.invoke(state["messages"])]}
 
-# `StateGraph(MessagesState)` replaces the deprecated
-# `langgraph.graph.MessageGraph` (removed in langgraph 1.0).
 graph = StateGraph(MessagesState)
 graph.add_node("chat", chat)
 graph.add_edge("chat", END)
@@ -4370,7 +6004,7 @@ whether you used the manual patch or the auto-instrumentation path.
 
 ---
 title: Openai Agents
-description: Install the nullrun[agents] extra and gate every tool call from an OpenAI Agents SDK workflow.
+description: Install nullrun alongside the OpenAI Agents SDK and gate every tool call from an Agents workflow.
 ---
 
 # Use with OpenAI Agents
@@ -4379,7 +6013,7 @@ Install (the OpenAI Agents framework hook is the only one that
 needs a vendor package — `openai-agents`):
 
 ```bash title="shell"
-pip install "nullrun[agents]" openai-agents
+pip install nullrun openai-agents
 ```
 
 Wrap the `Runner.run_sync` call (or any sync / async runner) with
@@ -4427,18 +6061,17 @@ description: Wrap CrewAI tools and tasks with @protect so the NullRun gate evalu
 
 # CrewAI
 
-Install (the SDK declares `crewai>=0.80,<2.0`; the EventBus
-subsystem used here was added in **CrewAI 1.15+**, which is what
-this guide targets — earlier versions get some legacy telemetry via
-`step_callback` / `task_callback` instead):
+Install (the SDK declares `crewai>=0.80,<2.0`; the guide targets
+**CrewAI 1.15+**, which exposes the EventBus subsystem used for
+lifecycle event tracking):
 
 ```bash title="shell"
-pip install "nullrun[crewai]"
+pip install nullrun crewai
 ```
 
-The current patch subscribes to the crewai `EventBus` and translates
-each lifecycle event into a `runtime.track_event` call. The runtime
-and the crewai EventBus hook are attached lazily on the first
+The patch subscribes to the crewai `EventBus` and translates each
+lifecycle event into a `nullrun.track(...)` call. The runtime and the
+crewai EventBus hook are attached lazily on the first
 `@protect` call:
 
 ```python title="crewai_crew.py"
@@ -4475,8 +6108,8 @@ metrics after kickoff — the SDK reports the canonical
 `(model, prompt_tokens, completion_tokens)` tuple on every billable
 row.
 
-When crewai's events module is not importable (pre-1.15 crewai or a
-stripped-down third-party build), only the per-event span bridge is
+When crewai's events module is not importable (a stripped-down
+third-party build), only the per-event span bridge is
 skipped; the post-run cost attribution still works.
 
 ## See also
@@ -4497,11 +6130,10 @@ description: Bind a FastAPI request to a NullRun workflow, propagate trace conte
 
 # Use with FastAPI
 
-Install with the FastAPI extra (pulls in `fastapi`, `starlette`, and
-the `httpx`-based transport the SDK needs at runtime):
+Install FastAPI alongside `nullrun`:
 
 ```bash title="shell"
-pip install "nullrun[fastapi]" fastapi uvicorn
+pip install nullrun fastapi uvicorn
 ```
 
 `nullrun.integrations.fastapi.install(app)` is a one-line setup that
@@ -4631,8 +6263,7 @@ response is returned.
 ## Per-deployment wording overrides
 
 To brand the wording for a single deployment, call
-`nullrun.set_user_message(...)` once at the top of your entry point
-(or register via `atexit`):
+`nullrun.set_user_message(...)` once at the top of your entry point:
 
 ```python
 nullrun.set_user_message(
@@ -4694,20 +6325,20 @@ decision).
 
 ## Coverage matrix
 
-| Provider | Install extra | Auto-instrumented | Tested end-to-end | Patcher |
-| --- | --- | --- | --- | --- |
-| OpenAI (`openai`) | none — httpx URL-keyed | ✅ | ✅ | `httpx` transport hook |
-| Anthropic (`anthropic`) | none — httpx URL-keyed | ✅ | ✅ | `httpx` transport hook |
-| OpenAI Agents (`openai-agents`) | `nullrun[agents]` | ✅ | ✅ | `patch_openai_agents` |
-| Mistral (`mistralai`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | per-vendor extractor |
-| Gemini (`google-genai`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | per-vendor extractor |
-| Cohere (`cohere`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | per-vendor extractor |
-| AWS Bedrock (`boto3`) | none — httpx URL-keyed | ✅ | ⚠️ extractor only | `httpx` extractor on `bedrock-runtime.amazonaws.com` |
-| LangChain (`langchain`) | `nullrun[langchain]` | ✅ | ✅ | `patch_langchain_callback` |
-| LangGraph (`langgraph`) | `nullrun[langgraph]` | ✅ | ✅ | `patch_langgraph_compiled` (auto on first `@protect` call) |
-| LlamaIndex (`llama-index`) | `nullrun[llama-index]` | ✅ | ⚠️ extractor only | `instrumentation.llama_index` |
-| CrewAI (`crewai`) | `nullrun[crewai]` | ✅ | ⚠️ extractor only | `instrumentation.crewai` |
-| AutoGen (`autogen-agentchat`) | `nullrun[autogen]` | ✅ | ⚠️ extractor only | `instrumentation.autogen` |
+| Provider | Auto-instrumented | Tested end-to-end | Patcher |
+| --- | --- | --- | --- |
+| OpenAI (`openai`) | ✅ | ✅ | `httpx` transport hook |
+| Anthropic (`anthropic`) | ✅ | ✅ | `httpx` transport hook |
+| OpenAI Agents (`openai-agents`) | ✅ | ✅ | `patch_openai_agents` (auto on first `@protect` call) |
+| Mistral (`mistralai`) | ✅ | ⚠️ extractor only | per-vendor extractor |
+| Gemini (`google-genai`) | ✅ | ⚠️ extractor only | per-vendor extractor |
+| Cohere (`cohere`) | ✅ | ⚠️ extractor only | per-vendor extractor |
+| AWS Bedrock (`boto3`) | ✅ | ⚠️ extractor only | `httpx` extractor on `bedrock-runtime.amazonaws.com` |
+| LangChain (`langchain`) | ✅ | ✅ | `patch_langchain_callback` (auto on first `@protect` call) |
+| LangGraph (`langgraph`) | ✅ | ✅ | `patch_langgraph_compiled` (auto on first `@protect` call) |
+| LlamaIndex (`llama-index`) | ✅ | ⚠️ extractor only | `instrumentation.llama_index` (auto on first `@protect` call) |
+| CrewAI (`crewai`) | ✅ | ⚠️ extractor only | `instrumentation.crewai` (auto on first `@protect` call) |
+| AutoGen (`autogen-agentchat`) | ✅ | ⚠️ extractor only | `instrumentation.autogen` (auto on first `@protect` call) |
 
 > "Tested end-to-end" means: a multi-roundtrip test exists that
 > verifies tokens flow from the vendor response into `/api/v1/track`.
@@ -4717,14 +6348,13 @@ decision).
 
 ## Install everything
 
-```bash title="shell"
-pip install "nullrun[all]"
-```
+Install `nullrun` once, then install any framework package whose
+hook you want — the framework hook attaches lazily on the first
+`@protect` call when the framework is present in the environment:
 
-Installs every vendor extra (the ones that actually pull a vendor
-package — `[agents]`, `[crewai]`, `[langgraph]`, `[langchain]`,
-`[llama-index]`, `[autogen]`). The `[all]` meta-extra lives at
-`pyproject.toml` and pulls every individual extra in one go.
+```bash title="shell"
+pip install nullrun langgraph langchain-openai openai-agents crewai llama-index-core 'autogen-agentchat[openai]'
+```
 
 ## How the httpx transport hook works
 
@@ -4781,10 +6411,11 @@ Bedrock calls must be reported via `track_llm` manually.
 
 ### LangGraph
 
-The `nullrun[langgraph]` extra wraps `Pregel.invoke` / `.ainvoke` /
+LangGraph integration wraps `Pregel.invoke` / `.ainvoke` /
 `.stream` / `.astream` so every node that calls an LLM goes through
-the gate. The patch is auto-applied on the first `@protect` call.
-See [Protect a LangGraph agent](langgraph.md) for the canonical
+the gate. The patch is auto-applied on the first `@protect` call
+when `langgraph` is installed in the environment. See
+[Protect a LangGraph agent](langgraph.md) for the canonical
 wiring pattern.
 
 ### CrewAI / AutoGen
@@ -4812,9 +6443,9 @@ without the runtime seeing a single `track_llm` event, the SDK logs
 ## See also
 
 - [Protect a LangGraph agent](langgraph.md) — full LangGraph example
-- [Use with OpenAI Agents](openai-agents.md) — `openai-agents` extra
+- [Use with OpenAI Agents](openai-agents.md) — `openai-agents` framework hook
 - [Use with FastAPI](fastapi.md) — request-scoped SDK context
-- [Manual cost / event tracking](custom-tracking.md) — `track_llm` / `track_tool` / `track_event`
+- [Manual cost / event tracking](custom-tracking.md) — `track_llm` / `track_tool` / `track`
 
 
 ---
@@ -5066,7 +6697,7 @@ from langgraph.graph import END, StateGraph
 from langchain_openai import ChatOpenAI
 
 import nullrun
-from nullrun import protect, workflow, shutdown
+from nullrun import protect, workflow
 
 # The first @protect call lazily creates the runtime from
 # NULLRUN_API_KEY and patches the LangGraph Pregel hook.
@@ -5338,7 +6969,7 @@ next `/gate` may reject the next call based on stale spend.
 
 ---
 title: Custom Tracking
-description: Manually report cost and events with track_llm, track_tool, and track_event when auto-instrumentation doesn't fit your runtime.
+description: Manually report cost and events with track_llm, track_tool, and track when auto-instrumentation doesn't fit your runtime.
 ---
 
 # Manual cost / event tracking
@@ -5346,7 +6977,7 @@ description: Manually report cost and events with track_llm, track_tool, and tra
 Most of the time auto-instrumentation handles cost tracking — the
 httpx transport hook reads `usage` from OpenAI / Anthropic / Gemini /
 Cohere responses and emits `track_llm` automatically. Use
-`track_llm`, `track_tool`, and `track_event` manually when:
+`track_llm`, `track_tool`, and `track` manually when:
 
 - your LLM client bypasses httpx (Bedrock via boto3, Cohere on a raw
   socket, an offline batch reading cached completions);
@@ -5367,7 +6998,7 @@ will fire and you'll double-count.
 | --- | --- | --- |
 | `track_llm(input_tokens, output_tokens, model, ...)` | Manual LLM cost | `input_tokens`, `output_tokens`; `model` recommended |
 | `track_tool(tool_name, duration_ms, ...)` | Manual tool cost | `tool_name` (must match `ToolBlock` patterns) |
-| `track_event(event_type, ...)` | Arbitrary observability | `event_type` (becomes a filterable category) |
+| `track({"type": ..., ...})` | Arbitrary observability | `type` (becomes a filterable event category) |
 
 Without `track_llm` the budget counter is never credited for the
 call — the next `/gate` may reject based on stale spend.
@@ -5376,7 +7007,7 @@ call — the next `/gate` may reject based on stale spend.
 
 ```python title="track_custom.py"
 import nullrun
-from nullrun import track_llm, track_tool, track_event
+from nullrun import track_llm, track_tool, track
 
 # After your custom LLM call returns:
 track_llm(
@@ -5396,8 +7027,8 @@ track_tool(
 )
 
 # Arbitrary business events:
-track_event("agent.milestone", step="research_complete", elapsed_secs=42)
-track_event("agent.error", code="validation_failed", field="email")
+track({"type": "agent.milestone", "step": "research_complete", "elapsed_secs": 42})
+track({"type": "agent.error", "code": "validation_failed", "field": "email"})
 ```
 
 `track_tool`'s `tool_name` flows through the policy engine — a
@@ -5428,16 +7059,17 @@ def call_custom_llm(prompt):
 
 - **Buffering**: `track_*` events don't go straight to the gateway —
   they buffer in the runtime's event batch and flush on the next
-  `@protect` call or `flush_interval_ms`. If your process exits
-  before the flush, the events are lost; call
-  `shutdown(flush=True)` in your `finally` block.
+  `@protect` call or `flush_interval_ms`. `init()` auto-registers
+  `nullrun.shutdown(flush=True)` via `atexit`, so a clean process
+  exit always drains the buffer; an explicit `finally` block only
+  matters for early teardown.
 - **Idempotency**: each `track_*` call gets a fresh UUID. Calling it
   twice with the same payload produces two events. For retries, gate
   the call yourself.
 
 ## See also
 
-- [SDK API → track_llm / track_tool / track_event](../reference/sdk-api.md#track_llm-manual-usage)
+- [SDK API → track_llm / track_tool / track](../reference/sdk-api.md#track_llm-manual-usage)
 - [LLM frameworks](../how-to/llm-frameworks.md) — non-httpx vendors
   (Bedrock, Cohere) that use manual tracking
 
@@ -5610,7 +7242,7 @@ checklist.
 
 title: SDK API
 maturity: stable
-description: Reference for every NullRun SDK symbol: @protect (canonical entry point), @sensitive(impact=...) for typed impact + digest-bound approval, workflow / chain context managers, exceptions, manual tracking, and transport hooks.
+description: Reference for every NullRun SDK symbol: @protect (canonical entry point, takes no parameters), the workflow / span / chain / attempt context managers, exceptions, manual tracking, and transport hooks.
 # SDK API
 
 The Python SDK lives in
@@ -5618,10 +7250,9 @@ The Python SDK lives in
 Package name on PyPI: **`nullrun`**.
 
 ```bash title="shell"
-pip install nullrun            # core only
-pip install "nullrun[langgraph]"
-pip install "nullrun[agents]"  # openai-agents
-pip install "nullrun[all]"     # every optional extra
+pip install nullrun                    # core — covers every LLM SDK that uses httpx
+pip install nullrun[opentelemetry]     # OTel span/metric export on top of the core
+pip install nullrun[dev]               # pytest + respx + mypy + ruff + coverage
 ```
 
 Auto-instrumentation for httpx-based libraries (`openai`,
@@ -5631,32 +7262,35 @@ Auto-instrumentation for httpx-based libraries (`openai`,
 ## Top-level
 
 ```python title="public_surface.py"
-from nullrun import init, init_or_die, protect, workflow, span, agent, chain, track_llm, track_tool, track_event
+from nullrun import init, protect, workflow, span, agent, chain, track_llm, track_tool, track
 ```
 
-### `init` / `init_or_die` {#init--init_or_die}
+### `init` {#init}
 
 The runtime is created lazily on the first `@protect` call from
-`NULLRUN_API_KEY` — most apps skip `init()` entirely. These helpers
-exist for the cases where you need early fail-fast before any
+`NULLRUN_API_KEY` — most apps skip `init()` entirely. `init()`
+exists for the cases where you need early fail-fast before any
 `@protect` call runs (CI / smoke tests, pre-flight validation, library
 authors wiring keys from a non-env source).
 
 | Helper | Behaviour | Use when |
 |---|---|---|
 | `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI). Library authors wiring an SDK key from a non-env source. |
-| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Catches the `NullRunAuthenticationError` exception, prints the catalog user-message to stderr, calls `sys.exit(exit_code)`. Returns the runtime otherwise. | One-shot scripts, CLI tools, smoke tests — anywhere a missing key is a hard error and you want a clean exit instead of a traceback. |
+| `init(api_key=None, api_url=None, debug=False, fail_on_exit=True)` | Prints the four-line developer report to stderr and calls `sys.exit(1)` if `api_key` is missing or env var unset. Otherwise identical to `init()`. | One-shot scripts, CLI tools, smoke tests — anywhere a missing key is a hard error and you want a clean exit instead of a traceback. |
 
-`init_or_die` is `init` plus a `try/except NullRunAuthenticationError → sys.exit(1)`. The chain `@guarded` decorator does the same for callsite-level errors. Both helpers are also idempotent — calling `init()` twice returns the same singleton without re-running the lazy trigger.
+`init()` also auto-registers `nullrun.shutdown()` via `atexit`, so a
+clean WS close on process exit happens without an explicit call.
+Calling `shutdown()` manually remains safe and idempotent. The
+`with nullrun.handle():` context manager provides the same
+callsite-level error translation as `init(..., fail_on_exit=True)`,
+applied to a region of code rather than at startup. Calling `init()`
+twice returns the same singleton without re-running the lazy trigger.
 
 || Symbol | Purpose | In `__all__` |
 |---|---|---|---|
-| `init(api_key=None, api_url=None, debug=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
-| `init_or_die(*, api_key=None, api_url=None, debug=False, exit_code=1)` | Like `init` but exits cleanly with `exit_code` (default 1) if no API key is configured. See the table above. | ✅ |
-| `@protect` | Wrap a function for **gate** enforcement (budget pre-flight + kill/pause check + sensitive-tool decision). Takes no kwargs. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — auto-attaches a default `ToolParamsExtractor` so every kwarg reaches the operator on the wire. Pair with `with nullrun.handle():` for the structured 4-line dev report on failure. | ✅ |
-| `@sensitive(impact=...)` | Factory form — stamps a typed `BusinessImpact` extractor (`money_outflow(...)` for money flows, `tool_params(...)` for an explicit rename map or empty-bag mode) + SHA-256 `action_digest` for digest-bound approval. Place `@sensitive` outside `@protect` so registration runs first. | ✅ (lazy import) |
-| `@guarded` | Decorator equivalent of `with nullrun.handle():` — wraps a function so any `NullRunError` raised inside is converted to the structured 4-line dev report on stderr and `sys.exit(1)`. Use the un-`@guarded` `protect()` form if you need to handle kill distinctly. | ✅ |
-| `with nullrun.handle(*, exit_code=1):` | Context manager form of `@guarded` — apply to a region of code rather than a single function. **Recommended** for the structured 4-line developer report. | ✅ |
+| `init(api_key=None, api_url=None, debug=False, fail_on_exit=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). With `fail_on_exit=True`, missing config prints the developer report and `sys.exit(1)` instead of raising. The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
+| `@protect` | Wrap a function for **gate** enforcement (control plane / budget / span / per-tool policy). Takes no kwargs. Every call routes through `/execute`; the backend decides allow / block / require-approval. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — ships `tool_name + args + kwargs` on the wire for every protected call. Wrap the call site in `with nullrun.handle():` for the structured 4-line dev report on failure. | ✅ |
+| `with nullrun.handle(*, exit_code=1):` | Context manager for friendly exit — catches any `NullRunError` raised inside the block, renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
 | `chain(chain_id: str, op: str = "start")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
 | `span(name=None)` | Context manager for nested trace spans. | (lazy) |
@@ -5665,11 +7299,11 @@ authors wiring keys from a non-env source).
 | `on_error(hook)` | Register a global error hook. Fires for every `NullRunError` subclass — including the kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) — BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Filter inside the hook by `error_code` (`"NR-W002"`) if you need to skip kill. Returns an idempotent unregister callable. | ✅ |
 | `track_llm(input_tokens, output_tokens=0, **kwargs)` | Manual escape hatch for non-HTTP LLM calls. Returns the backend's decision dict. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. `**kwargs` are forwarded to the transport layer (e.g. `model`, `latency_ms`, `metadata`). | ✅ |
 | `track_tool(tool_name, duration_ms=None, **kwargs)` | Manual tool-call tracking. `**kwargs` are forwarded to the transport layer (e.g. `is_retry`, `metadata`). | ✅ |
-| `track_event(event_type, **kwargs)` | Catch-all for custom events. | ✅ |
+| `track(event: dict)` | Generic manual-event emission. Pass a dict with `type` (event category) and any additional payload fields; buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. Use for arbitrary observability signals (milestones, errors, business events). | ✅ |
 | `format_user_message(exc)` | Render a `NullRunError` as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. | ✅ |
 | `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
 | `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
-| `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads. Safe to register via `atexit`. | ✅ |
+| `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads. Auto-registered with `atexit` inside `init()`, so long-running scripts get a clean WS close on process exit without an explicit call. Calling it manually is safe and idempotent. | ✅ |
 | `status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. Raises `NullRunConfigError` with `error_code="NR-C004"` if the runtime hasn't been initialised yet. | ✅ |
 
 Rows marked **lazy** are exposed under `nullrun.*` via `__getattr__`
@@ -5721,18 +7355,23 @@ function). The `tool_name` flows through to the policy engine — a
 `ToolBlock` policy with `pattern = "send_*"` will catch a manual call
 to `track_tool("send_email", ...)`.
 
-### `track_event` catch-all
+### `track` catch-all
 
-```python title="track_event_manual.py"
-from nullrun import track_event
+```python title="track_manual.py"
+from nullrun import track
 
-track_event("agent.milestone", step="research_complete", elapsed_secs=42)
+track({
+    "type": "agent.milestone",
+    "step": "research_complete",
+    "elapsed_secs": 42,
+})
 ```
 
-Accepts arbitrary keyword arguments as the event payload. Use for
-custom observability signals (milestones, errors, business events)
-that you want in the decision log alongside `track_llm` /
-`track_tool`.
+Accepts an arbitrary dict as the event payload. Use for custom
+observability signals (milestones, errors, business events) that
+you want in the decision log alongside `track_llm` / `track_tool`.
+The `type` field becomes the filterable event category in the
+dashboard.
 
 ### Custom user messages
 
@@ -5740,16 +7379,18 @@ See [User-facing messages → Per-deployment branding](#per-deployment-branding)
 below for `set_user_message` / `get_user_message` usage.
 
 The curated public surface in `dir(nullrun)` is the `__all__` list
-in `nullrun/__init__.py`: `__version__`, `init`, `protect`, `track_llm`,
-`track_tool`, `track_event`, `shutdown`, `on_error`, `status`,
-`format_user_message`, `set_user_message`, `handle`, `guarded`,
-`init_or_die`, plus the structured exception names `NullRunError`,
-`NullRunAuthError`, `NullRunConfigError`, `NullRunBackendError`,
-`NullRunBudgetError`, `NullRunToolBlockedError`, and
-`WorkflowKilledInterrupt` (the kill signal). The legacy names
-(`WorkflowPausedException`, `NullRunAuthenticationError`,
-`NullRunBlockedException`) remain available via
-`from nullrun import X` for backward compatibility.
+in `nullrun/__init__.py`: `__version__`, `init`, `protect`,
+`shutdown`, `on_error`, `status`, `format_user_message`,
+`set_user_message`, `handle`, plus the
+structured exception names `NullRunError`, `NullRunAuthError`,
+`NullRunConfigError`, `NullRunBackendError`, `NullRunBudgetError`,
+`NullRunToolBlockedError`, `WorkflowKilledInterrupt`, and the
+typed MCP / approval subclasses. The lazy surface (PEP 562) adds
+`workflow`, `span`, `agent`, `attempt`, `chain`,
+`set_call_context`, the audit classes (`AuditQuery`, `AuditEntry`,
+…), the tracer (`SpanContext`, `get_current_span`, …), and the
+additional exception names (`WorkflowPausedException`,
+`NullRunBlockedException`, `NullRunApproval*Error`, etc.).
 
 ## Exceptions
 
@@ -5796,8 +7437,7 @@ from nullrun.breaker.exceptions import (
 )
 
 # init() is OPTIONAL — the first protect(...) below creates the
-# runtime lazily from NULLRUN_API_KEY. See
-# init / init_or_die above.
+# runtime lazily from NULLRUN_API_KEY. See `init` above.
 
 try:
     step()
@@ -5878,11 +7518,10 @@ function never raises and never returns an empty string.
 
 ## See also
 
-- [Decorators & extractors](decorators.md) — deep-dive on `@protect`
-  (canonical entry point, auto-attaches default extractor), the
-  `@sensitive(impact=...)` factory form, `@guarded`,
-  `money_outflow`, `tool_params`, `set_call_context`, and the
-  workflow / span / chain context managers
+- [Decorators & context managers](decorators.md) — deep-dive on
+  `@protect` (canonical entry point, takes no parameters),
+  `with nullrun.handle():`, `set_call_context`, and the
+  workflow / span / chain / attempt context managers
 - [Errors](errors.md)
 - [Errors → Decision vs. infrastructure](errors.md#decision-vs-infrastructure)
 - [Use with FastAPI](../how-to/fastapi.md)
@@ -6290,9 +7929,9 @@ There are **two parallel taxonomies** you may see:
   exception. The full catalog is below in *NR-* error code catalog*.
 
 For the **three-layer error model** (structured exceptions →
-`on_error` hook → `format_user_message` / `@guarded`) and the
-boundary between developer-facing and end-user-facing wording, see
-[Concepts → Error handling](../concepts/error-handling.md).
+`on_error` hook → `format_user_message` / `with nullrun.handle():`)
+and the boundary between developer-facing and end-user-facing
+wording, see [Concepts → Error handling](../concepts/error-handling.md).
 
 ## Gateway error codes (`error` field on every non-2xx response)
 
@@ -6381,11 +8020,10 @@ required.
 
 | Helper | Catches | For |
 |---|---|---|
-| `init_or_die(api_key=...)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
+| `init(api_key=..., fail_on_exit=True)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
 | `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) — **recommended** form |
-| `@guarded` | Any `NullRunError` raised inside the wrapped function | Decorator equivalent of `handle()` |
 
-All three helpers propagate non-`NullRunError` exceptions (anything
+Both helpers propagate non-`NullRunError` exceptions (anything
 that isn't an SDK error) as honest tracebacks. `NullRunError`
 subclasses — including the kill signal `NullRunWorkflowKilledError` —
 are caught and rendered as the **structured four-line developer
@@ -6533,7 +8171,6 @@ you don't care about the exact cause.
 | --- | --- | --- | --- |
 | `NR-B001` | Transport-layer network error (timeout, ConnectError, DNS failure) | 500 | `NullRunTransportError` (default) |
 | `NR-B002` | Gateway 5xx | 500/503 | `NullRunBackendError` |
-| `NR-B003` | `@sensitive(impact=...)` business_impact extraction failed (tool param shapes unsupported) | 403 | `NullRunBlockedException` (raised from `decorators.py`) |
 | `NR-B005` | Local SDK circuit breaker tripped — short-circuits before the wire call | 503 | `NullRunBackendError` (with `source = BREAKER_OPEN`) |
 | `NR-R001` | Per-workflow rate limit hit (gateway returned 429 with `Retry-After`) | 429 | `RateLimitError` (subclass of `NullRunTransportError` — infrastructure class despite the 429 status) |
 | `NR-R002` | Rate-limit Redis unavailable (aggregate per-org rate-limit fail-CLOSED) | 503 | `NullRunRateLimitRedisError` |
@@ -6571,8 +8208,9 @@ description: Per-model input and output pricing for every LLM NullRun understand
 A reference list of the tool names LLM agents commonly expose, tagged
 with a default risk rating you can use as a starting point when you
 configure approval-rule patterns. `@protect` is the canonical entry
-point; every protected tool auto-attaches a default
-`ToolParamsExtractor` for ToolParameters rules.
+point; every protected tool ships `tool_name + args + kwargs` on
+the wire, and ToolParameters approval rules read argument values
+directly out of `kwargs` by `param_name`.
 
 The catalog covers three sources that NullRun sees in production:
 
@@ -6592,7 +8230,7 @@ Risk rating:
 | --- | --- |
 | `low` | Read-only or reversible. Safe to call without a policy decision. |
 | `medium` | Mutates external state but the change is reversible (issue created, draft email, S3 put). |
-| `high` | **Side effects you can't easily undo** — files written or deleted, money moved, messages sent, code executed, infra changed. Mark with `@protect` (auto-attaches the default `ToolParamsExtractor` for ToolParameters rules) and route through a human approval gate. |
+| `high` | **Side effects you can't easily undo** — files written or deleted, money moved, messages sent, code executed, infra changed. Mark with `@protect` and route through a human approval gate. |
 
 ## Search & retrieval
 
@@ -6766,6 +8404,92 @@ approval for sends to non-`@internal` addresses"), use the typed
 - [Human approval](../concepts/human-approval.md) — typed
   `BusinessImpact` predicates for narrower rules
 
+!!! info "Deep dive"
+
+    The catalog is a docs reference; the enforcement lives in
+    `backend/src/proxy/http/gate/orchestrator.rs::check_tool_block`.
+    The `glob_match` helper implements the pattern language: `*`
+    for wildcards (multi-`*` patterns split on every `*` and
+    require each non-empty literal segment to appear in order via
+    `glob_match_multi`), `|` for alternation, bare literals match
+    exactly (no substring), `?` is treated as literal. Pattern
+    validation is in
+    `backend/src/proxy/http/tool_canonical.rs::validate_tool_pattern`;
+    `MAX_POLICY_PATTERN_BYTES = 4096`. Tool names are
+    canonicalised via `classify_tool` (`tool_canonical.rs`) —
+    Builtin (lowercase ASCII ≤64 chars), `mcp://{server}/{tool}`
+    for MCP, `custom:{name}` for custom; invalid format is
+    rejected at gate validation as `VALIDATION_FAILED`.
+
+    `ToolBlock` is always Hard: per CLAUDE.md §8, soft mode does
+    not soften tool blocks. `tool_blocked()` in
+    `backend/src/proxy/http/gate/internal.rs` is a defensive
+    backstop that also runs on `/track`, so an SDK that bypasses
+    `/check` (or omits `tools` from `/check`) cannot skip
+    tool_pattern enforcement on the wire. The gate fails CLOSED
+    on a missing `tools` field: if the per-key policy has
+    `tool_patterns` and the SDK omits `tools`, the gate blocks
+    with `TB-1` reason code (`orchestrator.rs`); the singular
+    `tool` field is also resolved into `effective_tools` so
+    legacy SDKs cannot bypass by sending the pre-T4 wire shape.
+    All Builtin names are lowercase ASCII — the gate's
+    classification is the single source of truth. Glob match is
+    case-SENSITIVE on the function level
+    (`gate/internal.rs` test `glob_match_case_sensitive`); Builtin
+    names are lowercased at classification so
+    `Stripe.Charge` → `stripe.charge` before the match — this is
+    what the docs mean by "case-insensitively" for the
+    operator's experience. Glob match does NOT inspect tool
+    arguments — that's sandbox responsibility
+    (`tool_canonical.rs`); a pattern like `bash.*` blocks any
+    bash call regardless of the shell command.
+
+    `@protect` ships `tool_name + args + kwargs` on every call.
+    ToolParameters approval rules read argument values directly
+    from `kwargs` by `param_name`; no SDK-side extractor is
+    required. The dotted-prefix smart match is `bash.*` matches
+    `bash`, `bash.foo`, `bash.foo.bar` — bare `bash` AND dotted
+    continuations (`orchestrator.rs`). Templates seed
+    `bash.*`, `shell.*`, `code.*` patterns; operators expect
+    them to catch the bare name. Multi-`*` drop-patterns:
+    `*.drop_*` matches `s3.drop_table`, `db.drop_user`, but NOT
+    `s3.execute_drop` — the trailing `_` is load-bearing per
+    `glob_match_multi_star_drop_pattern_unanchored_ends` test.
+    For command-level rules (e.g. "block refunds over $500"),
+    use the typed `tool_parameters` predicate in the approval
+    rule editor rather than glob patterns.
+
+    The catalog covers three sources: LangChain built-in
+    toolkits (search/SQL/Gmail/Slack/GitHub), Anthropic/OpenAI
+    hosted tools (code interpreter, e2b sandbox, Riza JS exec),
+    and MCP servers. The `ToolBlock` policy was chosen over a
+    built-in SDK list because policies live on the server and
+    can be updated without an SDK rollout; per-tool risk rating
+    is a starting point, not a hard rule. The recommended
+    starter JSON is opinionated: blanket patterns
+    (`python_repl.*`, `bash.*`) instead of enumeration, because
+    enumeration of every framework's exec tool regresses when a
+    new MCP server ships. The 4KB pattern-length cap
+    (`MAX_POLICY_PATTERN_BYTES`) keeps a single operator from
+    pasting a 100MB regex blob.
+
+    Glob match is name-only — arguments are NOT inspected. For
+    command-level rules you need the typed `tool_parameters`
+    predicate (referenced by `param_name` in the dashboard rule
+    editor); glob patterns cannot express "this argument only".
+    `**` is treated literally per `glob_match_no_double_star_support`
+    (`gate/internal.rs`). `?` is literal — regex-style
+    single-char wildcards are not supported; an operator who
+    writes `ba?h` matches the literal 4-char string, not `bash`
+    / `ball`. The catalog is docs-only — drift between this
+    catalog and the actual tool names the agent calls is a real
+    risk; `classify_tool` in `tool_canonical.rs` is the source
+    of truth for canonical form, not the catalog. TB-1
+    fail-CLOSED on empty `tools`: SDKs that omit `tools` while
+    the per-key policy has patterns are blocked (defensive
+    against bypass) — a missing `tools` field would otherwise
+    let the SDK slip past `tool_pattern` enforcement entirely.
+
 
 ---
 
@@ -6789,6 +8513,105 @@ cooperating layers control jurisdiction-based access:
 
 Sanctions violations are strict-liability; see legal review for full
 rationale. A regression on either layer is a compliance incident.
+
+!!! info "Deep dive"
+
+    Compliance posture is implemented by two cooperating
+    middleware. **Layer 1 — geo-block** lives at
+    `backend/src/proxy/middleware/geo_block.rs` and runs as Axum
+    middleware mounted in front of auth
+    (`fortress_geo_block_middleware`); blocked traffic never
+    touches the database. The middleware classifies every
+    request by source country (MaxMind GeoLite2 lookup with 24h
+    in-process DashMap cache) and routes to one of `Allow |
+    BlockSanctioned | BlockHighRisk | RedirectToWaitlist |
+    AllowPrivate`. **Layer 2 — sanctions screening** lives at
+    `backend/src/proxy/middleware/sanctions.rs` and runs at
+    signup in `auth_oauth_register_handler` (per the docstring
+    cross-reference at `sanctions.rs`); it's the secondary
+    defence that catches designated persons who travel, use a
+    VPN, or register via OAuth from a non-sanctioned-country
+    proxy. The screening table is loaded once at process start
+    into an `AHash`-keyed `HashSet<String>` of normalised
+    tokens (`sanctions.rs`); lookups are O(1) per token.
+
+    Both layers fail CLOSED. On the geo-block, missing/unreadable
+    GeoIP database returns 503 `geoip_unavailable`
+    (`geo_block.rs`); an unparseable peer / XFF returns 403
+    `client_ip_unresolvable`. Per CLAUDE.md §4, enforcement paths
+    fail-CLOSED by default. Sanctions
+    screening is ON by default: the operator-level override
+    env var set to `1` (or case-insensitive `true`) disables;
+    unset or any other value leaves it ON (`sanctions.rs`).
+    The OnceLock caches the env-var lookup at first call.
+    Match is opaque: a 403 response on SDN match does NOT
+    echo the matched display name to the client
+    (`sanctions-screening.md`); the matched name + field
+    (`name` or `email`) are logged at WARN for audit. The
+    sanctions table load is graceful — missing CSV returns a
+    hand-curated 6-name fallback with a `degraded: true` flag
+    (`sanctions.rs`); signup is still allowed but the operator
+    is alerted via WARN log + `OPERATIONAL_METRICS`. A
+    regression on either layer is a compliance incident — never
+    a "we will email you when we do" bridge for strict-liability
+    jurisdictions.
+
+    Geo-block tiers are `SANCTIONED` (comprehensive sanctions, 9
+    codes: RU/IR/KP/SY/CU/BY/VE/MM/AF) and `HIGH_RISK_NO_SERVICE`
+    (GDPR + CCPA + PIPL + DPDPA burden, EU-27 + EEA/EFTA + CH +
+    GB + CN + IN). Both are compiled-in constants
+    (`geo_block.rs`). Sanctions tokenisation is NFKC normalise
+    (catches `ＡＢＣ` → `ABC`) → lowercase → split on
+    non-alphanumeric → drop tokens <3 chars (`sanctions.rs`).
+    A single shared given name like "Anatoly" never matches a
+    2-token SDN entry (`sanctions.rs` test). The trust-proxy
+    chain for XFF is `TRUSTED_PROXY_CIDRS`-configured: an XFF
+    from an untrusted peer is treated as attacker-controlled
+    and ignored (`geo_block.rs`). The BFF→backend hop
+    (single-entry XFF) is handled so the BFF container IP
+    doesn't cause false classification. Waitlist carve-out is
+    `WAITLIST_PATH = "/api/v1/waitlist"` — the only bypass for
+    `BlockHighRisk` (`geo_block.rs`); SANCTIONED-tier IPs are
+    NOT bypassed there. The branch runs AFTER `lookup.action()`
+    so a code refactor that changes the order would re-open the
+    bypass. Country code is PII under GDPR and is logged at WARN
+    level, never INFO; the `x-nullrun-fortress-block: sanctions`
+    and `x-nullrun-fortress-country: <ISO>` headers carry the
+    wire signal.
+
+    The two-layer model (IP + identity) was chosen because the
+    IP defence alone misses three classes of designated persons:
+    those travelling abroad, those using commercial VPNs that
+    exit in non-sanctioned jurisdictions, and those signing up
+    via OAuth where the only data is name + email. Geo-block
+    alone is necessary but not sufficient for OFAC/EU/UK/UN
+    comprehensive-sanctions regimes. Both layers are fail-CLOSED
+    rather than fail-OPEN because the cost of a 503 (operator
+    notices, fixes the misconfiguration) is lower than the cost
+    of a fail-OPEN (sanctioned traffic silently served) —
+    consistent with CLAUDE.md §4.
+
+    Cyrillic / Latin homoglyphs are NOT collapsed
+    (`sanctions.rs`): NFKC normalises full-width / ligature
+    forms but does NOT transliterate between scripts. A
+    Cyrillic `а` stays Cyrillic; only the full-width Latin /
+    ASCII cases collapse. A designated individual can circumvent
+    name-based screening by transliterating to a homoglyph
+    script — the geo-block catches the
+    non-Latin-from-sanctioned-country case. There is no
+    email-domain match (`sanctions-screening.md`): emails
+    tokenise on `@` and `.`, but the resulting tokens (`gmail`,
+    `mail`) are too common to screen — only the email local-part
+    is tokenised and matched. OAuth callback bypass is
+    provisional (`geo_block.rs`): sanctioned-jurisdiction
+    visitors can complete OAuth via the BFF until the BFF
+    carries XFF — the secondary name/email screen is the catch.
+    The OnceLock caches the override env-var at first call
+    (`sanctions.rs`): changing it at runtime does NOT take
+    effect for the running process — restart required.
+    Refresh cadence is manual: the sanctions table is loaded at
+    process start; restart is required after each CSV update
+    (`sanctions-screening.md`) — no automatic refresh worker.
 
 
 ---
@@ -6935,6 +8758,117 @@ PII under GDPR) — they appear at WARN.
 The NullRun team maintains the GeoIP database; contact support if
 geo-block seems misclassified.
 
+!!! info "Deep dive"
+
+    The geo-block middleware lives at
+    `backend/src/proxy/middleware/geo_block.rs`. The constant
+    `SANCTIONED` holds 9 comprehensive-sanctions codes
+    (RU/IR/KP/SY/CU/BY/VE/MM/AF); `HIGH_RISK_NO_SERVICE` holds
+    30+ codes (EU-27 + EEA/EFTA + CH + GB + CN + IN). The
+    middleware (`fortress_geo_block_middleware`) runs the
+    request through five steps: `geo_block_disabled()` env-var
+    check; `is_bypass_path(path)` to allow health / webhook /
+    etc.; `extract_client_ip` with the trust-proxy chain
+    honouring `TRUSTED_PROXY_CIDRS`; `GeoBlocker::lookup(ip)`
+    via MaxMind GeoLite2 with 24h DashMap cache; and
+    `Lookup::action()` mapping to `Allow | BlockSanctioned |
+    BlockHighRisk | RedirectToWaitlist | AllowPrivate`. On a
+    blocked match, the response carries
+    `x-nullrun-fortress-block: sanctions|waitlist|<code>` and
+    `x-nullrun-fortress-country: <ISO>` headers. The path-aware
+    redirect is order-dependent: SANCTIONED-tier visitors on
+    the marketing surface get 302 → `/jurisdiction-blocked` —
+    no lead capture for strict-liability jurisdictions.
+
+    The middleware fails CLOSED on a missing GeoIP DB: 503
+    `geoip_unavailable` when `MaxMindDBError` propagates from
+    `lookup()` (`geo_block.rs`). The operator notices the
+    misconfiguration because ALL ingress is rejected. It also
+    fails CLOSED on an unparseable peer IP: 403
+    `client_ip_unresolvable` — the post-NR-124 fix closes the
+    2026-07-08 sanctions bypass where private bridge IPs fell
+    through to `AllowPrivate` (`geo_block.rs`). Per CLAUDE.md
+    §4, enforcement paths fail-CLOSED by default. Marketing-site
+    bridge: HIGH-RISK visitors on the WWW marketing site get
+    302 → `/waitlist?cc=<ISO>`; API/ws paths get 403
+    `service_unavailable_in_jurisdiction`. SANCTIONED-tier
+    visitors on the marketing surface get 302 →
+    `/jurisdiction-blocked` — no lead capture. Trust-proxy chain
+    is `TRUSTED_PROXY_CIDRS`-configured: an XFF from an
+    untrusted peer is treated as attacker-controlled and
+    ignored. Single-binary deployment default is empty (no
+    proxies trusted) — production `ENVPROD_FILE` must include
+    the nginx bridge (`172.18.0.0/16` default per
+    `infra/docker-compose.prod.yml`). Country code is PII under
+    GDPR and is logged at WARN level, never INFO
+    (`geo_block.rs`). Source-pin tests pin the bypass list:
+    `us_and_ca_not_in_high_risk_list` (after 2026-09-16
+    opening) and `high_risk_list_includes_eu_china_india_uk`
+    prevent silent blocklist drift.
+
+    The two-tier blocklist is Tier 1 `SANCTIONED` (comprehensive
+    sanctions, 403 only — no waitlist even on marketing site);
+    Tier 2 `HIGH_RISK_NO_SERVICE` (GDPR + CCPA + PIPL + DPDPA,
+    403 on /api/ws, 302→/waitlist on marketing). The three-step
+    request flow is `extract_client_ip` (with XFF chain) →
+    `GeoBlocker::lookup` (MaxMind, cached) → `Lookup::action`
+    (blocklist match). Each step is independently testable;
+    failures fail CLOSED. The 24h MaxMind cache
+    (`geo_block.rs`) is a bounded DashMap keyed by `IpAddr`,
+    leaked `&'static str` per ISO code — bounded to ~250 codes
+    × ~3 bytes ≈ 750 bytes total, avoiding per-call `Box::leak`
+    that accumulated GB-scale over a year at moderate load. The
+    fortress waitlist bypass is `WAITLIST_PATH =
+    "/api/v1/waitlist"` — the only carve-out for `BlockHighRisk`
+    (`geo_block.rs`); SANCTIONED-tier IPs are NOT bypassed
+    there. The branch runs AFTER `lookup.action()` so a code
+    refactor that changes the order would re-open the bypass.
+
+    The decision to make sanctions strict-liability and
+    HIGH_RISK compliance is encoded at the wire (403 vs 302).
+    Strict-liability jurisdictions have no lead-capture bridge
+    — a regulator's view of "we will email you when we do" is
+    not enough for OFAC/EU/UK/UN comprehensive-sanctions
+    regimes. The trust-proxy model rejects XFF from non-trusted
+    peers because the 2026-07-08 incident showed that a
+    sanctioned-jurisdiction VPN signup reached
+    `auth_register_handler` when the nginx container IP fell
+    into `AllowPrivate`. The BFF→backend hop (single-entry XFF)
+    is also handled (`geo_block.rs`) so the BFF container IP
+    doesn't cause false classification on the docker bridge.
+    US/CA were removed from `HIGH_RISK_NO_SERVICE` on
+    2026-09-16 (`geo_block.rs` comment): CCPA thresholds
+    (>$25.5M revenue, 100k+ consumers, 50%+ revenue from data
+    sales) are not met at the current zero-customer stage. This
+    is intentional but revisitable when revenue crosses the
+    threshold.
+
+    US/CA opened 2026-09-16 is a posture choice for the
+    zero-customer stage. The `us_and_ca_not_in_high_risk_list`
+    source test catches a future regression but the negative
+    assertion would need to be inverted when US/CA need to be
+    re-added. CGNAT bypass: `100.64.0.0/10` is in the bypass
+    list for CGNAT ranges. A sanctioned-jurisdiction residential
+    CGNAT user could route through it; the secondary
+    name/email screen is the catch for sanctioned jurisdictions.
+    OAuth callback bypass is provisional (`geo_block.rs`):
+    sanctioned-jurisdiction visitors can complete OAuth via the
+    BFF until the BFF carries XFF — the durable fix is to have
+    the BFF pass `X-Forwarded-For` carrying the user IP
+    captured during OAuth init. The waitlist endpoint bypass
+    is order-dependent — it only runs AFTER `lookup.action()`
+    classifies the country (`geo_block.rs`), and a code refactor
+    that changes the order would re-open the bypass. The
+    GeoIP database is downloaded separately
+    (`backend/data/README.md`): missing the file is a launch
+    blocker; the middleware logs an ERROR but boots —
+    operators must monitor the startup log. Polar / Slack /
+    Telegram webhooks bypass geo-block: HMAC-authenticated,
+    not IP-authenticated. A blocked egress (Polar's egress is
+    US, currently opened) would 403 every paid upgrade;
+    signature verification is the authoritative identity gate
+    (`geo_block.rs`).
+
 
 ---
 
@@ -7017,7 +8951,7 @@ On a `Match` the response body is a generic 403 — the matched display
 name is **not** echoed to the client to avoid confirming the
 screening target.
 
-## Operator override — `NULLRUN_SANCTIONS_SCREENING_DISABLED`
+## Operator override
 
 The screening is **ON by default**. The IP-level Fortress geo-block
 excludes sanctioned-country traffic before signup; name-based SDN
@@ -7026,14 +8960,8 @@ who travel, use a non-sanctioned-country VPN, or register via
 OAuth from a non-sanctioned IP.
 
 To **disable** name-based screening entirely (the screening always
-returns `Clean`), set:
-
-```bash
-NULLRUN_SANCTIONS_SCREENING_DISABLED=1
-```
-
-There is no other accepted value — only `1` and the case-insensitive
-`true` disable the screening. Any other value (including `0`,
+returns `Clean`), set the operator-level override env var to `1`
+(or the case-insensitive `true`). Any other value (including `0`,
 `false`, or an unset variable) leaves screening ON.
 
 ### Posture by environment
@@ -7073,6 +9001,120 @@ sharper once money is in the picture.
   but the resulting tokens (e.g. `gmail`, `mail`) are common enough
   that matching them would produce false positives. The name tokens
   are the primary signal; the email is a secondary, weaker signal.
+
+!!! info "Deep dive"
+
+    The sanctions screening module lives at
+    `backend/src/proxy/middleware/sanctions.rs`. The
+    `SanctionsTable` struct holds an `AHash`-keyed
+    `HashSet<String>` of normalised tokens plus the full
+    `Vec<SdnEntry>` for identity-based matching.
+    `load_or_degraded` reads from `data/sanctions/sdn.csv`
+    (path configurable via `NULLRUN_SANCTIONS_CSV`); on missing
+    file or parse failure, `degraded_fallback` returns a
+    hand-curated 6-name subset (`Vladimir Putin`, `Kim Jong Un`,
+    `Ali Khamenei`, `Bashar Assad`, `Miguel Díaz-Canel`,
+    `Alexander Lukashenko`) with a `degraded: true` flag.
+    `tokenise` NFKC-normalises (catches `ＡＢＣ` → `ABC`),
+    lowercases, splits on non-alphanumeric, drops tokens <3
+    chars. `screen_signup` is the public entry: name first, then
+    email local-part; returns `Clean | Match { matched, field }
+    | DegradedFallback`. The module-level OnceLock caches the
+    table at first call.
+
+    Screening is ON by default: the operator-level override
+    env var set to `1` (or case-insensitive `true`) disables;
+    any other value (or unset) keeps it ON (`sanctions.rs`).
+    The override is cached at first call (OnceLock per process)
+    — runtime env-var changes do NOT take effect for the
+    running process. Match is opaque to
+    the client: 403 body does NOT echo the matched display
+    name; the matched name + field (`name` or `email`) are
+    logged at WARN for audit (`sanctions-screening.md`).
+    Avoiding confirming the screening target is a deliberate
+    disclosure posture. Identity match requires ≥2 tokens OR a
+    1-token query that matches a 1-token entry
+    (`sanctions.rs`): a single shared given name like
+    "Anatoly" does NOT match a 2-token SDN entry like
+    "ANATOLY KOLODKIN". A shared first name is not enough to
+    identify a sanctioned party. Email TLD does NOT match SDN
+    tokens: `gmail`/`mail`/`com` are too common to be screened
+    as SDN tokens; only the email local-part is tokenised and
+    matched (`sanctions.rs`). Degraded fallback still allows
+    signup: the WARN log + `OPERATIONAL_METRICS` flag the
+    misconfiguration; the geo-block is still on at the IP
+    layer as the always-on defence. `is_degraded()` is checked
+    at `sanctions.rs`. Token-set collapses the homoglyph space
+    (full-width only): `ＡＢＣ` → `ABC` via NFKC, then
+    lowercased and split (`sanctions.rs`).
+
+    Module-level OnceLock table (`sanctions.rs`):
+    `TABLE.get_or_init(...)` reads the CSV exactly once per
+    process; lookups are O(1) per token against the `HashSet`.
+    For 10k SDN entries the memory footprint is ~5 MB. The
+    source-of-list identity column is OFAC CSV column layout
+    `ent_num, SDN_Name, SDN_Type, Program, ...` — only column 1
+    (`SDN_Name`) is read (`sanctions.rs`); EU/UK/UN equivalents
+    share the same column layout. Match is identity-based, not
+    token-based: a single shared word is never sufficient —
+    common first names (`Anatoly`), email TLDs, and corporate
+    suffixes are not unique identifiers (`sanctions.rs`).
+    Operator override is cached at first call:
+    `sanctions_screening_disabled()` uses a OnceLock per
+    process; changing the env var at runtime does NOT take
+    effect for the running process — restart required. Refresh
+    cadence per docs: OFAC SDN daily, MaxMind GeoLite2 weekly,
+    EU/UK consolidated monthly. The table is loaded once at
+    process start; restart is required after each CSV update.
+
+    The two-layer model (geo-block + sanctions screen) was
+    chosen because the IP defence alone misses three classes
+    of designated persons: those travelling abroad, those
+    using commercial VPNs that exit in non-sanctioned
+    jurisdictions, and those signing up via OAuth where the
+    only data is name + email. The secondary layer catches the
+    worst cases (designated persons / sanctioned addresses)
+    even when the IP geo-block is bypassed. The token-match
+    strategy is intentionally aggressive — false positives are
+    cheap (rejected signup, the user retries with a different
+    email); false negatives carry criminal-law exposure per
+    OFAC Sanctions Compliance Guidance for the Financial Sector
+    (2014) and 31 CFR Part 501 (referenced in `sanctions.rs`).
+    The operator-level override env var (= `1` to disable)
+    exists for the pre-revenue stage where the
+    false-positive cost of "Vladimir Petrov" outweighs the
+    residual sanctions risk. The OnceLock caching of the
+    env-var lookup is intentional: it makes the override
+    decision atomic with process start, so a misconfigured
+    `set_var` later in the process lifetime can't accidentally
+    flip the screening on/off mid-execution. The trade-off is
+    that operators who want to flip must restart the process.
+
+    Cyrillic / Latin homoglyphs are NOT collapsed
+    (`sanctions.rs`): NFKC normalises full-width / ligature
+    forms but does NOT transliterate between scripts. A
+    Cyrillic `а` stays Cyrillic; only the full-width Latin /
+    ASCII cases collapse. A designated individual can
+    circumvent by transliterating to a homoglyph script — the
+    geo-block catches the non-Latin-from-sanctioned-country
+    case. There is no email-domain match: emails tokenise on
+    `@` and `.`, but the resulting tokens (`gmail`, `mail`)
+    are too common. The name is the primary, email is
+    secondary (`sanctions-screening.md`). The OnceLock caches
+    the override env-var at first call (`sanctions.rs`):
+    changing it at runtime does NOT take effect for the
+    running process — restart required. Degraded fallback
+    covers 6 state actors: the
+    hand-curated subset (`sanctions.rs`) is intentionally
+    minimal; a real SDN download is required before production
+    (`sanctions.rs` WARN log). Refresh cadence is manual: the
+    table is loaded at process start; the docs note restart
+    is required after each CSV update
+    (`sanctions-screening.md`) — no automatic refresh worker.
+    Pre-existing `email` DB rows are not screen-relevant here:
+    the screening is signup-time only — historical rows are
+    not re-screened. A redesign that re-screens existing rows
+    on every login is not currently scoped.
 
 
 ---
