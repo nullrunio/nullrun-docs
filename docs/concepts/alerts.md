@@ -37,6 +37,14 @@ alert exists; clicking it opens a confirmation Dialog
 ("Dismiss N active alerts? This action cannot be undone.") with
 Cancel and the destructive confirm button.
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/alerts-light.png"
+       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/alerts-dark.png"
+       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point.">
+  <figcaption class="nr-shot__caption">Alerts · Set up alerts</figcaption>
+</figure>
+
 ## Metric strip — not a row of four cards
 
 The four tiles above the filter chips are:

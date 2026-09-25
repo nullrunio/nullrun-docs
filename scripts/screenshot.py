@@ -35,8 +35,8 @@ OUT = ROOT / "docs" / "assets" / "images" / "screenshots"
 OUT.mkdir(parents=True, exist_ok=True)
 
 BASE = "https://nullrun.io/"
-EMAIL = "scalejohn@test.com"
-PASSWORD = "N8z7gAhc8Dpf3aw"
+EMAIL = "john_test@nullrun.io"
+PASSWORD = "john_test@nullrun.io1"
 
 VIEWPORT = {"width": 1440, "height": 900}
 
@@ -79,10 +79,17 @@ def login(ctx: BrowserContext) -> Page:
     try:
         page.get_by_role("link", name="Sign in").first.click(timeout=5_000)
     except Exception:
-        return page
+        pass
+    # Always end up on /login — navigate there explicitly to be safe.
     page.wait_for_load_state("domcontentloaded", timeout=60_000)
-    page.locator("input[type='email']").first.fill(EMAIL)
-    page.locator("input[type='password']").first.fill(PASSWORD)
+    if not page.url.endswith("/login"):
+        page.goto(BASE.rstrip("/") + "/login", wait_until="domcontentloaded", timeout=60_000)
+        page.wait_for_timeout(800)
+    # The page has two stacked email inputs — one offscreen, one visible.
+    # The visible one is the form actually rendered on screen, identified
+    # by its placeholder. Target that one explicitly.
+    page.locator("input[placeholder='you@example.com']").fill(EMAIL)
+    page.locator("input[placeholder='Enter your password']").fill(PASSWORD)
     submit = page.get_by_role("button", name="Sign in").first
     if submit.count() == 0:
         submit = page.locator("button[type='submit']").first
@@ -178,7 +185,16 @@ def shoot(page: Page, name: str, full: bool = False) -> Path:
 
 def _goto(page: Page, path: str) -> None:
     page.goto(BASE.rstrip("/") + path, wait_until="domcontentloaded", timeout=60_000)
-    page.wait_for_timeout(800)
+    # On a fresh tab the session cookie can race with the
+    # client-side auth check — `domcontentloaded` returns BEFORE
+    # the redirect to /login?reason=session_expired is processed,
+    # so we'd land on the login screen. Wait for the page to settle.
+    page.wait_for_timeout(1200)
+    if "/login" in page.url:
+        # Retry once — the cookie is set now and the auth check
+        # will succeed the second time.
+        page.goto(BASE.rstrip("/") + path, wait_until="networkidle", timeout=60_000)
+        page.wait_for_timeout(600)
 
 
 def _highlight_via_role(page: Page, role: str, name: str, tag: str) -> bool:
@@ -454,6 +470,61 @@ def scenario_audit_log(ctx: BrowserContext) -> list[Path]:
     return paths
 
 
+def scenario_alerts(ctx: BrowserContext) -> list[Path]:
+    paths = []
+    for scheme in ("light", "dark"):
+        page = set_scheme(ctx, scheme)
+        try:
+            _goto(page, "/control-center/alerts")
+            set_dashboard_theme(page, scheme)
+            page.evaluate("window.scrollTo(0, 0)")
+            _highlight_text(page, "set up alerts", "Set up alerts")
+            page.wait_for_timeout(200)
+            paths.append(shoot(page, f"alerts-{scheme}"))
+            print(f"  ✓ alerts-{scheme}")
+        finally:
+            page.close()
+    return paths
+
+
+def scenario_action_sources(ctx: BrowserContext) -> list[Path]:
+    """MCP servers page — renamed to "Action sources" in the sidebar
+    but the path is still /control-center/mcp-servers. Screenshot
+    is meant for docs/concepts/mcp-servers.md (and any future
+    action-sources doc)."""
+    paths = []
+    for scheme in ("light", "dark"):
+        page = set_scheme(ctx, scheme)
+        try:
+            _goto(page, "/control-center/mcp-servers")
+            set_dashboard_theme(page, scheme)
+            page.evaluate("window.scrollTo(0, 0)")
+            _highlight_text(page, "add action source", "Add action source")
+            page.wait_for_timeout(200)
+            paths.append(shoot(page, f"action-sources-{scheme}"))
+            print(f"  ✓ action-sources-{scheme}")
+        finally:
+            page.close()
+    return paths
+
+
+def scenario_team(ctx: BrowserContext) -> list[Path]:
+    paths = []
+    for scheme in ("light", "dark"):
+        page = set_scheme(ctx, scheme)
+        try:
+            _goto(page, "/control-center/team")
+            set_dashboard_theme(page, scheme)
+            page.evaluate("window.scrollTo(0, 0)")
+            _highlight_text(page, "send invite", "Send invite")
+            page.wait_for_timeout(200)
+            paths.append(shoot(page, f"team-{scheme}"))
+            print(f"  ✓ team-{scheme}")
+        finally:
+            page.close()
+    return paths
+
+
 # ── registry ──────────────────────────────────────────────────────────
 
 SCENARIOS: dict[str, Callable[[BrowserContext], list[Path]]] = {
@@ -469,6 +540,9 @@ SCENARIOS: dict[str, Callable[[BrowserContext], list[Path]]] = {
     "executions": scenario_executions,
     "traces": scenario_traces,
     "audit-log": scenario_audit_log,
+    "alerts": scenario_alerts,
+    "action-sources": scenario_action_sources,
+    "team": scenario_team,
 }
 
 

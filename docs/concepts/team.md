@@ -46,6 +46,14 @@ Owners and the current user are pinned near the top of the list
 regardless of sort order, so an admin never accidentally scrolls
 past themselves.
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/team-light.png"
+       alt="Team page — invite panel above the members table, with Email field, role selector, and Send invite button in the top right.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/team-dark.png"
+       alt="Team page — invite panel above the members table, with Email field, role selector, and Send invite button in the top right.">
+  <figcaption class="nr-shot__caption">Team · Send invite</figcaption>
+</figure>
+
 ## Invites
 
 Above the members table is the **Invite** panel with an email

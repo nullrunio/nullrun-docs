@@ -58,6 +58,14 @@ opens a dialog where you paste the MCP probe URL and (optionally)
 a label. The scheduler polls new sources every 60 seconds until
 the first successful probe lands.
 
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/action-sources-light.png"
+       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/action-sources-dark.png"
+       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right.">
+  <figcaption class="nr-shot__caption">MCP servers · Add action source</figcaption>
+</figure>
+
 ### Metric strip
 
 Four cards above the list give the operator a glance at the
