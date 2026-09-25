@@ -24,7 +24,7 @@ with workflow("my-first-agent"):       # scopes the gate to a workflow
         return response.choices[0].message.content
 
 if __name__ == "__main__":
-    with nullrun.handle():        # catches NullRunError, prints the
+    with nullrun.guard():         # catches NullRunError, prints the
         print(answer("What does NullRun do?"))
         # structured 4-line developer report on failure, then sys.exit(1)
 ```
@@ -46,7 +46,7 @@ if __name__ == "__main__":
 
 Every call inside `answer()` is cost-attributed and governed by your
 workspace policy. On any policy outcome (budget cap, tool block, rate
-limit, transport outage), `with nullrun.handle():` prints the structured
+limit, transport outage), `with nullrun.guard():` prints the structured
 four-line developer report (`error_code` + what + where + why +
 how to fix) and exits `1`.
 

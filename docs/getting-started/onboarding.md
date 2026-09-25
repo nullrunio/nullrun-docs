@@ -72,9 +72,9 @@ def answer(prompt: str) -> str:
 # CLI script that wants fail-fast on missing config, call
 # `nullrun.init(fail_on_exit=True)` instead.
 if __name__ == "__main__":
-    with nullrun.handle():
+    with nullrun.guard():
         print(answer("What does NullRun do?"))
-        # handle() prints the structured 4-line developer report
+        # guard() prints the structured 4-line developer report
         # on any NullRunError, then sys.exit(1).
 ```
 

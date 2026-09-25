@@ -39,16 +39,16 @@ authors wiring keys from a non-env source).
 `init()` also auto-registers `nullrun.shutdown()` via `atexit`, so a
 clean WS close on process exit happens without an explicit call.
 Calling `shutdown()` manually remains safe and idempotent. The
-`with nullrun.handle():` context manager provides the same
+`with nullrun.guard():` context manager provides the same
 callsite-level error translation as `init(..., fail_on_exit=True)`,
 applied to a region of code rather than at startup. Calling `init()`
 twice returns the same singleton without re-running the lazy trigger.
 
-|| Symbol | Purpose | In `__all__` |
+| Symbol | Purpose | In `__all__` |
 |---|---|---|---|
 | `init(api_key=None, api_url=None, debug=False, fail_on_exit=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). With `fail_on_exit=True`, missing config prints the developer report and `sys.exit(1)` instead of raising. The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
-| `@protect` | Wrap a function for **gate** enforcement (control plane / budget / span / per-tool policy). Takes no kwargs. Every call routes through `/execute`; the backend decides allow / block / require-approval. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — ships `tool_name + args + kwargs` on the wire for every protected call. Wrap the call site in `with nullrun.handle():` for the structured 4-line dev report on failure. | ✅ |
-| `with nullrun.handle(*, exit_code=1):` | Context manager for friendly exit — catches any `NullRunError` raised inside the block, renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
+| `@protect` | Wrap a function for **gate** enforcement (control plane / budget / span / per-tool policy). Takes no kwargs. Every call routes through `/execute`; the backend decides allow / block / require-approval. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — ships `tool_name + args + kwargs` on the wire for every protected call. Wrap the call site in `with nullrun.guard():` for the structured 4-line dev report on failure. | ✅ |
+| `with nullrun.guard():` | Context manager for friendly exit — catches any `NullRunError` raised inside the block, renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
 | `chain(chain_id: str, op: str = "start")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
 | `span(name=None)` | Context manager for nested trace spans. | (lazy) |
@@ -62,7 +62,7 @@ twice returns the same singleton without re-running the lazy trigger.
 | `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
 | `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
 | `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads. Auto-registered with `atexit` inside `init()`, so long-running scripts get a clean WS close on process exit without an explicit call. Calling it manually is safe and idempotent. | ✅ |
-| `status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. Raises `NullRunConfigError` with `error_code="NR-C004"` if the runtime hasn't been initialised yet. | ✅ |
+| `nullrun.get_runtime().status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. Raises `NullRunConfigError` with `error_code="NR-C004"` if the runtime hasn't been initialised yet. | (lazy) |
 
 Rows marked **lazy** are exposed under `nullrun.*` via `__getattr__`
 on first access; they do not appear in `dir(nullrun)` until used.
@@ -138,8 +138,8 @@ below for `set_user_message` / `get_user_message` usage.
 
 The curated public surface in `dir(nullrun)` is the `__all__` list
 in `nullrun/__init__.py`: `__version__`, `init`, `protect`,
-`shutdown`, `on_error`, `status`, `format_user_message`,
-`set_user_message`, `handle`, plus the
+`shutdown`, `on_error`, `format_user_message`,
+`set_user_message`, `guard`, plus the
 structured exception names `NullRunError`, `NullRunAuthError`,
 `NullRunConfigError`, `NullRunBackendError`, `NullRunBudgetError`,
 `NullRunToolBlockedError`, `WorkflowKilledInterrupt`, and the
@@ -149,6 +149,11 @@ typed MCP / approval subclasses. The lazy surface (PEP 562) adds
 …), the tracer (`SpanContext`, `get_current_span`, …), and the
 additional exception names (`WorkflowPausedException`,
 `NullRunBlockedException`, `NullRunApproval*Error`, etc.).
+
+For a runtime snapshot, reach `NullRunStatus` via
+`nullrun.get_runtime().status()` — the top-level `nullrun.status()`
+wrapper was removed; reach the snapshot directly through the
+runtime handle.
 
 ## Exceptions
 
@@ -278,7 +283,7 @@ function never raises and never returns an empty string.
 
 - [Decorators & context managers](decorators.md) — deep-dive on
   `@protect` (canonical entry point, takes no parameters),
-  `with nullrun.handle():`, `set_call_context`, and the
+  `with nullrun.guard():`, `set_call_context`, and the
   workflow / span / chain / attempt context managers
 - [Errors](errors.md)
 - [Errors → Decision vs. infrastructure](errors.md#decision-vs-infrastructure)

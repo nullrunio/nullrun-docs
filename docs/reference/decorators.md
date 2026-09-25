@@ -1,7 +1,7 @@
 ---
 title: Decorators & context managers
 maturity: stable
-description: Reference for @protect (the gate decorator) and the workflow / span / chain / attempt context managers it pairs with, plus the with nullrun.handle(): friendly-exit wrapper.
+description: Reference for @protect (the gate decorator) and the workflow / span / chain / attempt context managers it pairs with, plus the with nullrun.guard(): friendly-exit wrapper.
 ---
 
 # Decorators & context managers
@@ -16,7 +16,7 @@ symbol establishes with the gate.
 call goes through the four pre-execution gates (control plane /
 budget / span / per-tool policy) and emits a tool-call span event
 tagged with the masked arguments. Wrap the call site in
-`with nullrun.handle():` for the structured 4-line developer report
+`with nullrun.guard():` for the structured 4-line developer report
 on failure.
 
 ## The canonical API: `@protect` only
@@ -40,7 +40,7 @@ configure the typed predicates the gate evaluates.
 | Symbol | Type | Surface |
 |---|---|---|
 | `@protect` | decorator | eager (`from nullrun import protect`) — **canonical** |
-| `with handle():` | context manager | eager |
+| `with guard():` | context manager | eager (`from nullrun import guard`) |
 | `with workflow(...)` | context manager | lazy (`from nullrun import workflow`) |
 | `with span(...)` | context manager | lazy |
 | `with agent(...)` | context manager | lazy |
@@ -151,16 +151,16 @@ from the API key on the backend; `fn.__name__` becomes the
 
 ---
 
-## `with nullrun.handle():` — friendly-exit wrapper
+## `with nullrun.guard():` — friendly-exit wrapper
 
-The **canonical form is `with nullrun.handle():`** — it makes the
+The **canonical form is `with nullrun.guard():`** — it makes the
 scope explicit and prints the structured four-line developer report
 on any `NullRunError`.
 
-**Parameters: none (context managers).** `handle()`
-accepts an optional `exit_code=` keyword (default `1`).
+**Parameters: none.** `guard()` accepts an optional `exit_code=`
+keyword (default `1`).
 
-```python title="handle_canonical.py"
+```python title="guard_canonical.py"
 import nullrun
 from nullrun import protect
 
@@ -170,13 +170,13 @@ def my_agent(prompt: str) -> str:
 
 
 if __name__ == "__main__":
-    with nullrun.handle():
+    with nullrun.guard():
         print(my_agent("hello"))
 ```
 
 ### What it does
 
-Any `NullRunError` raised inside the `handle()` block is caught,
+Any `NullRunError` raised inside the `guard()` block is caught,
 rendered as the **structured four-line developer report**
 (`[error_code]` + `what` + `where` + `why` + `how to fix`), printed
 to **stderr**, and the process exits with code `1`.
@@ -201,10 +201,10 @@ For **top-level entry points** in scripts and CLIs: instead of a
 raw traceback on `NullRunConfigError(NR-C001)` at the first gate
 call, the operator sees the structured four-line developer report
 and the process exits cleanly. In libraries and long-running
-services, prefer `try/except NullRunError` — `handle()` exits the
+services, prefer `try/except NullRunError` — `guard()` exits the
 process, which isn't appropriate there.
 
-The context-manager form `with nullrun.handle():` is the
+The context-manager form `with nullrun.guard():` is the
 **recommended form** for region-of-code scopes — see the example
 above. It makes the scope explicit, accepts an `exit_code=` argument,
 and the four-line report is what it always renders. If `run_my_agent`
@@ -340,7 +340,7 @@ re-checks the digest on `/execute` and refuses on mismatch.
 | Wrap a function that calls an LLM or tool (canonical) | `@nullrun.protect` (no parameters) |
 | Mark a money-moving tool for typed approval + digest | `@nullrun.protect` + an approval rule referencing `param_name` in the dashboard |
 | Mark a tool where rule names ≠ arg names | Approval rule `param_name` mapping in the dashboard |
-| Top-level script entry (friendly exit) | `with nullrun.handle():` |
+| Top-level script entry (friendly exit) | `with nullrun.guard():` |
 | Multi-step agent run (cost + trace per workflow) | `with nullrun.workflow("agent-name"): ...` |
 | Per-call model name and tools for `/gate` | `nullrun.set_call_context(model=..., tools=[...])` inside `with workflow` |
 | Soft-mode budget (controlled overdrafts) | `with nullrun.chain(uuid.uuid4(), op="start"): ...` |
@@ -350,7 +350,7 @@ re-checks the digest on `/execute` and refuses on mismatch.
 | Custom business event | `nullrun.track({"type": "agent.milestone", "step": ..., "elapsed_secs": ...})` |
 | Audit log read | `runtime.audit.list(AuditQuery(event_type=..., since=..., limit=...))` |
 | Global error hook (Sentry, OTel) | `nullrun.on_error(my_handler)` — returns an idempotent unregister callable |
-| Snapshot runtime state | `nullrun.status()` — frozen `NullRunStatus` dataclass |
+| Snapshot runtime state | `nullrun.get_runtime().status()` — frozen `NullRunStatus` dataclass |
 | Graceful exit (WS close, flush events) | `nullrun.shutdown()` — auto-registered via `atexit` inside `init()`; explicit calls only matter for tests (`shutdown(flush=False)`) or for early teardown |
 
 ---
@@ -375,7 +375,7 @@ def orchestrator(q):
 def researcher(q):
     return get_current_span()         # parent's span_id == parent_span_id
 
-# ─── Top-level script entry with friendly exit (handle() preferred) ───
+# ─── Top-level script entry with friendly exit (guard() preferred) ───
 import nullrun
 from nullrun import protect
 
@@ -383,7 +383,7 @@ from nullrun import protect
 def main(prompt): ...
 
 if __name__ == "__main__":
-    with nullrun.handle():               # canonical — 4-line report + exit 1
+    with nullrun.guard():               # canonical — 4-line report + exit 1
         print(main("hello"))
 # shutdown() is auto-registered via atexit inside init() —
 # no explicit call is needed for a clean WS close on exit.
@@ -409,9 +409,9 @@ with nullrun.chain(chain_id, op="start"):           # soft-mode budget
 
 ## Anti-patterns
 
-!!! warning "Don't put `with nullrun.handle():` inside a `@protect`-wrapped body"
-    `handle()` only catches errors raised inside its own block. A
-    bare `with nullrun.handle():` placed inside a `@protect`-decorated
+!!! warning "Don't put `with nullrun.guard():` inside a `@protect`-wrapped body"
+    `guard()` only catches errors raised inside its own block. A
+    bare `with nullrun.guard():` placed inside a `@protect`-decorated
     function is a no-op for gate-time errors — the exception is
     raised by the `@protect` wrapper before the body runs, never
     reaches the `with` block, and the process exits with a raw

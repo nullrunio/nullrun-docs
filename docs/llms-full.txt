@@ -288,9 +288,9 @@ def answer(prompt: str) -> str:
 # CLI script that wants fail-fast on missing config, call
 # `nullrun.init(fail_on_exit=True)` instead.
 if __name__ == "__main__":
-    with nullrun.handle():
+    with nullrun.guard():
         print(answer("What does NullRun do?"))
-        # handle() prints the structured 4-line developer report
+        # guard() prints the structured 4-line developer report
         # on any NullRunError, then sys.exit(1).
 ```
 
@@ -727,7 +727,7 @@ with workflow("my-first-agent"):       # scopes the gate to a workflow
         return response.choices[0].message.content
 
 if __name__ == "__main__":
-    with nullrun.handle():        # catches NullRunError, prints the
+    with nullrun.guard():        # catches NullRunError, prints the
         print(answer("What does NullRun do?"))
         # structured 4-line developer report on failure, then sys.exit(1)
 ```
@@ -749,7 +749,7 @@ if __name__ == "__main__":
 
 Every call inside `answer()` is cost-attributed and governed by your
 workspace policy. On any policy outcome (budget cap, tool block, rate
-limit, transport outage), `with nullrun.handle():` prints the structured
+limit, transport outage), `with nullrun.guard():` prints the structured
 four-line developer report (`error_code` + what + where + why +
 how to fix) and exits `1`.
 
@@ -903,7 +903,7 @@ explicitly. See [Error handling → Kill signal](../concepts/error-handling.md#k
 for the recommended handler shape.
 
 If you use the zero-boilerplate helpers from the SDK, you don't have
-to write any of this — `with nullrun.handle():` catches the standard
+to write any of this — `with nullrun.guard():` catches the standard
 exceptions (including the kill signal), prints the structured
 four-line developer report, and exits 1. To handle kill distinctly,
 use bare `@protect` with an explicit `except NullRunWorkflowKilledError:` arm.
@@ -1157,7 +1157,7 @@ Spending → $49.95 of $50.00
 Next @protect call:        #2.00 projected
 gate decision:             block
 SDK raises:                 NullRunBudgetError (NR-B004)
-with nullrun.handle():     prints the 4-line dev report, sys.exit(1)
+with nullrun.guard():     prints the 4-line dev report, sys.exit(1)
 ```
 <figcaption>Hard mode — the projected cost of the next call exceeds the remaining budget. The gate returns `block` before the model runs.</figcaption>
 
@@ -2242,10 +2242,10 @@ except WorkflowPausedException:
     raise
 ```
 
-Both signals inherit from `NullRunError`, so `with nullrun.handle():`
+Both signals inherit from `NullRunError`, so `with nullrun.guard():`
 catches both (prints the structured four-line developer report, exits
 1). To handle kill distinctly — checkpoint state, notify a
-supervisor, then exit — wrap the un-`handle()` call in your own
+supervisor, then exit — wrap the un-`guard()` call in your own
 try/except. See
 [Error handling → Kill signal](../concepts/error-handling.md#kill-signal)
 for the recommended handler shape.
@@ -3869,7 +3869,7 @@ the work — you pick how much of each layer to use.
     | Your code | `except NullRunInfrastructureError` | Transport / 5xx / auth / config failures |
     | Your code | `except NullRunWorkflowKilledError` (or `WorkflowKilledInterrupt`) | Operator kill — terminal; caught by `except Exception:`, handle explicitly if you need to checkpoint before exit |
     | Your monitoring | `@nullrun.on_error` hook | Every `NullRunError`, fired before propagation |
-    | Your end user | `with nullrun.handle():` / `format_user_message` | Friendly text from the catalog |
+    | Your end user | `with nullrun.guard():` / `format_user_message` | Friendly text from the catalog |
 
 ## Where errors appear in the dashboard
 
@@ -3897,7 +3897,7 @@ right thing?". Pair it with [Traces](tracing.md) for full context.
 |---|---|---|---|
 | **1. Structured exception** | Your Python code | Exception type, error code, what to do next | Your code decides: retry, fail, surface to UI |
 | **2. `on_error` hook** | Sentry / Datadog / logs | Same exception + context (workflow, tool, stage) | Observability: you see every error in your existing dashboards |
-| **3. `with nullrun.handle():` / `format_user_message`** | End user | One friendly sentence from a catalog | The user gets a clean message, not a stack trace |
+| **3. `with nullrun.guard():` / `format_user_message`** | End user | One friendly sentence from a catalog | The user gets a clean message, not a stack trace |
 
 The SDK ships all three. You decide how much to use.
 
@@ -4005,7 +4005,7 @@ kill signal** (`WorkflowKilledInterrupt` and its typed alias
 `NullRunWorkflowKilledError`). If you want to skip kill inside the
 hook, filter on `error_code` (`"NR-W002"`).
 
-## Layer 3 — `with nullrun.handle():` and `format_user_message`
+## Layer 3 — `with nullrun.guard():` and `format_user_message`
 
 For scripts that just want "run the agent and print a friendly
 message on failure", use the no-boilerplate helpers. The first
@@ -4020,11 +4020,11 @@ def my_agent(prompt):
 
 
 if __name__ == "__main__":
-    with nullrun.handle():
+    with nullrun.guard():
         print(my_agent("What does NullRun do?"))
 ```
 
-What your terminal looks like on a rate-limit hit. `handle()` prints
+What your terminal looks like on a rate-limit hit. `guard()` prints
 the structured four-line developer report (catalog headline +
 `[error_code]` + `what` + `where` + `why` + `how to fix`):
 
@@ -4039,19 +4039,19 @@ $ echo $?
 1
 ```
 
-`with nullrun.handle():` catches every `NullRunError` — which now
+`with nullrun.guard():` catches every `NullRunError` — which now
 includes the kill signal (`WorkflowKilledInterrupt` /
 `NullRunWorkflowKilledError` both inherit from `NullRunError`) —
 prints the structured report to stderr, and exits with code 1. To
 handle kill distinctly (for example, checkpoint state before exit),
-use the un-`handle()` form and add your own
+use the un-`guard()` form and add your own
 `except NullRunWorkflowKilledError:` arm.
 
-`handle()` is the recommended form: it gives a clearer scope,
+`guard()` is the recommended form: it gives a clearer scope,
 accepts an `exit_code` argument, and the four-line report is what it
 always renders.
 
-`handle()` is for scripts and one-shots. For
+`guard()` is for scripts and one-shots. For
 long-running services you want explicit handling — see
 [Server frameworks](#server-frameworks) below.
 
@@ -4076,7 +4076,7 @@ sugar on top of the catalog.
 
 ## Server frameworks
 
-For FastAPI / aiohttp / Flask / Django, you don't want `handle()`
+For FastAPI / aiohttp / Flask / Django, you don't want `guard()`
 (it exits the process). Instead,
 catch the exception in your request handler and return an appropriate
 HTTP status:
@@ -4160,7 +4160,7 @@ except NullRunError:
     log.error("agent failed", exc_info=True)
 ```
 
-`handle()` catches kill via the standard `NullRunError`
+`guard()` catches kill via the standard `NullRunError`
 arm — it prints the structured four-line report and exits 1. To keep
 the process alive on kill (checkpoint, notify a supervisor, then
 exit), use bare `@protect` with your own `except NullRunWorkflowKilledError:`
@@ -4206,7 +4206,7 @@ arm above.
     short-circuits sub-100ms (`FailClosed` / `Buffered` / `Degraded`
     modes) instead of hanging on `pool.acquire()`. The kill signal
     inherits from `NullRunError`, so `except Exception:` catches it
-    alongside every other SDK error; `with nullrun.handle():`
+    alongside every other SDK error; `with nullrun.guard():`
     catches it via the standard `NullRunError` arm and prints the
     structured four-line developer report.
 
@@ -7281,7 +7281,7 @@ authors wiring keys from a non-env source).
 `init()` also auto-registers `nullrun.shutdown()` via `atexit`, so a
 clean WS close on process exit happens without an explicit call.
 Calling `shutdown()` manually remains safe and idempotent. The
-`with nullrun.handle():` context manager provides the same
+`with nullrun.guard():` context manager provides the same
 callsite-level error translation as `init(..., fail_on_exit=True)`,
 applied to a region of code rather than at startup. Calling `init()`
 twice returns the same singleton without re-running the lazy trigger.
@@ -7289,8 +7289,8 @@ twice returns the same singleton without re-running the lazy trigger.
 || Symbol | Purpose | In `__all__` |
 |---|---|---|---|
 | `init(api_key=None, api_url=None, debug=False, fail_on_exit=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). With `fail_on_exit=True`, missing config prints the developer report and `sys.exit(1)` instead of raising. The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
-| `@protect` | Wrap a function for **gate** enforcement (control plane / budget / span / per-tool policy). Takes no kwargs. Every call routes through `/execute`; the backend decides allow / block / require-approval. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — ships `tool_name + args + kwargs` on the wire for every protected call. Wrap the call site in `with nullrun.handle():` for the structured 4-line dev report on failure. | ✅ |
-| `with nullrun.handle(*, exit_code=1):` | Context manager for friendly exit — catches any `NullRunError` raised inside the block, renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
+| `@protect` | Wrap a function for **gate** enforcement (control plane / budget / span / per-tool policy). Takes no kwargs. Every call routes through `/execute`; the backend decides allow / block / require-approval. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — ships `tool_name + args + kwargs` on the wire for every protected call. Wrap the call site in `with nullrun.guard():` for the structured 4-line dev report on failure. | ✅ |
+| `with nullrun.guard():` | Context manager for friendly exit — catches any `NullRunError` raised inside the block, renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
 | `chain(chain_id: str, op: str = "start")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
 | `span(name=None)` | Context manager for nested trace spans. | (lazy) |
@@ -7380,8 +7380,8 @@ below for `set_user_message` / `get_user_message` usage.
 
 The curated public surface in `dir(nullrun)` is the `__all__` list
 in `nullrun/__init__.py`: `__version__`, `init`, `protect`,
-`shutdown`, `on_error`, `status`, `format_user_message`,
-`set_user_message`, `handle`, plus the
+`shutdown`, `on_error`, `format_user_message`,
+`set_user_message`, `guard`, plus the
 structured exception names `NullRunError`, `NullRunAuthError`,
 `NullRunConfigError`, `NullRunBackendError`, `NullRunBudgetError`,
 `NullRunToolBlockedError`, `WorkflowKilledInterrupt`, and the
@@ -7520,7 +7520,7 @@ function never raises and never returns an empty string.
 
 - [Decorators & context managers](decorators.md) — deep-dive on
   `@protect` (canonical entry point, takes no parameters),
-  `with nullrun.handle():`, `set_call_context`, and the
+  `with nullrun.guard():`, `set_call_context`, and the
   workflow / span / chain / attempt context managers
 - [Errors](errors.md)
 - [Errors → Decision vs. infrastructure](errors.md#decision-vs-infrastructure)
@@ -7929,7 +7929,7 @@ There are **two parallel taxonomies** you may see:
   exception. The full catalog is below in *NR-* error code catalog*.
 
 For the **three-layer error model** (structured exceptions →
-`on_error` hook → `format_user_message` / `with nullrun.handle():`)
+`on_error` hook → `format_user_message` / `with nullrun.guard():`)
 and the boundary between developer-facing and end-user-facing
 wording, see [Concepts → Error handling](../concepts/error-handling.md).
 
@@ -8021,7 +8021,7 @@ required.
 | Helper | Catches | For |
 |---|---|---|
 | `init(api_key=..., fail_on_exit=True)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
-| `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) — **recommended** form |
+| `with nullrun.guard():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) — **recommended** form |
 
 Both helpers propagate non-`NullRunError` exceptions (anything
 that isn't an SDK error) as honest tracebacks. `NullRunError`
@@ -8175,7 +8175,7 @@ you don't care about the exact cause.
 | `NR-R001` | Per-workflow rate limit hit (gateway returned 429 with `Retry-After`) | 429 | `RateLimitError` (subclass of `NullRunTransportError` — infrastructure class despite the 429 status) |
 | `NR-R002` | Rate-limit Redis unavailable (aggregate per-org rate-limit fail-CLOSED) | 503 | `NullRunRateLimitRedisError` |
 | `NR-C000` | Misconfiguration (missing api_key, invalid setup) | n/a (raised) | `NullRunConfigError` (default) |
-| `NR-C004` | `nullrun.status()` called before the runtime is bound (no `@protect` / `init()` yet) | n/a (raised) | `NullRunConfigError` (raised by `status()` when no runtime is bound) |
+| `NR-C004` | Runtime status requested before the runtime is bound (no `@protect` / `init()` yet) | n/a (raised) | `NullRunConfigError` (raised by `nullrun.get_runtime()` when no runtime is bound) |
 | `NR-A001` | Auth rejected by backend (general) | 401/403 | `NullRunAuthenticationError` (default) |
 | `NR-P001` | Wire-protocol version mismatch | 400 | `NullRunProtocolError` |
 | `INVALID_JSON` | Request body failed JSON parsing (`JsonSyntaxError`) — `error` slug `invalid_json` | 400 | `NullRunBackendError` |

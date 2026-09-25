@@ -21,7 +21,7 @@ There are **two parallel taxonomies** you may see:
   exception. The full catalog is below in *NR-* error code catalog*.
 
 For the **three-layer error model** (structured exceptions →
-`on_error` hook → `format_user_message` / `with nullrun.handle():`)
+`on_error` hook → `format_user_message` / `with nullrun.guard():`)
 and the boundary between developer-facing and end-user-facing
 wording, see [Concepts → Error handling](../concepts/error-handling.md).
 
@@ -113,7 +113,7 @@ required.
 | Helper | Catches | For |
 |---|---|---|
 | `init(api_key=..., fail_on_exit=True)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
-| `with nullrun.handle():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) — **recommended** form |
+| `with nullrun.guard():` | Any `NullRunError` raised inside the block | Region of code (e.g. a graph `invoke`) — **recommended** form |
 
 Both helpers propagate non-`NullRunError` exceptions (anything
 that isn't an SDK error) as honest tracebacks. `NullRunError`
@@ -267,7 +267,7 @@ you don't care about the exact cause.
 | `NR-R001` | Per-workflow rate limit hit (gateway returned 429 with `Retry-After`) | 429 | `RateLimitError` (subclass of `NullRunTransportError` — infrastructure class despite the 429 status) |
 | `NR-R002` | Rate-limit Redis unavailable (aggregate per-org rate-limit fail-CLOSED) | 503 | `NullRunRateLimitRedisError` |
 | `NR-C000` | Misconfiguration (missing api_key, invalid setup) | n/a (raised) | `NullRunConfigError` (default) |
-| `NR-C004` | `nullrun.status()` called before the runtime is bound (no `@protect` / `init()` yet) | n/a (raised) | `NullRunConfigError` (raised by `status()` when no runtime is bound) |
+| `NR-C004` | Runtime status requested before the runtime is bound (no `@protect` / `init()` yet) — reached via `nullrun.get_runtime()` | n/a (raised) | `NullRunConfigError` (raised by `nullrun.get_runtime()` when no runtime is bound) |
 | `NR-A001` | Auth rejected by backend (general) | 401/403 | `NullRunAuthenticationError` (default) |
 | `NR-P001` | Wire-protocol version mismatch | 400 | `NullRunProtocolError` |
 | `INVALID_JSON` | Request body failed JSON parsing (`JsonSyntaxError`) — `error` slug `invalid_json` | 400 | `NullRunBackendError` |
