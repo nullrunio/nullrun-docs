@@ -81,11 +81,11 @@ If you want to override `install()`'s defaults for a single endpoint
 
 ```python title="custom_mapping.py"
 from fastapi import HTTPException
-from nullrun import (
+from nullrun import WorkflowKilledInterrupt, format_user_message
+from nullrun.breaker.exceptions import (
     NullRunDecision,
     NullRunInfrastructureError,
-    WorkflowKilledInterrupt,
-    format_user_message,
+    WorkflowPausedException,
 )
 
 @app.post("/chat")
@@ -93,10 +93,21 @@ from nullrun import (
 def chat(message: str) -> dict:
     try:
         return {"reply": agent.run(message)}
-    except NullRunDecision as exc:
-        # Expected policy outcome — pass it to the client as-is
+    except WorkflowPausedException as exc:
+        # Not a NullRunDecision status — it carries .resume_after
+        # rather than .status_code.
         raise HTTPException(
-            status_code=exc.status_code or 403,
+            status_code=503,
+            detail={"message": format_user_message(exc),
+                    "code": exc.error_code},
+            headers={"Retry-After": str(int(exc.resume_after or 0))},
+        )
+    except NullRunDecision as exc:
+        # Expected policy outcome — pass it to the client as-is.
+        # .status_code is absent on some decision classes, hence
+        # the getattr fallback.
+        raise HTTPException(
+            status_code=getattr(exc, "status_code", None) or 403,
             detail={
                 "message": format_user_message(exc),
                 "code": exc.error_code,
@@ -107,7 +118,7 @@ def chat(message: str) -> dict:
         # System failure — log to Sentry, return generic 503
         sentry_sdk.capture_exception(exc)
         raise HTTPException(
-            status_code=exc.status_code or 503,
+            status_code=getattr(exc, "status_code", None) or 503,
             detail={"message": format_user_message(exc), "code": exc.error_code},
         )
 ```

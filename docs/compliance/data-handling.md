@@ -11,12 +11,10 @@ for an employee assessing NULLRUN as a vendor. Every value below reflects
 the deployed product; rows marked **Not attested** are honest gaps — the
 implementation does not document them.
 
-This page is the load-bearing complement to the
-[Compliance overview](index.md), the
-[Geo restrictions](geo-restrictions.md) and
-[Sanctions screening](sanctions-screening.md) pages. Those explain
-*what NULLRUN enforces*; this page explains *what NULLRUN does with the
-data it sees*.
+This page is the load-bearing companion to the
+[Compliance overview](index.md). That page gives the short version;
+this one answers the vendor-risk questionnaire in full — *what NULLRUN
+does with the data it sees*.
 
 **Reading conventions.** `[V]` = verified · `[D]` = derived or inferred
 · `[N]` = not attested.
@@ -104,7 +102,6 @@ No email, no org name, no actor identifier echoed. `[V]`
 |---|---|
 | **Polar** (billing) | HMAC-SHA256 verified BEFORE any processing. Accepts Standard Webhooks headers (`webhook-id`, `webhook-timestamp`, `webhook-signature: v1,<base64>`) and the `polar-signature: t=…,v1=…` fallback. The sandbox environment bypasses verification; production does not. |
 | **Slack events** | Signing-secret validation; bot tokens stored via pgcrypto encryption. |
-| **Geo-block** | IP allow/deny via a self-hosted MaxMind `GeoLite2-Country` database (operator-managed file). Fail-CLOSED (503) when the database is unloadable. |
 
 ### 1.7 Email
 
@@ -195,7 +192,6 @@ Per the production container configuration:
 - `cap_drop: [ALL]`
 - `no-new-privileges: true`
 - `tmpfs /tmp` (noexec / nosuid / nodev, 100M)
-- Bind-mounted screening data (OFAC + GeoLite2)
 
 ### TLS
 
@@ -301,9 +297,6 @@ The canonical list is versioned and served from the public endpoint
 | **Slack Technologies, LLC** | Alert delivery (OAuth) | US | EU SCCs (Module 3) | Yes |
 | **GitHub Inc.** | OAuth identity provider | US | EU SCCs (Module 3) | Yes |
 | **Google LLC** | OAuth identity provider | US | EU SCCs (Module 3) | Yes |
-
-**MaxMind** (geo-IP): a self-hosted GeoLite2-Country database; no
-live API calls.
 
 **LLM providers:** NULLRUN does not proxy calls to OpenAI /
 Anthropic / Google / Azure. The SDK talks to providers directly with its
@@ -438,7 +431,7 @@ TTL of the deny list = 2× the auth-cache TTL = 600 s.
 - **Protocol header required.** `X-NULLRUN-PROTOCOL` on every gate
   request; `/health` returns min/max (min=2, max=4, current=4).
 - **Fail-CLOSED on enforcement paths.** Budget path (Redis down → 402
-  `REDIS_UNAVAILABLE`); geo-block (MaxMind unloadable → 503).
+  `REDIS_UNAVAILABLE`).
 - **IDOR guards.** Body org mismatch, `workflow_id` body-vs-key
   mismatch, parent-execution cross-org rejection.
 - **CSRF double-submit** for browser POSTs; `Authorization: Bearer`
@@ -504,8 +497,6 @@ They are the questions a vendor reviewer should follow up on:
 ## See also
 
 - [Compliance overview](index.md)
-- [Geo restrictions](geo-restrictions.md)
-- [Sanctions screening](sanctions-screening.md)
 - [Performance & limits](../operations/performance.md) — latency,
   failure-mode behaviour, timeouts
 - [API keys](../concepts/api-keys.md) — HMAC, rotation, drain

@@ -56,9 +56,8 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 - [Error codes](docs/reference/errors.md) · `validation_error`, `RateLimitError`, kill contract
 
 **Compliance**
-- [Overview](docs/compliance/index.md) · geo-block and sanctions-screening posture
-- [Geographic restrictions](docs/compliance/geo-restrictions.md) · IP-level geo-block, sanctioned + high-risk blocklists, VPS runbook
-- [Sanctions screening](docs/compliance/sanctions-screening.md) · OFAC SDN signup screening, degraded fallback
+- [Overview](docs/compliance/index.md) · data-handling and vendor-review posture
+- [Data handling & vendor review](docs/compliance/data-handling.md) · retention, sub-processor list, vendor review
 
 ## What you need from us
 

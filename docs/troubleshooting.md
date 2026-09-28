@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Common NullRun questions answered: why is my agent blocked, how to debug a gate decision, what to do when a budget doesn't reset.
+description: "Common NullRun questions answered: why is my agent blocked, how to debug a gate decision, what to do when a budget doesn't reset."
 ---
 
 # Troubleshooting

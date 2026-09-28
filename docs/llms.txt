@@ -62,9 +62,7 @@ have no equivalent.
 
 ## Compliance
 
-- [Compliance overview](https://docs.nullrun.io/compliance/): geo-block and sanctions-screening posture
-- [Geographic restrictions](https://docs.nullrun.io/compliance/geo-restrictions/): IP-level blocklists, sanctioned jurisdictions
-- [Sanctions screening](https://docs.nullrun.io/compliance/sanctions-screening/): OFAC SDN signup screening, degraded fallback
+- [Compliance overview](https://docs.nullrun.io/compliance/): data-handling and vendor-review posture
 - [Data handling & vendor review](https://docs.nullrun.io/compliance/data-handling/): what data is transmitted and stored, who can access it, and how it is deleted
 
 ## Troubleshooting

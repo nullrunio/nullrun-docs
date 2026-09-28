@@ -47,11 +47,7 @@
 
      What's covered here:
        • Content-Security-Policy — closes the Observatory CSP test
-         via the meta-tag form. `frame-ancestors` is IGNORED when CSP
-         is delivered as `<meta>` per spec — Observatory only checks
-         presence, so the directive is still emitted for parity with
-         the HTTP-header version that Cloudflare Pages will serve once
-         we migrate (see _headers at the repo root).
+         via the meta-tag form.
        • Referrer-Policy — closes the Observatory Referrer-Policy
          test via the standard `<meta name="referrer">` form.
 
@@ -60,8 +56,13 @@
        • Strict-Transport-Security, X-Content-Type-Options,
          X-Frame-Options, Permissions-Policy, Cross-Origin-Opener-
          Policy, Cross-Origin-Resource-Policy.
-     Those gain credit only after the DNS CNAME cuts from
-     nullrunio.github.io to the Cloudflare Pages project. #}
+         `frame-ancestors` joins that list: the CSP spec ignores it
+         when the policy arrives as `<meta>`, so emitting it here did
+         nothing but log a console error on every page load. It is
+         declared in the HTTP-header version instead, and
+         `X-Frame-Options: DENY` covers the GitHub Pages host in the
+         meantime. Those gain credit only after the DNS CNAME cuts
+         from nullrunio.github.io to the Cloudflare Pages project. #}
 
   {# Content-Security-Policy — `default-src 'self'` baseline with the
      exceptions mkdocs-material actually needs:
@@ -81,19 +82,38 @@
        • form-action 'self' https://github.com →
                                  search dialog submits to '/' +
                                  outbound edit links
-       • frame-ancestors 'none' / base-uri 'self' →
-                                 prevent clickjacking + base-tag
-                                 injection (frame-ancestors is a
-                                 no-op in meta-CSP but matches the
-                                 HTTP-header version) #}
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self'; frame-ancestors 'none'; form-action 'self' https://github.com; base-uri 'self'">
+       • connect-src 'self' https://api.github.com →
+                                 setting `repo_url` makes Material's
+                                 bundled repository component XHR
+                                 api.github.com on every page load —
+                                 once for the repo record, once for
+                                 the latest release — to label the repo
+                                 button. That is a property of
+                                 `repo_url`, not of `extra.social`
+                                 (which is unset in mkdocs.yml for
+                                 the same reason: it badges a repo
+                                 link from a second code path).
+                                 `repo_url` is load-bearing — it
+                                 drives the menu-bar GitHub button
+                                 and the per-page "Edit this page"
+                                 action — so the single origin is
+                                 allowed rather than the feature
+                                 removed. Keep this in sync with
+                                 docs/_headers.
+       • base-uri 'self' → prevent base-tag injection
+       `frame-ancestors` is deliberately absent: it is ignored in the
+       meta form (see the note above the CSP block). #}
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https://api.github.com; form-action 'self' https://github.com; base-uri 'self'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
 
-  {# Brand chrome color — cream paper (#F1EDDA) + machined black
-     (#1A1A1A). Mobile Safari/Chrome tint address bar / tab strip
-     in the brand surface. Mirrors `--bg-base` from frontend/app/
-     globals.css :root / .dark exactly. #}
-  <meta name="theme-color" content="#F1EDDA">
+  {# Brand chrome color — cream paper (#F1EDDA) in light, machined
+     black (#1A1A1A) in dark. Mobile Safari/Chrome tint the address bar
+     and tab strip in the brand surface. Mirrors `--bg-base` from
+     frontend/app/globals.css :root / .dark exactly. Both variants are
+     media-scoped: an unscoped `theme-color` would win over the
+     media-scoped one in every browser, pinning dark-mode users to
+     cream. #}
+  <meta name="theme-color" content="#F1EDDA" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1A1A1A" media="(prefers-color-scheme: dark)">
 
   {# Brand typography — neo-brutalist 3-family stack.
@@ -168,24 +188,75 @@
     }
   </style>
 
-  {# OG / Twitter card fallbacks — image dimensions + card type so
-     Slack / Twitter / Discord don't render a tiny preview. #}
+  {# Card dimensions, so Slack / Twitter / Discord lay the preview out
+     before the image has downloaded. Paired with the `og:image` /
+     `twitter:image` emitted in the OG core block below. #}
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="NullRun — runtime decision layer for tool-using AI agents">
-  <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image:alt" content="NullRun — runtime decision layer for tool-using AI agents">
 
   {# ── OG / SEO core ───────────────────────────────────────────────
-     Per-page values (description, type) come from Material's front-
-     matter. We add the SITE-WIDE constants here so every page is
-     marked with the same canonical brand identity, which matters
-     for both Google rich-results and LLM grounding. #}
-  <meta property="og:site_name" content="NullRun Docs">
+     Per-page values (title, description, image) come from the page's
+     front matter; the site-wide constants below give every page the
+     same canonical brand identity, which matters for both Google
+     rich-results and LLM grounding.
+
+     `theme.social_cards` in mkdocs.yml is an **Insiders-only** option —
+     on the open-source build it parses, is accepted, and emits nothing.
+     Every tag in this block is therefore ours to emit, and these are
+     the only og: tags the site ships. #}
+  {%- set og_desc = (page.meta.description
+                    if page and page.meta and page.meta.description
+                    else config.site_description) %}
+  {%- set og_type = 'website' if (not page or page.is_homepage) else 'article' %}
+  {# `page.title` is the NAV title, which carries the chapter number
+     ("4.4. Error codes"). That numbering is load-bearing in the
+     sidebar and in print.md, but it is noise on a link preview where
+     there is no sidebar to anchor it against — so the card shows the
+     page's own name with the site name appended.
+
+     Material exposes no "un-numbered title" and this build has no
+     `regex_replace` filter, so the strip is done by hand: split on the
+     first ". ", then keep the tail only if the head was purely
+     numeric. The digits check is what stops a title that legitimately
+     contains ". " from being cut in half. #}
+  {%- set _seg = (page.title or config.site_name).split('. ', 1) -%}
+  {%- set _head = (_seg[0] if _seg | length > 1 else '') -%}
+  {%- set _num = _head | replace('.', '') -%}
+  {%- set _numbered = _seg | length > 1 and _num | length > 0 and _num | string | length == _num | length -%}
+  {%- set page_label = (config.site_name
+                       if (not page or page.is_homepage)
+                       else ((page.title if not _numbered else _seg[1]) ~ ' · ' ~ config.site_name)) %}
+  {# `og:image` must be an absolute URL — crawlers resolve it against
+     the fetch origin, and there is no origin behind a link preview
+     fetch. Per-page `image:` front matter wins; otherwise the
+     site-wide card. A value that's already absolute (an external CDN)
+     is passed through untouched. #}
+  {%- set og_image_rel = (page.meta.image
+                          if page and page.meta and page.meta.image
+                          else 'assets/images/og-image.png') %}
+  {%- set og_image = (og_image_rel if og_image_rel.startswith('http')
+                      else config.site_url ~ og_image_rel) %}
+  <meta property="og:site_name" content="{{ config.site_name }}">
   <meta property="og:locale" content="en_US">
-  <meta name="theme-color" content="#F1EDDA" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#1A1A1A" media="(prefers-color-scheme: dark)">
-  <link rel="canonical" href="{{ page.canonical_url }}">
+  <meta property="og:type" content="{{ og_type }}">
+  <meta property="og:title" content="{{ page_label | e }}">
+  <meta property="og:description" content="{{ og_desc | e }}">
+  <meta property="og:url" content="{{ page.canonical_url }}">
+  <meta property="og:image" content="{{ og_image }}">
+  <meta property="og:image:type" content="image/png">
+  {# No <link rel="canonical"> here — Material's base.html already
+     emits one from `page.canonical_url`, and a second identical tag
+     is just noise for crawlers to reconcile. #}
+
+  {# Twitter/X reads its own namespace — the `summary_large_image`
+     layout needs `twitter:title` / `twitter:description` /
+     `twitter:image` present, not just the og: fallbacks. #}
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ page_label | e }}">
+  <meta name="twitter:description" content="{{ og_desc | e }}">
+  <meta name="twitter:image" content="{{ og_image }}">
 
   {# ── LLM-discovery hints ─────────────────────────────────────────
      Two routes into the docs corpus for agents / crawlers:

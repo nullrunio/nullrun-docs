@@ -64,9 +64,7 @@ DESCRIPTIONS = {
     "reference/errors.md": "Full NullRun error-code reference: NR-B004 budget blocks, NR-T001 transport errors, NR-R001 refusals, and decision vs infrastructure classes.",
     "reference/llm-tool-catalog.md": "Per-model input and output pricing for every LLM NullRun understands, with capability flags for streaming, tools, and structured output.",
 
-    "compliance/index.md": "NullRun's compliance posture: geo-block at the network edge, sanctions screening at signup, and what to expect when rules degrade.",
-    "compliance/geo-restrictions.md": "IP-level blocklists for sanctioned jurisdictions, with the runtime status codes a client sees when a request is geo-blocked.",
-    "compliance/sanctions-screening.md": "OFAC SDN screening on signup, the degraded-fallback semantics when the screening service is unavailable, and the audit trail.",
+    "compliance/index.md": "NullRun's compliance posture: what data the gate sees, what it inspects, and what it deliberately leaves to the agent.",
 }
 
 FRONT_MATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)

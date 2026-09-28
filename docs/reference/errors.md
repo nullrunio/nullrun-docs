@@ -1,6 +1,6 @@
 ---
 title: Errors
-description: Full NullRun error-code reference: NR-B004 budget blocks, NR-T001 transport errors, NR-R001 refusals, and decision vs infrastructure classes.
+description: "Full NullRun error-code reference: NR-B004 budget blocks, NR-T001 transport errors, NR-R001 refusals, and decision vs infrastructure classes."
 ---
 
 # Error codes
@@ -59,29 +59,45 @@ four structured fields: `error_code` (machine-readable, e.g.
 `"NR-B004"`), `user_action` (imperative hint), `retryable`
 (bool), `docs_url`.
 
+Every exception below is raised from `nullrun.breaker.exceptions`.
+Only the names in `nullrun.__all__` are importable from the top-level
+`nullrun` package; the rest come from the module.
+
 ```
 NullRunError                          (Exception)
 ├── NullRunDecision                   (marker — expected policy outcomes)
 │   ├── NullRunBlockedException       (policy / budget / loop / sensitive block)
 │   │   ├── NullRunBudgetError        (budget exhausted — NR-B004)
 │   │   │   └── NullRunBudgetRecheckFailedError (NR-B006 — post-approval recheck)
-│   │   └── NullRunToolBlockedError   (tool in block list — NR-T001)
+│   │   ├── NullRunToolBlockedError   (tool in block list — NR-T001)
+│   │   └── NullRunApprovalDbUnavailableError (approval DB unavailable — NR-A016)
 │   ├── NullRunConsumeOverbudgetError (actual cost > reservation + ε — NR-O001)
+│   ├── NullRunChainError             (chain-mode gate check failed — NR-CH001)
 │   ├── WorkflowPausedException       (paused via control plane — NR-W003)
-│   ├── NullRunWorkflowInactiveError  (soft-deleted / inactive — NR-W004)
-│   └── WorkflowKilledInterrupt       (kill via control plane — NR-W002)
-│       └── NullRunWorkflowKilledError (typed public name; same code NR-W002)
+│   └── NullRunWorkflowInactiveError  (soft-deleted / inactive — NR-W004)
+├── WorkflowKilledInterrupt           (kill via control plane — NR-W002)
+│   └── NullRunWorkflowKilledError    (typed public name; same code NR-W002)
 └── NullRunInfrastructureError        (marker — system failures)
     ├── NullRunConfigError            (misconfiguration, e.g. missing api_key)
     ├── NullRunAuthenticationError   (401 / 403)
     │   └── NullRunAuthError          (401 specifically)
     ├── NullRunProtocolError          (wire-protocol version mismatch — NR-P001)
-    ├── NullRunApprovalDbUnavailableError (approval DB unavailable — NR-A016)
+    ├── NullRunRateLimitRedisError    (rate-limit Redis down — NR-R002)
     └── NullRunTransportError         (transport failures)
         ├── NullRunBackendError       (5xx — retryable; BREAKER_OPEN → NR-B005)
         └── RateLimitError            (gateway 429 — carries .retry_after)
-            └── NullRunRateLimitRedisError (rate-limit Redis down — NR-R002)
 ```
+
+Two branches sit **outside** the marker split, and both matter when
+you write an `except` chain:
+
+- `WorkflowKilledInterrupt` inherits from `NullRunError` directly, not
+  from `NullRunDecision`. A kill is not a policy decision, so
+  `except NullRunDecision` does not catch it — catch it by name.
+- `NullRunApprovalDbUnavailableError` inherits from
+  `NullRunBlockedException`, so it lands in the **decision** branch
+  even though an unavailable approval database is a system failure.
+  Its `error_code` (`NR-A016`) is what distinguishes it.
 
 `NullRunDecision` and `NullRunInfrastructureError` are **marker
 classes**, not exception classes themselves. They exist so host code
@@ -93,8 +109,8 @@ below for the recommended handling pattern.
 
 `NullRunBlockedException` carries `.workflow_id`, `.reason`, `.action`
 (`"block"` / `"kill"` / `"pause"`), `.tool_name` (when the block is
-tool-scoped), and `.details` (free-form). There is **no** `.message`
-attribute — use `str(exc)`.
+tool-scoped), `.status_code`, and `.details` (free-form). There is
+**no** `.message` attribute — use `str(exc)`.
 
 
 `WorkflowKilledInterrupt` (and its typed subclass `NullRunWorkflowKilledError`)
@@ -140,14 +156,24 @@ the right behaviour for each category.
 
 | Marker | What it covers | Why it matters |
 | --- | --- | --- |
-| `NullRunDecision` | Expected policy outcomes — budget cap, tool block, loop detection, workflow pause, per-workflow rate limit | The enforcement layer is doing its job. UX explains the decision and (where applicable) offers an upgrade or alternative action. |
-| `NullRunInfrastructureError` | System failures — network unreachable, gateway 5xx, auth rejection, config error | The SDK could not reach or query the policy engine. UX is a generic "service unavailable"; operators triage via `error_code`, `retryable`, and for transport errors, `source` / `endpoint`. |
+| `NullRunDecision` | Expected policy outcomes — budget cap, tool block, chain-gate rejection, loop detection, workflow pause, over-budget commit | The enforcement layer is doing its job. UX explains the decision and (where applicable) offers an upgrade or alternative action. |
+| `NullRunInfrastructureError` | System failures — network unreachable, gateway 5xx, gateway 429, auth rejection, config error, rate-limit Redis down | The SDK could not reach or query the policy engine. UX is a generic "service unavailable"; operators triage via `error_code`, `retryable`, and for transport errors, `source` / `endpoint`. |
+
+Rate limits land on the **infrastructure** side, not the decision
+side: a 429 from the gateway arrives as `RateLimitError`, a subclass
+of `NullRunTransportError` → `NullRunInfrastructureError`. Handle it
+as a system failure with a retry, and surface `upgrade_url` if the
+user genuinely needs a higher plan.
+
+`WorkflowKilledInterrupt` belongs to neither marker — catch it by
+name ahead of both, as shown in the [exception
+hierarchy](#sdk-exception-hierarchy-python).
 
 ### Recommended handler shape
 
 ```python title="decision_vs_infra_handler.py"
 import nullrun
-from nullrun import (
+from nullrun.breaker.exceptions import (
     NullRunDecision,
     NullRunInfrastructureError,
 )
@@ -157,7 +183,8 @@ try:
 except NullRunDecision as d:
     # Expected — surface to the user, log to product analytics,
     # tag the conversation with d.error_code for cohort analysis.
-    return d.user_message() if hasattr(d, "user_message") else str(d)
+    analytics.track("nullrun_decision", code=d.error_code)
+    return nullrun.format_user_message(d)
 except NullRunInfrastructureError as e:
     # System failure — alert ops, retry with backoff, do NOT
     # surface internal text to the end user. The catalog has a
@@ -170,29 +197,36 @@ except NullRunInfrastructureError as e:
 
 When you build a server-framework integration (FastAPI, aiohttp,
 Telegram bot, Slack handler), map each category to the right HTTP
-status. The headline cases are below; every `NullRunDecision`
-subclass carries `.status_code` so framework integrations can map
-the field directly instead of hard-coding.
+status. The headline cases are below. Where the backend supplied a
+wire status, the exception carries it as `.status_code` and you can
+map the field directly instead of hard-coding.
 
 | Category | HTTP status | Notes |
 | --- | --- | --- |
-| `NullRunDecision` — budget exhausted (`NR-B004`) | `402` | Honour `.retry_after` from the `RateLimitError` if set; budget-exhausted `NullRunBudgetError` exposes the same field via `.details.retry_after` |
-| `NullRunDecision` — tool blocked (`NR-T001`) | `403` | User did nothing wrong, but the action is forbidden |
-| `NullRunDecision` — workflow paused | `503` | Set `Retry-After` from `.resume_after` |
+| `NullRunDecision` — budget exhausted (`NR-B004`) | `402` | `NullRunBudgetError` carries `.status_code`. Read `.details` for any `retry_after` the backend supplied |
+| `NullRunDecision` — tool blocked (`NR-T001`) | `403` | User did nothing wrong, but the action is forbidden. Carries `.status_code` |
+| `NullRunDecision` — workflow paused (`NR-W003`) | `503` | `WorkflowPausedException` has no `.status_code`; it carries `.resume_after`, which you pass as the `Retry-After` header |
+| `NullRunDecision` — chain gate failed (`NR-CH001`) | `402` or `403` | `NullRunChainError`. One code covers both: `CHAIN_MAX_DURATION_EXCEEDED` → 402, `CHAIN_ORG_MISMATCH` / `CHAIN_CROSS_ORG` → 403. Read `.status_code` |
 | `NullRunInfrastructureError` — rate-limit Redis (`NR-R002`) | `503` | `NullRunRateLimitRedisError` — the rate limiter is degraded |
-| `WorkflowKilledInterrupt` | `503` | Special ASGI middleware required — see [Use with FastAPI](../how-to/fastapi.md) |
+| `NullRunInfrastructureError` — gateway 429 | `503` | `RateLimitError` carries `.retry_after` and `.upgrade_url` |
+| `WorkflowKilledInterrupt` (`NR-W002`) | `503` | Special ASGI middleware required — see [Use with FastAPI](../how-to/fastapi.md) |
 
 Other decision categories (`CONSUME_OVERBUDGET` → 422,
-`CHAIN_ORG_MISMATCH` → 403, `CHAIN_MAX_DURATION_EXCEEDED` → 402,
-`WORKFLOW_INACTIVE` → 403, `PROTOCOL_TOO_OLD` → 400, generic
-`NullRunInfrastructureError` → 503) follow the same pattern: read
-`exc.status_code` from the wire and map it directly.
+`WORKFLOW_INACTIVE` → 403) and infrastructure codes
+(`PROTOCOL_TOO_OLD` → 400, generic `NullRunInfrastructureError` → 503)
+follow the same pattern: read `exc.status_code` from the wire when the
+attribute is present and map it directly.
 
-Every `NullRunDecision` subclass carries `.status_code` (the wire
-HTTP status the backend returned). The FastAPI integration maps
-this field to the response status automatically; in custom
-integrations read `exc.status_code` rather than hard-coding the
-default above.
+`.status_code` is **not** on every exception — it exists only where
+`__init__` accepts one, which today is the `NullRunBlockedException`
+family plus `NullRunConsumeOverbudgetError` and `NullRunChainError`.
+`WorkflowPausedException`, `WorkflowKilledInterrupt`,
+`NullRunApprovalDbUnavailableError` and the transport classes do not
+carry it, so read it with
+`getattr(exc, "status_code", None)` and fall back to your category
+default. The FastAPI integration applies this mapping for you; in
+custom integrations do the same rather than assuming the attribute is
+there.
 
 The NullRun SDK ships a reference FastAPI integration that applies
 this mapping for you — see [Use with FastAPI](../how-to/fastapi.md)
@@ -255,6 +289,9 @@ and end-user-facing wording lives in
 | `NR-A014` | Capability digest drifted since approval — re-approval required | 403 | `NullRunApprovalToolDigestMismatchError` |
 | `NR-A015` | Grant already consumed (replay rejected) | 403 | `NullRunApprovalReplayRejectedError` |
 | `NR-A016` | Approval database unavailable — transient 5xx on the approval row lookup | 503 | `NullRunApprovalDbUnavailableError` (fail-CLOSED — retry with backoff) |
+| `NR-MCP01` | Destructive MCP tool blocked by the `mcp_destructive_policy` umbrella. Wire slug `MCP_DESTRUCTIVE_BLOCKED` | 403 | `NullRunMcpDestructiveBlockedError` |
+| `NR-MCP02` | Read-only MCP tool blocked because the operator's bypass path is closed. Wire slug `MCP_READONLY_BYPASS_BLOCKED` | 403 | `NullRunMcpReadonlyBypassBlockedError` |
+| `NR-MCP03` | MCP tool requires operator approval — the MCP counterpart of `NR-A010`. Wire slug `MCP_APPROVAL_REQUIRED` | 403 | `NullRunMcpApprovalRequiredError` (retryable — the operator can still act) |
 | `NR-X001` | Generic policy block — no dedicated subclass | varies | `NullRunBlockedException` (default) |
 
 Approval grant-consume codes (NR-A010..NR-A015) are most often seen

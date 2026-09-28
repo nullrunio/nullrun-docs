@@ -132,16 +132,24 @@
   --selection-bg: #E6AF1E;
   --selection-alpha: 0.25;
 
-  /* Typography */
+  /* Typography.
+     Sizes are in rem against a root pinned to 16px (see "ROOT FONT
+     SIZE" above), so these read as the pixel values noted. Body copy
+     is 16px — the size MDN, Tailwind and Vercel all land on — and
+     line-height 1.7 gives Inter the vertical room it needs at that
+     size; 1.55 was tuned against the old 20-22px root and read tight
+     once the text came down. The heading scale is a tighter ratio
+     than Material's default so H1 dominates without the top of the
+     page shouting. */
   --md-text-font: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --md-code-font: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-display: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --md-typeset-font-size: 0.9375rem;
-  --md-typeset-line-height: 1.55;
-  --md-typeset-h1-font-size: 2.25rem;
-  --md-typeset-h2-font-size: 1.65rem;
-  --md-typeset-h3-font-size: 1.3rem;
-  --md-typeset-h4-font-size: 1.1rem;
+  --md-typeset-font-size: 1rem;          /* 16px */
+  --md-typeset-line-height: 1.7;
+  --md-typeset-h1-font-size: 2.125rem;   /* 34px */
+  --md-typeset-h2-font-size: 1.5rem;     /* 24px */
+  --md-typeset-h3-font-size: 1.1875rem;  /* 19px */
+  --md-typeset-h4-font-size: 1rem;       /* 16px */
   --md-typeset-h1-weight: 700;
   --md-typeset-h2-weight: 600;
   --md-typeset-h3-weight: 600;
@@ -238,6 +246,35 @@ body {
 }
 
 html { scroll-behavior: smooth; }
+
+/* ── ROOT FONT SIZE — PINNED ──────────────────────────────────────────
+   Material scales the root font with the viewport:
+
+       html                → 125%    → 20px
+       ≥100em  (1600px)    → 137.5%  → 22px
+       ≥125em  (2000px)    → 150%    → 24px
+
+   (The `em` in those media queries resolves against the INITIAL font
+   size, not the root it is setting, so the breakpoints are 1600px and
+   2000px of real viewport.)
+
+   Every rem-based value on the site — including
+   `--md-typeset-font-size` — therefore resolves differently depending
+   on the monitor. Body copy measured 18.75px on a laptop and 20.6px
+   on a desktop, and the article column was wide enough to run 165
+   characters per line. Text that grows when you widen the window is
+   the opposite of what a reader expects.
+
+   Pinning the root at 100% (= 16px, the CSS default) makes every rem
+   on the site deterministic, so the sizes in §1 are the literal pixel
+   values they read as. The layout that leaned on the scaling — the
+   340px sidebar, the 50px menu-bar, the content column — is declared
+   in px further down this file and is unaffected.
+
+   NOTE: this rule must be the last thing that touches the root size.
+   Material's two breakpoint rules sit in `@media` blocks, which do not
+   add specificity, so plain source order decides. */
+html { font-size: 100%; }
 
 /* Selection — FLAG base + ink color so muted/subtle text still reads
    when highlighted. Mirrors globals.css ::selection. */
@@ -399,20 +436,164 @@ svg {
   stroke-width: 2;
 }
 
-/* The menu-bar magnifier (`.md-search__icon.md-icon[for="__search"]`)
-   is not part of the design, so the trigger is hidden. Search itself
-   stays functional: Material's
-   `__search` checkbox + dialog overlay continue to render when search
-   is opened, and the `/` keyboard shortcut (Material default) still
-   toggles the dialog. The other `.md-search__icon.md-icon` instances
-   (the share / reset buttons inside the open dialog) are unaffected
-   — they're scoped by parent `.md-search__options` /
-   `.md-search__form` and won't match a bare `:not(...)` of the
-   menu-bar trigger (which is unique as a direct child of the form
-   here). The first `.md-search__icon.md-icon` is the one inside
-   `.md-search__form` directly — its siblings are wrapped in
-   `.md-search__options`. */
-.md-search__form > .md-search__icon.md-icon { display: none; }
+/* ── SEARCH SLAB ────────────────────────────────────────────────────
+   Material's collapsed search is a real 11.7rem input living in the
+   header, and its ONLY clickable trigger is
+   `<label class="md-search__icon md-icon" for="__search">`. An earlier
+   version of this file hid that label, which left the input visible
+   but inert: the gray slab rendered, clicking it did nothing, and the
+   `/` shortcut was the only way in. The trigger is back, and the
+   whole slab is wired to open the dialog (extra.js §3a), so the
+   affordance and the action finally agree.
+
+   The slab is a neo-brutalist plate — 2px border + hard offset
+   shadow, radius 0 — matching every other control in the menu-bar.
+   While the dialog is closed it reads as a compact field; the
+   moment it's checked, Material widens `.md-search__inner` to 34.4rem
+   and the same plate becomes the dialog's input bar. The offset
+   shadow is dropped in that state so the dialog doesn't drag a second
+   plate edge around the overlay. */
+.nr-menubar__left-buttons .md-search {
+  position: relative;
+  float: none;
+  padding: 0;
+  flex: 0 0 auto;
+  margin-right: 8px;
+}
+/* Desktop-only. Material's own breakpoint for the collapsed in-header
+   field is 60em: below it, `.md-search__inner` is a `position: fixed`
+   full-screen panel that is `width: 0; height: 0; opacity: 0` while
+   closed. Overriding its geometry unconditionally collapsed the mobile
+   dialog to 142px, so everything that fights that base rule is scoped
+   to the desktop range and the mobile states are re-declared below. */
+@media screen and (min-width: 60em) {
+  .nr-menubar__left-buttons .md-search__inner {
+    position: relative;
+    float: none;
+    width: 230px;
+    padding: 0;
+    transition: width .2s cubic-bezier(.1, .7, .1, 1);
+  }
+}
+.md-search__form {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 8px;
+  background-color: var(--md-default-bg-color);
+  border: 2px solid var(--md-default-fg-color);
+  box-shadow: 3px 3px 0 var(--nr-shadow);
+  border-radius: 0;
+  cursor: text;
+  transition: box-shadow .12s linear, transform .12s linear;
+}
+.md-search__form:hover {
+  box-shadow: 5px 5px 0 var(--nr-shadow);
+  transform: translate(-2px, -2px);
+}
+.md-search__form:focus-within {
+  box-shadow: 5px 5px 0 var(--nr-shadow);
+  transform: translate(-2px, -2px);
+}
+/* The desktop dialog state. Material would grow `.md-search__inner` to
+   a fixed 34.4rem; we instead let the slab absorb whatever the
+   menu-bar has left, so the dialog is as wide as the window and the
+   result excerpts get room to breathe. `flex: 1 1 auto` has to be set
+   on BOTH the left-button cluster and the `.md-search` flex item
+   inside it — `.nr-menubar__right-buttons` already carries
+   `margin-left: auto`, so the print / GitHub buttons stay pinned right
+   while the field grows. The offset shadow comes off in this state:
+   the dialog spans the header, and a trailing second edge under it
+   just reads as a seam. */
+@media screen and (min-width: 60em) {
+  [data-md-toggle="search"]:checked ~ .md-header .nr-menubar__left-buttons {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  [data-md-toggle="search"]:checked ~ .md-header .md-search {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  [data-md-toggle="search"]:checked ~ .md-header .md-search__inner {
+    width: 100%;
+  }
+  [data-md-toggle="search"]:checked ~ .md-header .md-search__form,
+  [data-md-toggle="search"]:checked ~ .md-header .md-search__form:hover,
+  [data-md-toggle="search"]:checked ~ .md-header .md-search__form:focus-within {
+    box-shadow: none;
+    transform: none;
+  }
+}
+
+/* The magnifier — the actual `for="__search"` trigger. Material floats
+   it and sizes it in absolute units, so reset to a flex child and
+   pin it to the left of the field. `pointer-events: auto` is
+   explicit because Material sets it to `none` on the whole `.md-search`
+   subtree when the dialog is closed. */
+.md-search__form > .md-search__icon.md-icon {
+  display: flex;
+  align-items: center;
+  position: static;
+  order: -1;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0 8px 0 0;
+  padding: 0;
+  color: var(--nr-icons);
+  pointer-events: auto;
+  cursor: pointer;
+  transform: none;
+  transition: none;
+}
+.md-search__form > .md-search__icon.md-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+/* Material packs two icons into this one `<label>` — the magnifier and
+   a back arrow — and its cascade leaves the arrow showing in both
+   states, so a closed trigger reads as "go back" instead of "search".
+   We take the pairing over explicitly: magnifier while closed, arrow
+   once the dialog is open and the reader can back out of a query. The
+   base selector is deliberately heavier than Material's
+   `.md-search__icon[for=__search] svg:first-child { display: none }`
+   so it wins without `!important`. */
+.md-search__form > .md-search__icon.md-icon > svg:first-child {
+  display: block;
+}
+.md-search__form > .md-search__icon.md-icon > svg:last-child {
+  display: none;
+}
+[data-md-toggle="search"]:checked ~ .md-header .md-search__form > .md-search__icon.md-icon > svg:first-child {
+  display: none;
+}
+[data-md-toggle="search"]:checked ~ .md-header .md-search__form > .md-search__icon.md-icon > svg:last-child {
+  display: block;
+}
+.md-search__form > .md-search__icon.md-icon:hover {
+  color: var(--nr-icons-hover);
+}
+
+/* The input: transparent, unframed, sitting inside the plate. Material
+   reserves 2.2rem on the left for the icon and 2.2rem on the right
+   for the options; we own the padding now. */
+.md-search__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 6px 0 0 !important;
+  background: transparent;
+  border: 0;
+  color: var(--md-default-fg-color);
+  font-family: var(--md-text-font);
+  font-size: .75rem;
+  line-height: 1;
+}
+.md-search__input:focus {
+  outline: none;
+  box-shadow: none;
+}
 
 /* Search input placeholder — Material's stock rules resolve it to
    `var(--md-primary-bg-color--light)`. With our dark palette
@@ -432,6 +613,129 @@ svg {
 .md-search__input::placeholder {
   color: var(--md-default-fg-color--light) !important;
   opacity: 1;
+  font-family: var(--md-text-font);
+}
+
+/* The share / reset icons inside the open dialog. Material absolutely
+   positions both the `<nav class="md-search__options">` and its icons
+   against the form's padding box, which drops the reset "X" straight
+   on top of the magnifier. Our form is a flex row, so every child
+   goes back into flow — `position: static !important` is what keeps
+   the two from overlapping. */
+.md-search__options {
+  position: static !important;
+  float: none !important;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: 6px;
+}
+.md-search__options .md-search__icon.md-icon {
+  position: static !important;
+  float: none !important;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  color: var(--nr-icons);
+  pointer-events: auto;
+  cursor: pointer;
+  transform: none;
+}
+.md-search__options .md-search__icon.md-icon:hover { color: var(--nr-icons-hover); }
+.md-search__options .md-search__icon.md-icon svg { width: 16px; height: 16px; fill: currentColor; }
+
+/* ── SEARCH, narrow viewports (<60em) ────────────────────────────────
+   Material's collapsed search is an icon in the header below this
+   breakpoint, not a field — the in-header field only exists at ≥60em.
+   We keep that shape but restyle it as a brutalist plate so it matches
+   the other menu-bar buttons, and we hand the open state back to
+   Material's full-screen panel, which is the right mobile pattern.
+
+   Closed: a 36px icon plate. The input collapses to zero width rather
+   than `display: none` so Material's bundle keeps a live element to
+   focus and type into when the panel opens. */
+@media screen and (max-width: 59.984375em) {
+  .nr-menubar__left-buttons .md-search__inner {
+    position: static;
+    float: none;
+    width: 36px;
+    height: 34px;
+    padding: 0;
+    opacity: 1;
+    overflow: visible;
+    transform: none;
+    transition: none;
+  }
+  .md-search__form {
+    height: 32px;
+    padding: 0;
+    justify-content: center;
+    box-shadow: none;
+  }
+  .md-search__form > .md-search__icon.md-icon { margin: 0; }
+  .md-search__input {
+    flex: 0 0 0;
+    width: 0;
+    padding: 0 !important;
+    opacity: 0;
+  }
+  .md-search__options { display: none; }
+  .nr-search-hint { display: none !important; }
+
+  /* Open: full-screen panel, Material's own geometry. */
+  [data-md-toggle="search"]:checked ~ .md-header .md-search__inner {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    opacity: 1;
+    overflow: auto;
+    transform: none;
+    z-index: 3;
+    background-color: var(--md-default-bg-color);
+  }
+  [data-md-toggle="search"]:checked ~ .md-header .md-search__form {
+    position: sticky;
+    top: 0;
+    height: 50px;
+    padding: 0 12px;
+    justify-content: flex-start;
+    box-shadow: none;
+  }
+  [data-md-toggle="search"]:checked ~ .md-header .md-search__input {
+    flex: 1 1 auto;
+    width: auto;
+    padding: 0 6px 0 0 !important;
+    opacity: 1;
+  }
+  [data-md-toggle="search"]:checked ~ .md-header .md-search__options { display: flex; }
+}
+
+/* The `/` hint pinned to the right of the closed slab. Purely
+   decorative — extra.js §3a binds the actual shortcut — and hidden
+   once the dialog is open, where the field spans the full width. */
+.nr-search-hint {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  order: 1;
+  flex: 0 0 auto;
+  min-width: 20px;
+  height: 20px;
+  margin-left: 8px;
+  padding: 0 4px;
+  border: 1px solid var(--md-default-fg-color--lighter);
+  color: var(--md-default-fg-color--light);
+  font-family: var(--md-code-font);
+  font-size: .75rem;
+  font-weight: 500;
+  line-height: 1;
+  pointer-events: none;
+}
+@media screen and (min-width: 76.25em) {
+  .nr-menubar__left-buttons .md-search:not([data-md-open]) .nr-search-hint { display: flex; }
+  [data-md-toggle="search"]:checked ~ .md-header .nr-search-hint { display: none; }
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -804,26 +1108,71 @@ body.nr-sidebar-hidden .md-sidebar--primary {
    7. CONTENT — flush against sidebar, max-width, Inter body
    ──────────────────────────────────────────────────────────────────────────── */
 .md-content {
-  /* No horizontal padding on the right (article sits flush against
-     the TOC at the viewport's right edge via §3 max-width: none on
+  /* Column width. Was 1400px, which at a 165-character measure meant
+     the eye had to travel most of a desktop's width and back on every
+     line. 940px is the width the widest thing on the site actually
+     needs — a 56em code block (see the measure rules below) plus the
+     20px left padding — and everything narrower than the viewport
+     simply fills what's there.
+
+     No horizontal padding on the right (the article sits flush against
+     the TOC at the viewport's right edge via §3 `max-width: none` on
      .md-grid). A 20px left padding gives a minimum breathing gap
      between the sidebar's right border and the article — without it,
      headings like "First agent" start right at x=340 and feel glued
      to the chrome. Vertical 16px keeps a little breathing room
      above the H1. */
-  max-width: 1400px;
-  /* Center explicitly within (100vw − 340px) — the content area to the
-     right of the 340px sidebar. Plain `margin: 0 auto` doesn't center
-     here because Material sets `flex: 1` on .md-content, which grows
-     the item to fill the flex row, leaving no leftover space for the
-     auto margins to distribute. `max(0px, …)` clamps the offset to
-     zero on viewports narrower than 1740px (where the 1400px column
-     exactly fills the available width minus the sidebar). The 20px
-     left padding lives INSIDE the 1400px box (border-box sizing) so
-     the centering math doesn't need to know about it. */
-  margin-left: max(0px, calc((100vw - 340px - 1400px) / 2));
-  margin-right: max(0px, calc((100vw - 340px - 1400px) / 2));
+  max-width: 940px;
+  /* Centering is left to the flex row, and only works once
+     `flex-grow` is dropped. Material ships `flex: 1` here, which grows
+     .md-content to swallow the whole row and leaves the auto margins
+     nothing to distribute — the column then sits wherever flexbox puts
+     it. The previous hand-rolled offset, `calc((100vw - 340px - 940px) /
+     2)`, was worse: it measures the full viewport and so ignores the
+     right-hand TOC entirely. At 1600px that added 160px of margin on
+     each side, overflowed the row by the TOC's width, and let flexbox
+     shrink the column by exactly that much — the article came out
+     746px wide instead of 940px.
+
+     With `flex: 0 1 auto` + `margin-inline: auto` the column centres
+     in whatever is actually left after the sidebar and the TOC, and
+     simply fills the row when there isn't enough. The 20px left
+     padding lives INSIDE the 940px box (border-box sizing) so the
+     column's optical left edge stays 20px off the sidebar. */
+  flex: 0 1 auto;
+  margin-left: auto;
+  margin-right: auto;
   padding: 16px 0 16px 20px;
+}
+
+/* ── MEASURE ──────────────────────────────────────────────────────────
+   Two columns, which is the split Stripe, Vercel and MDN all use:
+   prose is capped at 40em and code / tables / diagrams are allowed the
+   full 56em of the article. 40em is 640px at the 16px body size —
+   about 78 characters per line, which is where reading stops costing
+   the eye a return sweep. An HTTP request example or an error-code
+   table needs the extra room; a paragraph never benefits from it.
+
+   The cap goes on the PROSE CHILDREN, not on the article. Capping the
+   article would cap everything inside it, and a `max-width` on a child
+   can never exceed its parent — the breakout below would be inert.
+   `em` here resolves against the inherited 16px, so the measure is
+   identical at every viewport. */
+.md-content__inner.md-typeset {
+  max-width: 56em;
+}
+.md-content__inner.md-typeset > p,
+.md-content__inner.md-typeset > ul,
+.md-content__inner.md-typeset > ol,
+.md-content__inner.md-typeset > dl,
+.md-content__inner.md-typeset > blockquote,
+.md-content__inner.md-typeset > h1,
+.md-content__inner.md-typeset > h2,
+.md-content__inner.md-typeset > h3,
+.md-content__inner.md-typeset > h4,
+.md-content__inner.md-typeset > h5,
+.md-content__inner.md-typeset > h6 {
+  max-width: 40em;
 }
 /* Material's `.md-content__inner` is the `<article>` tag and ends
    up with `margin-left: 24px` / `margin-right: 24px` even though
@@ -1613,9 +1962,8 @@ body.nr-print-page .md-content {
   }
 
   /* Tables — convert to a horizontally-scrollable block. Cells keep
-     their normal wrap behaviour; long single-token cells (e.g. the
-     27 ISO codes concatenated in compliance/geo-restrictions.md:59)
-     scroll horizontally inside the table instead of overflowing the
+     their normal wrap behaviour; long single-token cells scroll
+     horizontally inside the table instead of overflowing the
      viewport. No JS card-transform — the 5-column tables (e.g. how-to/
      llm-frameworks.md:22-36 coverage matrix) become worse as stacked
      cards than as scrollable rows. */

@@ -1,6 +1,6 @@
 ---
 title: Multi Agent Orchestration
-description: Orchestrate sub-agents with shared kill semantics: a top-level trip propagates to every child through the control plane.
+description: "Orchestrate sub-agents with shared kill semantics: a top-level trip propagates to every child through the control plane."
 ---
 
 # Multi-agent orchestration

@@ -52,6 +52,24 @@ jobs:
       - name: Build site
         run: mkdocs build --strict
 
+      - name: Strip source maps
+        # mkdocs-material compiles its bundle/search JS and the two
+        # stylesheets with a trailing `sourceMappingURL` comment, and
+        # MkDocs copies both the comment and the `.map` file into
+        # `site/`. That ships ~1.3 MB of source no reader needs
+        # (bundle alone is ~1 MB) from the one JS file every page
+        # loads. The maps are only fetched by a reader with DevTools
+        # open, so this costs nothing in requests and a lot in bytes.
+        #
+        # The script deletes the maps AND rewrites the comment —
+        # deleting only the map leaves a dangling reference that
+        # DevTools 404s on. The `--check` re-run asserts the artifact
+        # is map-free, so a future theme bump that reintroduces them
+        # fails the build instead of quietly growing the deploy.
+        run: |
+          python scripts/strip_source_maps.py
+          python scripts/strip_source_maps.py --check
+
       - name: Add CNAME to artifact root
         # mkdocs only copies the `docs/` tree into `site/`, so the
         # CNAME file at the repo root never makes it into the

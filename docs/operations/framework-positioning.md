@@ -388,8 +388,8 @@ covered, by design:
    prompt-injection blocking. Use a model-side guardrail for that.
 2. **Workflow orchestration / DAG** — LangGraph's job, not ours.
 3. **Vector store / retrieval governance** — outside the gate.
-4. **Network egress policy (egress firewall)** — NullRun can
-   geo-block at ingress but doesn't inspect LLM tool payloads for
+4. **Network egress policy (egress firewall)** — NullRun decides on
+   call metadata but doesn't inspect LLM tool payloads for
    exfiltration.
 5. **Provider-side cost visibility** — NullRun computes cost from
    response bodies via the `httpx` patch; for exact reconciliation

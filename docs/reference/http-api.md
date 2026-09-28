@@ -1,6 +1,6 @@
 ---
 title: Http Api
-description: Every NullRun HTTP endpoint: /api/v1/gate, /api/v1/track, /api/v1/capabilities, /api/v1/heartbeat, and the control-plane WebSocket protocol.
+description: "Every NullRun HTTP endpoint: /api/v1/gate, /api/v1/track, /api/v1/capabilities, /api/v1/heartbeat, and the control-plane WebSocket protocol."
 ---
 
 # HTTP API

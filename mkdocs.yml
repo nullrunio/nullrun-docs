@@ -102,11 +102,18 @@ theme:
     - content.tooltips
     - toc.follow
   # Open Graph / Twitter card preview when a doc URL is pasted into
-  # Slack / Twitter / Discord. `image` is the global fallback; per-page
-  # overrides via `image:` front-matter on any Markdown file.
+  # Slack / Twitter / Discord.
+  #
+  # NOTE: `social_cards` is an **Insiders-only** theme option. On the
+  # open-source build it is accepted without error and emits nothing —
+  # it is not what puts the card on a link preview. The tags are
+  # written by hand in `overrides/main.html` (`og:title`,
+  # `og:description`, `og:type`, `og:url`, `og:image`, `twitter:*`),
+  # which also honours per-page `image:` front matter. This block is
+  # kept only so an Insiders build picks the same default image.
   social_cards:
     enabled: true
-    image: assets/images/og-image.svg
+    image: assets/images/og-image.png
 
 nav:
   - Home: index.md
@@ -163,24 +170,24 @@ nav:
       - 4.5. Tool catalog: reference/llm-tool-catalog.md
   - 5. Compliance:
       - 5.1. Overview: compliance/index.md
-      - 5.2. Geographic restrictions: compliance/geo-restrictions.md
-      - 5.3. Sanctions screening: compliance/sanctions-screening.md
-      - 5.4. Data handling & vendor review: compliance/data-handling.md
-  - 7. Operations:
-      - 7.1. Troubleshooting: troubleshooting.md
-      - 7.2. Performance & limits: operations/performance.md
-      - 7.3. Framework & ecosystem positioning: operations/framework-positioning.md
+      - 5.2. Data handling & vendor review: compliance/data-handling.md
+  - 6. Operations:
+      - 6.1. Troubleshooting: troubleshooting.md
+      - 6.2. Performance & limits: operations/performance.md
+      - 6.3. Framework & ecosystem positioning: operations/framework-positioning.md
 
 # The announcement-banner slot in overrides/main.html is intentionally
 # left empty — the design has no banner surface.
-extra:
-  social:
-    - icon: fontawesome/brands/github
-      link: https://github.com/nullrunio/nullrun-docs
-      name: GitHub
-    - icon: fontawesome/solid/book
-      link: https://docs.nullrun.io
-      name: Documentation
+#
+# `extra.social` is deliberately unset. Material's social plugin fires
+# an XHR to `api.github.com/repos/<repo>/releases/latest` on every page
+# load to badge the repo link; this repo has no GitHub releases, so
+# every visit logged a 404. The repo link itself is already a
+# first-class GitHub button in the menu-bar (overrides/partials/
+# header.html), so the plugin was buying a broken badge and a network
+# round-trip for a link we render ourselves. `config.repo_url` still
+# drives that button and the page-level "Edit this page" action.
+extra: {}
 
 # Markdown extensions — every one of these is load-bearing for the
 # docs surface below. Don't remove without checking the pages.

@@ -1,6 +1,6 @@
 ---
 title: Onboarding
-description: Wire NullRun into an existing agent in fifteen minutes: install, key, decorate, set a budget, ship.
+description: "Wire NullRun into an existing agent in fifteen minutes: install, key, decorate, set a budget, ship."
 ---
 
 # First agent

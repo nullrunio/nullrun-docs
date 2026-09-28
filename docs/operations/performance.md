@@ -175,23 +175,6 @@ backend reality. Practical implication: a hung OpenAI socket stalls
 until the outer 30 s request timeout fires; there is no per-call
 connect timeout, no retry, and no machine-readable error envelope.
 
-### Geo / sanctions failure
-
-| Setting | Value |
-| --- | --- |
-| `SANCTIONED` jurisdictions | RU, IR, KP, SY, CU, BY, VE, MM, AF |
-| `HIGH_RISK_NO_SERVICE` jurisdictions | EU-27 + EEA + UK + CH + CN + IN |
-| Sanctions arm | 403 + `{error:"service_unavailable_in_jurisdiction", message, fortress_reason:"sanctions"}` + headers `X-Fortress-Block-Country` + `X-Fortress-Block-Reason: sanctions` |
-| High-risk arm | 403 (or **503** if the GeoIP database is unavailable) + same shape |
-| GeoIP DB missing / unreadable | **All ingress rejected (503)** — fail-CLOSED by design |
-| Operator env-level kill-switch (geo-block) | fail-OPEN escape (logs WARN); never set in production |
-| Sanctions SDN CSV missing | 6-entry hand-curated fallback (fail-OPEN with WARN) |
-| Operator env-level kill-switch (sanctions screening) | fail-OPEN kill-switch; never set in production |
-
-See [Geo restrictions](../compliance/geo-restrictions.md) and
-[Sanctions screening](../compliance/sanctions-screening.md) for the
-full compliance contract.
-
 ## Timeouts and integration limits
 
 ### HTTP / WebSocket / SSE
@@ -339,7 +322,6 @@ Per-tier decision-history retention:
 | Per-IP edge bypass | operator-configurable kill-switch (fail-OPEN in dev only); bypass paths `/health`, `/metrics`, `/internal/*` | — |
 | Per-IP edge multi-pod | shared counter store (fail-CLOSED on store error) | — |
 | Per-IP edge response | 429 + `Retry-After` + `X-RateLimit-Limit/Remaining` | — |
-| Waitlist (high-risk jurisdictions) | **5 submissions/hour/IP** (env `NULLRUN_WAITLIST_PER_HOUR`); window 3 600 s | Counter |
 | Auth endpoints | **5 req/min/IP** (`IpAuthRateLimiter::default`) | Token bucket (IP) + per-email counter |
 | Email lockout | **5 failures → 300 s** lockout | — |
 
@@ -501,9 +483,7 @@ evaluation.
    request timeout is the only bound; no per-call connect timeout.
 4. WS reconnect storms — no server-side cap; SDK could reconnect
    indefinitely under split-brain.
-5. Geo-block DB load latency at p99 — the GeoIP lookup is in-request
-   hot path; only the 503 fail-CLOSED branch is verified.
-6. State-store pool contention under `/track` bursts — the bounded
+5. State-store pool contention under `/track` bursts — the bounded
    ingestion queue holds 10 000 events, drops the oldest above 9 000,
    and drops at a hard cap of 15 000, but actual write throughput is
    not measured.
@@ -530,4 +510,4 @@ evaluation.
 - [Control plane](../concepts/control-plane.md) — WebSocket keepalive
 - [HTTP API → Capabilities](../reference/http-api.md#capabilities) —
   protocol version + `/health` `min`/`max`
-- [Compliance](../compliance/index.md) — geo / sanctions posture
+- [Compliance](../compliance/index.md) — data-handling posture

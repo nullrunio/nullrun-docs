@@ -25,6 +25,11 @@
 # Cross-Origin-Embedder-Policy is intentionally omitted — `require-corp`
 # breaks cross-origin font loads from fonts.gstatic.com, and a docs
 # site doesn't need cross-origin isolation for SharedArrayBuffer.
+#
+# This CSP must stay in sync with the `<meta http-equiv>` form in
+# overrides/main.html, minus `frame-ancestors` — that directive is
+# ignored when the policy is delivered as a meta tag, so it only ever
+# appears here, where the header form makes it enforceable.
 
 /*
   Strict-Transport-Security: max-age=31536000; includeSubDomains
@@ -34,7 +39,7 @@
   Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-origin
-  Content-Security-Policy: default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self'; frame-ancestors 'none'; form-action 'self' https://github.com; base-uri 'self'
+  Content-Security-Policy: default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https://api.github.com; frame-ancestors 'none'; form-action 'self' https://github.com; base-uri 'self'
 
 # Print edition at /print/ — relaxed CSP because the inline print-button
 # handler and inline anchors don't fit the default-src 'self' baseline

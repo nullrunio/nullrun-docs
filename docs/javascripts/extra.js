@@ -12,12 +12,15 @@
 //      a `nr-sidebar-hidden` body class that hides `.md-sidebar--primary`.
 //      State persisted to localStorage so the choice survives reloads.
 //
-//   3. Search dialog — Material's overlay only closes the dialog on
-//      a click over the overlay surface. We extend that to "any click
-//      outside `.md-search__inner`" so a click on the page body (or
-//      any non-dialog content) also closes the dialog. The menu-bar
-//      magnifier trigger is hidden in CSS; search remains openable via
-//      the `/` keyboard shortcut.
+//   3. Search dialog — two halves:
+//      §3a opens it. The menu-bar search slab is the trigger: clicking
+//         anywhere on the field (icon or input) checks `__search`, and
+//         `/` or `s` does the same from anywhere on the page. The `/`
+//         chip on the right of the slab is a decorative echo of that.
+//      §3b closes it. Material's overlay only closes on a click over
+//         the overlay surface; we extend that to "any click outside
+//         `.md-search__inner`" so a click on the page body (or any
+//         non-dialog content) also closes the dialog.
 //
 //   4. Print page body class — `/print/` gets `nr-print-page` so the
 //      CSS can hide the floating TOC and widen the content column.
@@ -168,7 +171,79 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     });
 })();
 
-/* ── 3. Search dialog — click-outside to close ─────────────────────
+/* ── 3a. Search dialog — open ─────────────────────────────────────────
+   The menu-bar carries Material's collapsed search as a visible slab
+   (extra.css §4, "SEARCH SLAB"). Material's own trigger is the
+   `<label for="__search">` inside the form; the slab's input sits on
+   top of it in the visual order and swallowed the click. So we drive
+   the checkbox ourselves from the form, which makes the whole slab —
+   icon, field, and padding — one hit target, the way MDN, Vercel and
+   Stripe all behave.
+
+   The `/` and `s` shortcuts are bound on the capture phase with
+   `stopPropagation()`. Material's bundle binds its own document-level
+   listener for the same keys, and two listeners toggling the same
+   checkbox in the same tick is a guaranteed double-toggle. Capturing
+   first and stopping propagation means only ours runs.
+
+   `mousedown` rather than `click` on the form, with `preventDefault`,
+   so the browser's own focus handling doesn't fight ours: we open the
+   dialog and focus the input in the same turn, and the caret lands
+   where the reader expects it. */
+(function initSearchTrigger() {
+    const checkbox = document.getElementById("__search");
+    if (!checkbox) return;
+    const form = document.querySelector(".md-search__form");
+    if (!form) return;
+    const input = form.querySelector(".md-search__input");
+
+    /* Decorative `/` chip on the right of the closed slab. Material's
+       `partials/search.html` has no slot for it and we don't override
+       that partial (the dialog markup there is load-bearing), so it's
+       injected here. The header isn't swapped by `navigation.instant`,
+       so this runs once per page load and the chip persists. */
+    if (!form.querySelector(".nr-search-hint")) {
+        const hint = document.createElement("span");
+        hint.className = "nr-search-hint";
+        hint.setAttribute("aria-hidden", "true");
+        hint.textContent = "/";
+        form.appendChild(hint);
+    }
+
+    function open() {
+        if (checkbox.checked) return;
+        checkbox.checked = true;
+        checkbox.dispatchEvent(new Event("change"));
+        if (input) input.focus();
+    }
+
+    form.addEventListener("mousedown", (ev) => {
+        // Already open — let the click through so the field can be
+        // focused and the caret placed by the user's own click.
+        if (checkbox.checked) return;
+        ev.preventDefault();
+        open();
+    });
+
+    document.addEventListener("keydown", (ev) => {
+        if (ev.key !== "/" && ev.key !== "s") return;
+        if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+        // Never steal a keystroke from a field the reader is typing in.
+        const el = document.activeElement;
+        if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" ||
+                   el.tagName === "SELECT" || el.isContentEditable)) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (checkbox.checked) {
+            checkbox.checked = false;
+            checkbox.dispatchEvent(new Event("change"));
+        } else {
+            open();
+        }
+    }, true);
+})();
+
+/* ── 3b. Search dialog — click-outside to close ─────────────────────
    Material's overlay (`.md-search__overlay` is a `<label for="__search">`
    bound to the hidden checkbox) closes the dialog when clicked, but
    only over the overlay area. If the user focuses the search input
@@ -176,7 +251,14 @@ const NR_THEME_KEY = "nullrun-docs-theme";
    (e.g. on the body content), the dialog stays open. Close the dialog on any
    click whose target isn't inside `.md-search__inner` — toggle the
    `__search` checkbox the same way Material's overlay does. We also
-   reset focus off the input so the next `/` shortcut reopens cleanly. */
+   reset focus off the input so the next `/` shortcut reopens cleanly.
+
+   The overlay label is explicitly exempt. A `<label for="__search">`
+   toggles its checkbox in the browser's post-click activation step,
+   i.e. AFTER this bubbling listener runs — so closing here would
+   uncbox the checkbox only for the label to re-check it, and the
+   dialog would never dismiss. Material's own overlay handler is the
+   right one for that surface. */
 (function initSearchClickOutside() {
     const checkbox = document.getElementById("__search");
     if (!checkbox) return;
@@ -192,6 +274,7 @@ const NR_THEME_KEY = "nullrun-docs-theme";
 
     document.addEventListener("click", (ev) => {
         if (!checkbox.checked) return;
+        if (ev.target.closest && ev.target.closest(".md-search__overlay")) return;
         const inner = document.querySelector(".md-search__inner");
         if (inner && inner.contains(ev.target)) return;
         // Click landed outside the dialog body → close.

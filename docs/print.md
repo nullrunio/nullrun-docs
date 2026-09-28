@@ -65,13 +65,11 @@ source-of-truth remains [docs.nullrun.io](https://docs.nullrun.io).
    - [4.5 Tool catalog](#45-tool-catalog)
 5. [Compliance](#5-compliance)
    - [5.1 Overview](#51-overview)
-   - [5.2 Geographic restrictions](#52-geographic-restrictions)
-   - [5.3 Sanctions screening](#53-sanctions-screening)
-   - [5.4 Data handling & vendor review](#54-data-handling-vendor-review)
-7. [Operations](#7-operations)
-   - [7.1 Troubleshooting](#71-troubleshooting)
-   - [7.2 Performance & limits](#72-performance-limits)
-   - [7.3 Framework & ecosystem positioning](#73-framework-ecosystem-positioning)
+   - [5.2 Data handling & vendor review](#52-data-handling-vendor-review)
+6. [Operations](#6-operations)
+   - [6.1 Troubleshooting](#61-troubleshooting)
+   - [6.2 Performance & limits](#62-performance-limits)
+   - [6.3 Framework & ecosystem positioning](#63-framework-ecosystem-positioning)
 
 ---
 
@@ -596,7 +594,7 @@ how to fix) and exits `1`.
 
 ### What can go wrong
 
-See [Troubleshooting](#71-troubleshooting) for the full table of
+See [Troubleshooting](#61-troubleshooting) for the full table of
 expected behaviours (budget cap, loop, sensitive-tool, gateway down,
 kill/pause, etc.) and recovery steps. For the three-layer error model,
 see [Concepts → Error handling](#29-error-handling).
@@ -794,7 +792,7 @@ disable the gate — bypassing it is a dev/test opt-out.
 - [Tool policies](#28-tool-policies) — your own blocking rules
 - [Human approval](#210-human-approval) — the alternative to blocking
   for sensitive operations you actually want to allow
-- [Troubleshooting](#71-troubleshooting) — common "why is my
+- [Troubleshooting](#61-troubleshooting) — common "why is my
   agent blocked?" questions
 
 !!! info "Deep dive"
@@ -1053,7 +1051,7 @@ exposing the secret.
 ### See also
 
 - [Workflows](#25-workflow-context) — what the key is bound to
-- [Troubleshooting](#71-troubleshooting) — "why am I getting 401?"
+- [Troubleshooting](#61-troubleshooting) — "why am I getting 401?"
 - [Configuration](#15-configuration) — env vars
   for keys
 
@@ -1266,7 +1264,7 @@ unavailable", never as `≈ $0 spent`.
 
 - [Workflows](#25-workflow-context) — where the budget lives
 - [Policies](#27-policies) — rate limits (separate from budget) and soft-mode fields
-- [Troubleshooting](#71-troubleshooting)
+- [Troubleshooting](#61-troubleshooting)
 
 !!! info "Deep dive"
 
@@ -2730,7 +2728,7 @@ arm above.
 ### See also
 
 - [Reference → Errors](#44-error-codes) — full catalog
-- [Troubleshooting](#71-troubleshooting) — common questions and
+- [Troubleshooting](#61-troubleshooting) — common questions and
   their fixes
 - [Use with FastAPI](#34-use-with-fastapi) — exception handling
   inside ASGI handlers
@@ -3435,7 +3433,7 @@ and on every reconnect.
 - [Workflows → how to control one](#25-workflow-context)
 - [Human approval](#210-human-approval) — similar flow for tool
   approvals
-- [Troubleshooting](#71-troubleshooting) — "why did my workflow
+- [Troubleshooting](#61-troubleshooting) — "why did my workflow
   pause without me doing anything?"
 
 !!! info "Deep dive"
@@ -4926,11 +4924,11 @@ If you want to override `install()`'s defaults for a single endpoint
 
 ```python title="custom_mapping.py"
 from fastapi import HTTPException
-from nullrun import (
+from nullrun import WorkflowKilledInterrupt, format_user_message
+from nullrun.breaker.exceptions import (
     NullRunDecision,
     NullRunInfrastructureError,
-    WorkflowKilledInterrupt,
-    format_user_message,
+    WorkflowPausedException,
 )
 
 @app.post("/chat")
@@ -4938,10 +4936,21 @@ from nullrun import (
 def chat(message: str) -> dict:
     try:
         return {"reply": agent.run(message)}
-    except NullRunDecision as exc:
-        # Expected policy outcome — pass it to the client as-is
+    except WorkflowPausedException as exc:
+        # Not a NullRunDecision status — it carries .resume_after
+        # rather than .status_code.
         raise HTTPException(
-            status_code=exc.status_code or 403,
+            status_code=503,
+            detail={"message": format_user_message(exc),
+                    "code": exc.error_code},
+            headers={"Retry-After": str(int(exc.resume_after or 0))},
+        )
+    except NullRunDecision as exc:
+        # Expected policy outcome — pass it to the client as-is.
+        # .status_code is absent on some decision classes, hence
+        # the getattr fallback.
+        raise HTTPException(
+            status_code=getattr(exc, "status_code", None) or 403,
             detail={
                 "message": format_user_message(exc),
                 "code": exc.error_code,
@@ -4952,7 +4961,7 @@ def chat(message: str) -> dict:
         # System failure — log to Sentry, return generic 503
         sentry_sdk.capture_exception(exc)
         raise HTTPException(
-            status_code=exc.status_code or 503,
+            status_code=getattr(exc, "status_code", None) or 503,
             detail={"message": format_user_message(exc), "code": exc.error_code},
         )
 ```
@@ -5891,7 +5900,7 @@ checklist.
 ### See also
 
 - [`synthetic_sdk_load.py`](https://github.com/nullrunio/nullrun-examples)
-- [Troubleshooting](#71-troubleshooting) — common failure modes
+- [Troubleshooting](#61-troubleshooting) — common failure modes
   and how to read SDK logs
 - [Configuration → env vars](#15-configuration)
 - [Reference → HTTP API → Capabilities](#43-http-api)
@@ -6075,23 +6084,24 @@ hierarchy diagram.
 | --- | --- | --- |
 | `NullRunError` | Structured base for every user-facing SDK exception | Inherits `BreakerError`. Carries `.error_code`, `.user_action`, `.retryable`, `.docs_url`. |
 | `NullRunConfigError` | SDK misconfigured (e.g. missing `api_key`) | Code family for config errors. Never retryable. |
-| `NullRunAuthenticationError` | Missing / invalid `X-API-Key`, bad HMAC | 401 / 403. Carries `.message` alongside `.user_message`. |
+| `NullRunAuthenticationError` | Missing / invalid `X-API-Key`, bad HMAC | 401 / 403. Carries `.message`. |
 | `NullRunAuthError` | 401 specifically (key rejected) | Subclass of `NullRunAuthenticationError`. Carries `.status_code` (the wire HTTP status). |
 | `NullRunTransportError` | Gateway unreachable | Carries `.source` (e.g. `NETWORK_ERROR` / `GATEWAY_ERROR` / `BREAKER_OPEN` / `AUTH_ERROR`) and `.endpoint`. Retryable. |
 | `NullRunBackendError` | 5xx from the gateway | Subclass of `NullRunTransportError`. Code `NR-B002` family. Retryable. |
 | `RateLimitError` | HTTP 429 (gateway rate-limit response) | Subclass of `NullRunTransportError` → `NullRunInfrastructureError` (infrastructure class — see exception tree above). Carries `.retry_after`, `.upgrade_url`, `.body`. Code `NR-R001`. Retryable. Despite the 4xx status, integration handlers should treat it as infrastructure (FastAPI middleware maps it to 503). |
 | `NullRunRateLimitRedisError` | 503 — Redis reservation failed | Subclass of `NullRunInfrastructureError`. Code `NR-R002`. |
-| `NullRunProtocolError` | Backend returned 400 `PROTOCOL_TOO_OLD` | Carries `.min_required_version`. Upgrade SDK past the min required protocol version. |
+| `NullRunProtocolError` | Backend rejected the `X-NULLRUN-PROTOCOL` header as too old or too new | Code `NR-P001`. Not retryable. `user_action` names the protocol version the SDK speaks and points at the compatibility matrix. |
 | `NullRunBlockedException` | Generic policy block | Inspect `.workflow_id`, `.reason`, `.action`, `.tool_name`, `.details`. Carries `.status_code` (the wire HTTP status, e.g. 402 budget, 403 cross-org, 422 `CONSUME_OVERBUDGET`, 429 cap-reached). **No** `.message` — use `str(exc)`. |
 | `NullRunBudgetError` | Budget exhausted | Subclass of `NullRunBlockedException`. Code `NR-B004`. |
 | `NullRunToolBlockedError` | Tool in block list | Subclass of `NullRunBlockedException`. Code `NR-T001`. Carries `.tool_name`. |
 | `NullRunChainError` | Chain-mode gate check failed | Subclass of `NullRunDecision`. Code `NR-CH001`. |
 | `NullRunConsumeOverbudgetError` | 422 — actual cost > reservation + ε | Subclass of `NullRunDecision`. Surfaces over-budget commit events. |
 | `NullRunWorkflowInactiveError` | 403 — workflow paused / killed cross-org | Subclass of `NullRunDecision`. Code `NR-W004`. |
+| `NullRunApprovalDbUnavailableError` | Approval database unreachable | Subclass of `NullRunBlockedException` → `NullRunDecision` (so a `NullRunDecision` handler catches it). Code `NR-A016`. |
 | `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
 | `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
-| `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunError`. Carries `.workflow_id`, `.reason`, `.resume_after`. |
-| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `NullRunError`. Caught by `except Exception:` like every other SDK error. |
+| `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunDecision`. Carries `.workflow_id`, `.reason`, `.resume_after` — and no `.status_code`; map it to `503` plus a `Retry-After` header. |
+| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `NullRunError` directly, **not** of `NullRunDecision` — catch it by name. Caught by `except Exception:` like every other SDK error. |
 | `NullRunWorkflowKilledError` | Kill arrived mid-call (typed alias) | Subclass of `WorkflowKilledInterrupt`. Same wire semantics; use this for typed `except` arms. |
 
 
@@ -7060,29 +7070,45 @@ four structured fields: `error_code` (machine-readable, e.g.
 `"NR-B004"`), `user_action` (imperative hint), `retryable`
 (bool), `docs_url`.
 
+Every exception below is raised from `nullrun.breaker.exceptions`.
+Only the names in `nullrun.__all__` are importable from the top-level
+`nullrun` package; the rest come from the module.
+
 ```
 NullRunError                          (Exception)
 ├── NullRunDecision                   (marker — expected policy outcomes)
 │   ├── NullRunBlockedException       (policy / budget / loop / sensitive block)
 │   │   ├── NullRunBudgetError        (budget exhausted — NR-B004)
 │   │   │   └── NullRunBudgetRecheckFailedError (NR-B006 — post-approval recheck)
-│   │   └── NullRunToolBlockedError   (tool in block list — NR-T001)
+│   │   ├── NullRunToolBlockedError   (tool in block list — NR-T001)
+│   │   └── NullRunApprovalDbUnavailableError (approval DB unavailable — NR-A016)
 │   ├── NullRunConsumeOverbudgetError (actual cost > reservation + ε — NR-O001)
+│   ├── NullRunChainError             (chain-mode gate check failed — NR-CH001)
 │   ├── WorkflowPausedException       (paused via control plane — NR-W003)
-│   ├── NullRunWorkflowInactiveError  (soft-deleted / inactive — NR-W004)
-│   └── WorkflowKilledInterrupt       (kill via control plane — NR-W002)
-│       └── NullRunWorkflowKilledError (typed public name; same code NR-W002)
+│   └── NullRunWorkflowInactiveError  (soft-deleted / inactive — NR-W004)
+├── WorkflowKilledInterrupt           (kill via control plane — NR-W002)
+│   └── NullRunWorkflowKilledError    (typed public name; same code NR-W002)
 └── NullRunInfrastructureError        (marker — system failures)
     ├── NullRunConfigError            (misconfiguration, e.g. missing api_key)
     ├── NullRunAuthenticationError   (401 / 403)
     │   └── NullRunAuthError          (401 specifically)
     ├── NullRunProtocolError          (wire-protocol version mismatch — NR-P001)
-    ├── NullRunApprovalDbUnavailableError (approval DB unavailable — NR-A016)
+    ├── NullRunRateLimitRedisError    (rate-limit Redis down — NR-R002)
     └── NullRunTransportError         (transport failures)
         ├── NullRunBackendError       (5xx — retryable; BREAKER_OPEN → NR-B005)
         └── RateLimitError            (gateway 429 — carries .retry_after)
-            └── NullRunRateLimitRedisError (rate-limit Redis down — NR-R002)
 ```
+
+Two branches sit **outside** the marker split, and both matter when
+you write an `except` chain:
+
+- `WorkflowKilledInterrupt` inherits from `NullRunError` directly, not
+  from `NullRunDecision`. A kill is not a policy decision, so
+  `except NullRunDecision` does not catch it — catch it by name.
+- `NullRunApprovalDbUnavailableError` inherits from
+  `NullRunBlockedException`, so it lands in the **decision** branch
+  even though an unavailable approval database is a system failure.
+  Its `error_code` (`NR-A016`) is what distinguishes it.
 
 `NullRunDecision` and `NullRunInfrastructureError` are **marker
 classes**, not exception classes themselves. They exist so host code
@@ -7094,8 +7120,8 @@ below for the recommended handling pattern.
 
 `NullRunBlockedException` carries `.workflow_id`, `.reason`, `.action`
 (`"block"` / `"kill"` / `"pause"`), `.tool_name` (when the block is
-tool-scoped), and `.details` (free-form). There is **no** `.message`
-attribute — use `str(exc)`.
+tool-scoped), `.status_code`, and `.details` (free-form). There is
+**no** `.message` attribute — use `str(exc)`.
 
 
 `WorkflowKilledInterrupt` (and its typed subclass `NullRunWorkflowKilledError`)
@@ -7141,14 +7167,24 @@ the right behaviour for each category.
 
 | Marker | What it covers | Why it matters |
 | --- | --- | --- |
-| `NullRunDecision` | Expected policy outcomes — budget cap, tool block, loop detection, workflow pause, per-workflow rate limit | The enforcement layer is doing its job. UX explains the decision and (where applicable) offers an upgrade or alternative action. |
-| `NullRunInfrastructureError` | System failures — network unreachable, gateway 5xx, auth rejection, config error | The SDK could not reach or query the policy engine. UX is a generic "service unavailable"; operators triage via `error_code`, `retryable`, and for transport errors, `source` / `endpoint`. |
+| `NullRunDecision` | Expected policy outcomes — budget cap, tool block, chain-gate rejection, loop detection, workflow pause, over-budget commit | The enforcement layer is doing its job. UX explains the decision and (where applicable) offers an upgrade or alternative action. |
+| `NullRunInfrastructureError` | System failures — network unreachable, gateway 5xx, gateway 429, auth rejection, config error, rate-limit Redis down | The SDK could not reach or query the policy engine. UX is a generic "service unavailable"; operators triage via `error_code`, `retryable`, and for transport errors, `source` / `endpoint`. |
+
+Rate limits land on the **infrastructure** side, not the decision
+side: a 429 from the gateway arrives as `RateLimitError`, a subclass
+of `NullRunTransportError` → `NullRunInfrastructureError`. Handle it
+as a system failure with a retry, and surface `upgrade_url` if the
+user genuinely needs a higher plan.
+
+`WorkflowKilledInterrupt` belongs to neither marker — catch it by
+name ahead of both, as shown in the [exception
+hierarchy](#sdk-exception-hierarchy-python).
 
 #### Recommended handler shape
 
 ```python title="decision_vs_infra_handler.py"
 import nullrun
-from nullrun import (
+from nullrun.breaker.exceptions import (
     NullRunDecision,
     NullRunInfrastructureError,
 )
@@ -7158,7 +7194,8 @@ try:
 except NullRunDecision as d:
     # Expected — surface to the user, log to product analytics,
     # tag the conversation with d.error_code for cohort analysis.
-    return d.user_message() if hasattr(d, "user_message") else str(d)
+    analytics.track("nullrun_decision", code=d.error_code)
+    return nullrun.format_user_message(d)
 except NullRunInfrastructureError as e:
     # System failure — alert ops, retry with backoff, do NOT
     # surface internal text to the end user. The catalog has a
@@ -7171,29 +7208,36 @@ except NullRunInfrastructureError as e:
 
 When you build a server-framework integration (FastAPI, aiohttp,
 Telegram bot, Slack handler), map each category to the right HTTP
-status. The headline cases are below; every `NullRunDecision`
-subclass carries `.status_code` so framework integrations can map
-the field directly instead of hard-coding.
+status. The headline cases are below. Where the backend supplied a
+wire status, the exception carries it as `.status_code` and you can
+map the field directly instead of hard-coding.
 
 | Category | HTTP status | Notes |
 | --- | --- | --- |
-| `NullRunDecision` — budget exhausted (`NR-B004`) | `402` | Honour `.retry_after` from the `RateLimitError` if set; budget-exhausted `NullRunBudgetError` exposes the same field via `.details.retry_after` |
-| `NullRunDecision` — tool blocked (`NR-T001`) | `403` | User did nothing wrong, but the action is forbidden |
-| `NullRunDecision` — workflow paused | `503` | Set `Retry-After` from `.resume_after` |
+| `NullRunDecision` — budget exhausted (`NR-B004`) | `402` | `NullRunBudgetError` carries `.status_code`. Read `.details` for any `retry_after` the backend supplied |
+| `NullRunDecision` — tool blocked (`NR-T001`) | `403` | User did nothing wrong, but the action is forbidden. Carries `.status_code` |
+| `NullRunDecision` — workflow paused (`NR-W003`) | `503` | `WorkflowPausedException` has no `.status_code`; it carries `.resume_after`, which you pass as the `Retry-After` header |
+| `NullRunDecision` — chain gate failed (`NR-CH001`) | `402` or `403` | `NullRunChainError`. One code covers both: `CHAIN_MAX_DURATION_EXCEEDED` → 402, `CHAIN_ORG_MISMATCH` / `CHAIN_CROSS_ORG` → 403. Read `.status_code` |
 | `NullRunInfrastructureError` — rate-limit Redis (`NR-R002`) | `503` | `NullRunRateLimitRedisError` — the rate limiter is degraded |
-| `WorkflowKilledInterrupt` | `503` | Special ASGI middleware required — see [Use with FastAPI](#34-use-with-fastapi) |
+| `NullRunInfrastructureError` — gateway 429 | `503` | `RateLimitError` carries `.retry_after` and `.upgrade_url` |
+| `WorkflowKilledInterrupt` (`NR-W002`) | `503` | Special ASGI middleware required — see [Use with FastAPI](#34-use-with-fastapi) |
 
 Other decision categories (`CONSUME_OVERBUDGET` → 422,
-`CHAIN_ORG_MISMATCH` → 403, `CHAIN_MAX_DURATION_EXCEEDED` → 402,
-`WORKFLOW_INACTIVE` → 403, `PROTOCOL_TOO_OLD` → 400, generic
-`NullRunInfrastructureError` → 503) follow the same pattern: read
-`exc.status_code` from the wire and map it directly.
+`WORKFLOW_INACTIVE` → 403) and infrastructure codes
+(`PROTOCOL_TOO_OLD` → 400, generic `NullRunInfrastructureError` → 503)
+follow the same pattern: read `exc.status_code` from the wire when the
+attribute is present and map it directly.
 
-Every `NullRunDecision` subclass carries `.status_code` (the wire
-HTTP status the backend returned). The FastAPI integration maps
-this field to the response status automatically; in custom
-integrations read `exc.status_code` rather than hard-coding the
-default above.
+`.status_code` is **not** on every exception — it exists only where
+`__init__` accepts one, which today is the `NullRunBlockedException`
+family plus `NullRunConsumeOverbudgetError` and `NullRunChainError`.
+`WorkflowPausedException`, `WorkflowKilledInterrupt`,
+`NullRunApprovalDbUnavailableError` and the transport classes do not
+carry it, so read it with
+`getattr(exc, "status_code", None)` and fall back to your category
+default. The FastAPI integration applies this mapping for you; in
+custom integrations do the same rather than assuming the attribute is
+there.
 
 The NullRun SDK ships a reference FastAPI integration that applies
 this mapping for you — see [Use with FastAPI](#34-use-with-fastapi)
@@ -7256,6 +7300,9 @@ and end-user-facing wording lives in
 | `NR-A014` | Capability digest drifted since approval — re-approval required | 403 | `NullRunApprovalToolDigestMismatchError` |
 | `NR-A015` | Grant already consumed (replay rejected) | 403 | `NullRunApprovalReplayRejectedError` |
 | `NR-A016` | Approval database unavailable — transient 5xx on the approval row lookup | 503 | `NullRunApprovalDbUnavailableError` (fail-CLOSED — retry with backoff) |
+| `NR-MCP01` | Destructive MCP tool blocked by the `mcp_destructive_policy` umbrella. Wire slug `MCP_DESTRUCTIVE_BLOCKED` | 403 | `NullRunMcpDestructiveBlockedError` |
+| `NR-MCP02` | Read-only MCP tool blocked because the operator's bypass path is closed. Wire slug `MCP_READONLY_BYPASS_BLOCKED` | 403 | `NullRunMcpReadonlyBypassBlockedError` |
+| `NR-MCP03` | MCP tool requires operator approval — the MCP counterpart of `NR-A010`. Wire slug `MCP_APPROVAL_REQUIRED` | 403 | `NullRunMcpApprovalRequiredError` (retryable — the operator can still act) |
 | `NR-X001` | Generic policy block — no dedicated subclass | varies | `NullRunBlockedException` (default) |
 
 Approval grant-consume codes (NR-A010..NR-A015) are most often seen
@@ -7544,452 +7591,45 @@ approval for sends to non-`@internal` addresses"), use the typed
 
 ## 5.1 Overview
 
-NullRun enforces geo and sanctions restrictions at the edge gateway. Two
-cooperating layers control jurisdiction-based access:
+NullRun sits between an agent and the tools it calls, so it sees the
+tool payloads it decides on. This section documents that view: what
+data crosses the wire, what is persisted, who can reach it, and what
+happens when it is deleted.
 
-| Layer | Purpose | Reference |
+| Page | Purpose | Reference |
 | --- | --- | --- |
-| Geo restrictions | Classify every inbound request by source country and apply allow / hard-block / waitlist actions. | [Geographic restrictions](#52-geographic-restrictions) |
-| Sanctions screening | Match signup name and email against the OFAC SDN list (with EU / UK / UN lists supported as additional CSVs). | [Sanctions screening](#53-sanctions-screening) |
+| Data handling & vendor review | The full data inventory — what is transmitted, what is stored, retention windows, sub-processors, and vendor review. | [Data handling & vendor review](#52-data-handling-vendor-review) |
 
-Sanctions violations are strict-liability; see legal review for full
-rationale. A regression on either layer is a compliance incident.
+!!! info "What NullRun does and does not inspect"
 
-!!! info "Deep dive"
+    The gate is a **decision** layer, not a content scanner. It
+    evaluates structured metadata about a call — tool name, model,
+    declared sensitivity, cost, scope — and returns `allow`, `block`,
+    or `require_approval` before the call executes.
 
-    Screening runs in two layers. Every inbound request is
-    classified by its network origin before authentication is
-    attempted, and every signup is screened against the identity
-    data supplied by the applicant. Neither layer is sufficient
-    on its own: a network-origin check does not follow a
-    designated person across a border, and an identity check made
-    only at signup sees nothing about the traffic that later
-    arrives from an address we have already refused.
+    It does not read the free-text arguments of a tool call to decide
+    whether the *content* is acceptable. A payload that slips past the
+    gate because its metadata looked benign is not retroactively
+    scanned. If you need content-level inspection, enforce it in the
+    agent, upstream of NullRun.
 
-    The network layer's blocklist has two tiers, and the tier
-    decides what the request experiences. Jurisdictions under
-    comprehensive sanctions regimes are refused outright, on
-    both the API surface and the marketing site. Jurisdictions
-    carrying a heavy privacy-regime burden are refused on the API
-    surface and redirected to a commercial waitlist from the
-    marketing site, so that interest is recorded without the
-    service being exposed.
+    The inverse is also true: the gate never needs the call to have
+    completed in order to block it. A decision is returned before
+    execution begins, so a blocked call costs nothing and leaves no
+    side effect behind.
 
-    Both layers fail closed. If the geolocation data is
-    unavailable, or the screening reference data cannot be
-    loaded, the request is refused or the screening layer
-    reports itself degraded and raises an operational alert,
-    rather than admitting traffic it cannot classify. An operator
-    watching every request fail sees the problem within minutes; a
-    screening layer that has silently stopped matching produces
-    no signal at all. Refusing loudly is the cheaper failure, so
-    the service refuses rather than admitting a request it cannot
-    classify.
 
-    Identity screening is deliberately blunt and deliberately
-    narrow. Names are case-folded and normalised across
-    full-width character forms, split into tokens, and screened
-    only where a token is long enough to carry signal; a single
-    shared given name is never sufficient to match. The email
-    local part is screened after the name, as a weaker signal,
-    and a match returns a generic response that never echoes the
-    matched name. Cross-script transliteration is not performed,
-    which is a real limitation. Screening applies at sign-up
-    only, and the reference data is refreshed on a published
-    cadence, with the NullRun team owning that refresh.
-
-
-title: Geographic restrictions
-maturity: stable
-description: IP-level blocklists for sanctioned jurisdictions, with the runtime status codes a client sees when a request is geo-blocked.
-## 5.2 Geographic restrictions
-
-NullRun's edge gateway classifies every inbound request by source
-country and applies one of three actions:
-
-- **Allow** — request proceeds normally.
-- **Hard block** — request is rejected with **403**
-  (`service_unavailable_in_jurisdiction`) or **503** (`geoip_unavailable`).
-- **Waitlist redirect** — a compliance-blocked visitor on the marketing
-  site is 302-redirected to `/waitlist` so the lead is captured without
-  exposing the API surface.
-
-The classification happens before authentication and before
-per-account quota checks, so blocked traffic never touches the database.
-
-### Why this is needed
-
-Sanctions violations are strict-liability; see legal review for full
-rationale. A Terms-of-Service clause alone is not enough — a regulator
-will infer targeting from the fact that the API endpoint is reachable
-from a sanctioned IP space. Hard-blocking at the edge is the only
-reliable signal.
-
-The same logic applies to the other comprehensive-sanctions regimes
-(OFAC, EU, UK, UN) for the sanctioned-country blocklist. A single
-accepted signup or payment from one of those jurisdictions is a
-criminal-law violation, not a civil one.
-
-### Blocklist
-
-The blocklist has two tiers.
-
-#### Tier 1 — Sanctioned (strict-liability block)
-
-| Code | Country | Rationale |
-| --- | --- | --- |
-| `RU` | Russia | OFAC + EU + UK comprehensive |
-| `IR` | Iran | OFAC comprehensive |
-| `KP` | DPRK | OFAC + UN comprehensive |
-| `SY` | Syria | OFAC + EU comprehensive |
-| `CU` | Cuba | OFAC comprehensive |
-| `BY` | Belarus | Post-2022 UK + EU sectoral |
-| `VE` | Venezuela | Partial — signups blocked; existing read-only API access preserved (write operations blocked) |
-| `MM` | Myanmar | OFAC + EU restrictive measures |
-| `AF` | Afghanistan | Post-2021 sanctions regime |
-
-Sanctioned requests are blocked with **403** even on the marketing
-site — no waitlist, no email capture. Strict liability does not allow
-the "we will email you when we do" bridge.
-
-#### Tier 2 — High-risk / no-service (compliance block)
-
-| Code | Region | Rationale |
-| --- | --- | --- |
-| `AT BE BG HR CY CZ DK EE FI FR DE GR HU IE IT LV LT LU MT NL PL PT RO SK SI ES SE` | EU-27 | GDPR + active enforcement |
-| `IS NO LI` | EEA / EFTA | Treated like EU for our purposes |
-| `CH` | Switzerland | FADP — high compliance burden |
-| `GB` | United Kingdom | UK GDPR + ICO + class actions |
-| `CN` | China | PIPL + data localisation |
-| `IN` | India | DPDPA 2023 + criminal penalties for officers |
-
-For high-risk countries:
-
-- **`/api/*` and `/ws/*`** → 403 `service_unavailable_in_jurisdiction`
-- **Marketing site** (anything NOT under `/api/` or `/ws/`) → 302 to
-  `/waitlist?cc=<ISO>`.
-
-### Decision matrix
-
-```mermaid
-flowchart TD
-    R["Request arrives<br/>at the edge"] --> E{"Extract<br/>client IP"}
-    E -->|None| L["Log WARN, allow<br/>(should not happen in prod)"]
-    E -->|Loopback /<br/>private / CGNAT| L2["Allow<br/>(bypass IP)"]
-    E -->|Public IP| B{"GeoIP DB<br/>available?"}
-    B -->|No| H["503 geoip_unavailable<br/>(fail-CLOSED)"]
-    B -->|Yes| L3["Look up country"]
-    L3 --> S{"Sanctioned<br/>country?"}
-    S -->|Yes| H2["403 service_unavailable_in_jurisdiction<br/>(strict-liability block)"]
-    S -->|No| H3{"High-risk<br/>country?"}
-    H3 -->|No| A["Allow"]
-    H3 -->|Yes| P{"On marketing<br/>site?"}
-    P -->|Yes| W["302 → /waitlist?cc=…"]
-    P -->|No| H4["403 service_unavailable_in_jurisdiction"]
-```
-
-### Fail-CLOSED posture
-
-The geo-block is **fail-CLOSED**: if the GeoIP database is missing,
-unreadable, or returns an error, **all** ingress is rejected with
-**503**. The rationale:
-
-> If the GeoIP database is missing or unreadable, ALL ingress is
-> rejected (503) so the operator notices the misconfiguration.
-
-### Operator overrides
-
-Geo-block posture is operator-controlled at the platform level; users
-cannot override it.
-
-### What is bypassed
-
-The geo-block **never** blocks:
-
-- **Localhost and private IPs** — `127.0.0.0/8`, `10/8`, `172.16/12`,
-  `192.168/16`, `169.254/16`, `100.64.0.0/10` (CGNAT), IPv6
-  `fc00::/7` (ULA), `fe80::/10` (link-local). These are pod-to-pod
-  traffic, monitoring agents, or the operator's local-dev loopback;
-  none of them can themselves trigger GDPR.
-- **Health and metrics** — `/health`, `/healthz`, `/ready`, `/readyz`.
-  These are infrastructure-internal probes and must never be
-  geo-blocked.
-- **The waitlist endpoint** — `POST /api/v1/waitlist`. The marketing
-  site redirects compliance-blocked visitors here; if the geo-block
-  then 403'd the form POST, the lead-capture flow would be broken.
-  The waitlist has its own rate limit of 5 submissions per hour per IP.
-
-### Audit headers
-
-Every blocked response carries two headers for observability and
-debugging:
-
-| Header | Meaning |
-| --- | --- |
-| `x-nullrun-fortress-block: sanctions` | Blocked by the Tier-1 sanctions list. |
-| `x-nullrun-fortress-block: waitlist` | Marketing-site redirect to `/waitlist`. |
-| `x-nullrun-fortress-country: <ISO>` | The resolved ISO 3166-1 alpha-2 country code. Absent when the GeoIP database is unavailable. |
-
-These headers are **not** logged at INFO level (the country code is
-PII under GDPR) — they appear at WARN.
-
-### Runbook — keeping the GeoIP database live
-
-The NullRun team maintains the GeoIP database; contact support if
-geo-block seems misclassified.
-
-!!! info "Deep dive"
-
-    Screening runs in two layers. Every inbound request is
-    classified by its network origin before authentication is
-    attempted, and every signup is screened against the identity
-    data supplied by the applicant. Neither layer is sufficient
-    on its own: a network-origin check does not follow a
-    designated person across a border, and an identity check made
-    only at signup sees nothing about the traffic that later
-    arrives from an address we have already refused. The layers
-    are run together so that a gap in one is still covered by the
-    other.
-
-    The blocklist has two tiers, and the tier decides what the
-    request experiences. Jurisdictions covered by comprehensive
-    sanctions regimes are refused outright, on the API surface
-    and on the marketing site alike, because a strict-liability
-    offence leaves no room for a lead-capture compromise.
-    Jurisdictions carrying a heavy privacy-regime burden are
-    refused on the API surface and sent to a commercial waitlist
-    from the marketing site, so that interest is recorded
-    without the service being exposed.
-
-    Both layers fail closed. If the geolocation data is missing,
-    unreadable, or returns an error, all ingress is refused
-    rather than admitted unclassified; if the screening
-    reference data cannot be loaded, the screening layer reports
-    itself as degraded and raises an operational alert instead
-    of quietly returning a clean result. The asymmetry is the
-    point. An operator whose traffic is all failing notices
-    within minutes, whereas a screening layer that has stopped
-    matching produces no signal at all until someone asks. A
-    visible failure costs less than a missed screening, so the
-    service refuses rather than admitting a request it cannot
-    classify.
-
-    Identity screening is deliberately blunt. A submitted name is
-    case-folded and normalised across full-width character
-    forms, split into tokens, and screened only where a token is
-    long enough to carry signal; tokens of three characters or
-    fewer are discarded as noise. A single shared given name is
-    never sufficient to identify a designated party on its own,
-    so a match is required against a sufficiently specific
-    entry. The email local part is screened after the name, as a
-    weaker secondary signal. Cross-script transliteration is not
-    performed, so a name rendered in a different script may not
-    normalise onto a listed form; that limitation is a further
-    reason the network layer is not treated as redundant. A
-    match produces a generic response that never echoes the
-    matched name, so a screening result cannot be used to
-    confirm whether a particular individual is listed.
-
-    Screening applies at sign-up only; accounts created earlier
-    are not re-screened. Reference data is refreshed on a
-    published cadence, with the primary list refreshed daily, the
-    consolidated regional lists as they are issued, and the
-    geolocation data weekly; the gateway is restarted once an
-    update lands. The NullRun team owns that refresh. If a
-    classification looks wrong, contact support rather than
-    working around it.
-
-
-title: Sanctions screening
-maturity: stable
-description: OFAC SDN screening on signup, the degraded-fallback semantics when the screening service is unavailable, and the audit trail.
-## 5.3 Sanctions screening
-
-The geo-block stops ingress from sanctioned countries at the edge.
-**Sanctions screening** is the second layer: a name/email/handle check
-on every signup that catches the case where a designated individual
-travels, uses a VPN, or signs up through a non-sanctioned-country
-proxy. It runs on both the standard signup form and the OAuth
-registration flow.
-
-The screening runs against the OFAC SDN list (with EU / UK / UN
-list support).
-
-### Why both layers
-
-OFAC's comprehensive-sanctions regimes are **strict-liability**. A
-single accepted signup or payment from a designated person is a
-criminal-law violation. The geo-block is the always-on defence;
-sanctions screening is the secondary layer:
-
-- A designated individual travelling abroad and signing up from a
-  hotel Wi-Fi in a non-sanctioned country.
-- A designated individual using a commercial VPN that exits in
-  Armenia or Singapore.
-- A designated individual signing up via OAuth (Google / GitHub) from
-  a non-sanctioned IP, where the only signal we have is the email
-  handle or display name.
-
-The full list of sanctioned jurisdictions is in
-[Geographic restrictions → Blocklist](#52-geographic-restrictions).
-
-### List source
-
-The screening matches against the OFAC SDN list. Source:
-<https://ofac.treasury.gov/sanctions-list-service>
-
-The EU consolidated list and the UK HMT consolidated list are also
-supported.
-
-!!! tip "Refresh cadence"
-    OFAC SDN: refresh **daily**. MaxMind GeoLite2: weekly. EU / UK
-    consolidated: as published (typically monthly). Restart the
-    gateway after each CSV update to pick up the new file.
-
-### Screening logic
-
-For each signup the screening runs:
-
-1. **Normalise** the name and email (catches full-width homoglyphs like
-   `ＡＢＣ` → `ABC`) and lower-case them.
-2. **Tokenise** on whitespace and non-alphanumeric characters.
-3. **Drop short noise** — tokens shorter than 3 characters are
-   skipped (so `Mr.`, `de`, `la`, `Jr.` do not contribute).
-4. **Match** — if **any** token of the name or the email appears in
-   the SDN token set, the signup is rejected.
-
-The matching is intentionally aggressive. False positives are cheap
-(rejected signup, the user retries with a different email); false
-negatives carry regulatory exposure.
-
-### Screen outcomes
-
-The screening returns one of three results:
-
-| Result | Meaning | What happens |
-| --- | --- | --- |
-| Clean | No SDN token matched. | Allow signup. |
-| Match | The name or email contained a known SDN token. | Reject with 403. The matched display name and the field that hit are logged at WARN for audit. |
-| Degraded | Screening ran but the table is the hand-curated fallback (CSV missing or unparseable). | Allow signup. A separate WARN log + an ops-counter flag the misconfiguration. The geo-block is still on — the IP-level defence is intact. |
-
-On a `Match` the response body is a generic 403 — the matched display
-name is **not** echoed to the client to avoid confirming the
-screening target.
-
-### Operator override
-
-The screening is **ON by default**. The IP-level Fortress geo-block
-excludes sanctioned-country traffic before signup; name-based SDN
-screening is the secondary layer that catches designated persons
-who travel, use a non-sanctioned-country VPN, or register via
-OAuth from a non-sanctioned IP.
-
-To **disable** name-based screening entirely (the screening always
-returns `Clean`), set the operator-level override env var to `1`
-(or the case-insensitive `true`). Any other value (including `0`,
-`false`, or an unset variable) leaves screening ON.
-
-#### Posture by environment
-
-| Environment | Default |
-| --- | --- |
-| Production | **ON** — screening active |
-| Local dev / sandbox | **OFF** by default — set the override above |
-
-#### When to keep it disabled
-
-The dev/local override exists because token-based name matching has
-a high false-positive rate at the pre-revenue / pre-customer stage
-— a perfectly innocent "Vladimir Petrov" may match an SDN surname
-token. With no customers to lose, the maintenance burden (weekly
-SDN list refresh, false-positive triage) outweighs the residual
-sanctions risk. The geo-block remains the always-on sanctions
-defence in every environment.
-
-#### When to re-enable
-
-Remove the env var (or set it to `0`) as soon as the service has a
-meaningful customer base or accepts payments in volume. The
-recommended cutover is at first paying customer, not at first
-signup. A regulator's view of "acceptable false-positive cost" is
-sharper once money is in the picture.
-
-### Known limitations
-
-- **Cyrillic / Latin homoglyphs are NOT collapsed.** A Cyrillic `а`
-  stays Cyrillic after normalisation; only the full-width Latin /
-  ASCII cases collapse. A designated individual could circumvent
-  name-based screening by transliterating their name to a homoglyph
-  script. A non-Latin name from a sanctioned-country IP is still
-  blocked by the geo-block.
-- **No email-domain match.** Emails are tokenised on `@` and `.`,
-  but the resulting tokens (e.g. `gmail`, `mail`) are common enough
-  that matching them would produce false positives. The name tokens
-  are the primary signal; the email is a secondary, weaker signal.
-
-!!! info "Deep dive"
-
-    Identity screening is a token match, and it is deliberately
-    blunt. A submitted name is case-folded and normalised across
-    full-width character forms, then split on whitespace and
-    non-alphanumeric characters; tokens of three characters or
-    fewer are discarded, so titles and particles contribute
-    nothing. A single shared given name is never sufficient to
-    identify a designated party on its own, so a match is
-    required against a sufficiently specific entry. The email
-    local part is screened after the name, as a weaker secondary
-    signal; the domain and top-level part are not screened at
-    all, because tokens drawn from them are common enough that
-    matching them would reject innocent signups. Cross-script
-    transliteration is not performed: a name rendered in a
-    different script may not normalise onto a listed form, which
-    is a genuine limitation of the approach rather than a detail
-    of implementation.
-
-    The network layer answers a different question, where a
-    request came from, and neither layer is sufficient alone. A
-    person travelling abroad, connecting through a commercial
-    proxy that exits in an unremarkable jurisdiction, or arriving
-    through a delegated sign-in flow where the only data
-    available is a name and an email address, is invisible to an
-    address-based check. Screening catches that case; the address
-    check catches the volume case. The two run together so a gap
-    in one is still covered by the other.
-
-    A match produces a generic rejection that never echoes the
-    matched name, so a screening result cannot be used to confirm
-    whether a particular individual is listed; the matched name
-    and the field that hit are recorded for audit instead. The
-    approach is intentionally aggressive, because a false
-    positive costs a rejected signup that the applicant can retry
-    and a false negative carries regulatory exposure. If the
-    reference data cannot be loaded, the layer reports itself as
-    degraded, records an alert, and allows the signup to proceed
-    on the assumption that the address layer is still intact,
-    rather than failing every applicant. Screening applies at
-    sign-up only; accounts created earlier are not re-screened.
-
-    Reference data is refreshed on a published cadence, with the
-    primary list refreshed daily and the consolidated regional
-    lists as they are issued; the service is restarted once an
-    update lands. The NullRun team owns that refresh, and a
-    current download is required before the service carries real
-    traffic.
-
-
-## 5.4 Data handling & vendor review
+## 5.2 Data handling & vendor review
 
 A consolidated response to the standard vendor-risk questionnaire, written
 for an employee assessing NULLRUN as a vendor. Every value below reflects
 the deployed product; rows marked **Not attested** are honest gaps — the
 implementation does not document them.
 
-This page is the load-bearing complement to the
-[Compliance overview](#51-overview), the
-[Geo restrictions](#52-geographic-restrictions) and
-[Sanctions screening](#53-sanctions-screening) pages. Those explain
-*what NULLRUN enforces*; this page explains *what NULLRUN does with the
-data it sees*.
+This page is the load-bearing companion to the
+[Compliance overview](#51-overview). That page gives the short version;
+this one answers the vendor-risk questionnaire in full — *what NULLRUN
+does with the data it sees*.
 
 **Reading conventions.** `[V]` = verified · `[D]` = derived or inferred
 · `[N]` = not attested.
@@ -8077,7 +7717,6 @@ No email, no org name, no actor identifier echoed. `[V]`
 |---|---|
 | **Polar** (billing) | HMAC-SHA256 verified BEFORE any processing. Accepts Standard Webhooks headers (`webhook-id`, `webhook-timestamp`, `webhook-signature: v1,<base64>`) and the `polar-signature: t=…,v1=…` fallback. The sandbox environment bypasses verification; production does not. |
 | **Slack events** | Signing-secret validation; bot tokens stored via pgcrypto encryption. |
-| **Geo-block** | IP allow/deny via a self-hosted MaxMind `GeoLite2-Country` database (operator-managed file). Fail-CLOSED (503) when the database is unloadable. |
 
 #### 1.7 Email
 
@@ -8168,7 +7807,6 @@ Per the production container configuration:
 - `cap_drop: [ALL]`
 - `no-new-privileges: true`
 - `tmpfs /tmp` (noexec / nosuid / nodev, 100M)
-- Bind-mounted screening data (OFAC + GeoLite2)
 
 #### TLS
 
@@ -8274,9 +7912,6 @@ The canonical list is versioned and served from the public endpoint
 | **Slack Technologies, LLC** | Alert delivery (OAuth) | US | EU SCCs (Module 3) | Yes |
 | **GitHub Inc.** | OAuth identity provider | US | EU SCCs (Module 3) | Yes |
 | **Google LLC** | OAuth identity provider | US | EU SCCs (Module 3) | Yes |
-
-**MaxMind** (geo-IP): a self-hosted GeoLite2-Country database; no
-live API calls.
 
 **LLM providers:** NULLRUN does not proxy calls to OpenAI /
 Anthropic / Google / Azure. The SDK talks to providers directly with its
@@ -8411,7 +8046,7 @@ TTL of the deny list = 2× the auth-cache TTL = 600 s.
 - **Protocol header required.** `X-NULLRUN-PROTOCOL` on every gate
   request; `/health` returns min/max (min=2, max=4, current=4).
 - **Fail-CLOSED on enforcement paths.** Budget path (Redis down → 402
-  `REDIS_UNAVAILABLE`); geo-block (MaxMind unloadable → 503).
+  `REDIS_UNAVAILABLE`).
 - **IDOR guards.** Body org mismatch, `workflow_id` body-vs-key
   mismatch, parent-execution cross-org rejection.
 - **CSRF double-submit** for browser POSTs; `Authorization: Bearer`
@@ -8477,19 +8112,17 @@ They are the questions a vendor reviewer should follow up on:
 ### See also
 
 - [Compliance overview](#51-overview)
-- [Geo restrictions](#52-geographic-restrictions)
-- [Sanctions screening](#53-sanctions-screening)
-- [Performance & limits](#72-performance-limits) — latency,
+- [Performance & limits](#62-performance-limits) — latency,
   failure-mode behaviour, timeouts
 - [API keys](#22-api-keys) — HMAC, rotation, drain
 - [Organization](#218-organization) — delete-org flow
 - [Profile settings](#219-profile-settings) — account delete flow
 
 
-# 7. Operations
+# 6. Operations
 
 
-## 7.1 Troubleshooting
+## 6.1 Troubleshooting
 
 What to expect when NullRun is doing its job — and how to recover
 when it isn't.
@@ -8652,7 +8285,7 @@ you do not need `@protect` to get cost tracking.
 - [Reference → HTTP API](#43-http-api)
 
 
-## 7.2 Performance & limits
+## 6.2 Performance & limits
 
 A consolidated reference for technical buyers evaluating NULLRUN's
 operational characteristics. Every value below reflects the deployed
@@ -8823,23 +8456,6 @@ backend reality. Practical implication: a hung OpenAI socket stalls
 until the outer 30 s request timeout fires; there is no per-call
 connect timeout, no retry, and no machine-readable error envelope.
 
-#### Geo / sanctions failure
-
-| Setting | Value |
-| --- | --- |
-| `SANCTIONED` jurisdictions | RU, IR, KP, SY, CU, BY, VE, MM, AF |
-| `HIGH_RISK_NO_SERVICE` jurisdictions | EU-27 + EEA + UK + CH + CN + IN |
-| Sanctions arm | 403 + `{error:"service_unavailable_in_jurisdiction", message, fortress_reason:"sanctions"}` + headers `X-Fortress-Block-Country` + `X-Fortress-Block-Reason: sanctions` |
-| High-risk arm | 403 (or **503** if the GeoIP database is unavailable) + same shape |
-| GeoIP DB missing / unreadable | **All ingress rejected (503)** — fail-CLOSED by design |
-| Operator env-level kill-switch (geo-block) | fail-OPEN escape (logs WARN); never set in production |
-| Sanctions SDN CSV missing | 6-entry hand-curated fallback (fail-OPEN with WARN) |
-| Operator env-level kill-switch (sanctions screening) | fail-OPEN kill-switch; never set in production |
-
-See [Geo restrictions](#52-geographic-restrictions) and
-[Sanctions screening](#53-sanctions-screening) for the
-full compliance contract.
-
 ### Timeouts and integration limits
 
 #### HTTP / WebSocket / SSE
@@ -8987,7 +8603,6 @@ Per-tier decision-history retention:
 | Per-IP edge bypass | operator-configurable kill-switch (fail-OPEN in dev only); bypass paths `/health`, `/metrics`, `/internal/*` | — |
 | Per-IP edge multi-pod | shared counter store (fail-CLOSED on store error) | — |
 | Per-IP edge response | 429 + `Retry-After` + `X-RateLimit-Limit/Remaining` | — |
-| Waitlist (high-risk jurisdictions) | **5 submissions/hour/IP** (env `NULLRUN_WAITLIST_PER_HOUR`); window 3 600 s | Counter |
 | Auth endpoints | **5 req/min/IP** (`IpAuthRateLimiter::default`) | Token bucket (IP) + per-email counter |
 | Email lockout | **5 failures → 300 s** lockout | — |
 
@@ -9149,9 +8764,7 @@ evaluation.
    request timeout is the only bound; no per-call connect timeout.
 4. WS reconnect storms — no server-side cap; SDK could reconnect
    indefinitely under split-brain.
-5. Geo-block DB load latency at p99 — the GeoIP lookup is in-request
-   hot path; only the 503 fail-CLOSED branch is verified.
-6. State-store pool contention under `/track` bursts — the bounded
+5. State-store pool contention under `/track` bursts — the bounded
    ingestion queue holds 10 000 events, drops the oldest above 9 000,
    and drops at a hard cap of 15 000, but actual write throughput is
    not measured.
@@ -9178,10 +8791,10 @@ evaluation.
 - [Control plane](#212-control-plane-websocket) — WebSocket keepalive
 - [HTTP API → Capabilities](#43-http-api) —
   protocol version + `/health` `min`/`max`
-- [Compliance](#51-overview) — geo / sanctions posture
+- [Compliance](#51-overview) — data-handling posture
 
 
-## 7.3 Framework & ecosystem positioning
+## 6.3 Framework & ecosystem positioning
 
 This page is the **architectural companion** to the how-to guides in
 section 3 (`Protect a LangGraph agent`, `Use with OpenAI Agents`,
@@ -9239,7 +8852,7 @@ SDK README:
   LLM/tool call. If the budget store is unavailable the server
   fails-CLOSED, returning `402` and blocking the call — never the
   client.
-  ([Performance & limits → Budget store failure](#72-performance-limits))
+  ([Performance & limits → Budget store failure](#62-performance-limits))
 - **Tool policy.** Declarative tool patterns, with per-pattern
   approval rules. Block / allow / require_approval are server-side
   decisions; the SDK has no veto.
@@ -9372,7 +8985,7 @@ in their own UI; neither blocks the other.
 
 1. **Latency overhead.** Every `@protect`-decorated call adds a
    round-trip to `/api/v1/gate`. Healthy-path budget is **<60 ms p99**
-   ([Performance & limits → Hot-path latency](#72-performance-limits)).
+   ([Performance & limits → Hot-path latency](#62-performance-limits)).
    For long-running batch agents this is invisible. For
    latency-sensitive chat UIs it may matter; mitigate with conditional
    `@protect` (only enforce on paths that hit sensitive tools or
@@ -9553,7 +9166,7 @@ own procurement criteria — particularly around fail-CLOSED semantics
 on enforcement paths and what happens when the budget store is
 unavailable on the gate hot path. The mechanical answer for NullRun is
 in
-[Performance & limits → Budget store failure](#72-performance-limits)
+[Performance & limits → Budget store failure](#62-performance-limits)
 (402, never 200).
 
 ### What NullRun *doesn't* claim
@@ -9565,8 +9178,8 @@ covered, by design:
    prompt-injection blocking. Use a model-side guardrail for that.
 2. **Workflow orchestration / DAG** — LangGraph's job, not ours.
 3. **Vector store / retrieval governance** — outside the gate.
-4. **Network egress policy (egress firewall)** — NullRun can
-   geo-block at ingress but doesn't inspect LLM tool payloads for
+4. **Network egress policy (egress firewall)** — NullRun decides on
+   call metadata but doesn't inspect LLM tool payloads for
    exfiltration.
 5. **Provider-side cost visibility** — NullRun computes cost from
    response bodies via the `httpx` patch; for exact reconciliation
@@ -9583,7 +9196,7 @@ not a substitute.
 - **No benchmark against `interrupt()` latency.** LangGraph's
   in-memory pause is sub-millisecond; NullRun's gate round-trip is
   the 50–200 ms figure from
-  [Performance & limits](#72-performance-limits). Apples
+  [Performance & limits](#62-performance-limits). Apples
   and oranges — one is a process-local suspension, the other is a
   network authorization call. Choose based on whether you need
   governance or just flow control.
@@ -9631,7 +9244,7 @@ source. Future maintainers: when editing, add or amend a row below.
 
 ### See also
 
-- [Performance & limits](#72-performance-limits) — gate hot-path latency,
+- [Performance & limits](#62-performance-limits) — gate hot-path latency,
   fail-CLOSED semantics, idempotency surfaces
 - [Protect a LangGraph agent](#31-protect-a-langgraph-agent) — wiring code
 - [Use with OpenAI Agents](#32-use-with-openai-agents)

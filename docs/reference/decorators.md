@@ -1,7 +1,7 @@
 ---
 title: Decorators & context managers
 maturity: stable
-description: Reference for @protect (the gate decorator) and the workflow / span / chain context managers it pairs with, plus the with nullrun.guard(): friendly-exit wrapper.
+description: "Reference for @protect (the gate decorator) and the workflow / span / chain context managers it pairs with, plus the with nullrun.guard(): friendly-exit wrapper."
 ---
 
 # Decorators & context managers
