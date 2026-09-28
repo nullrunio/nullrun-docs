@@ -11,11 +11,10 @@ invoice history with quota / plan-comparison / feature-gate
 information under one URL. It lives at
 `/control-center/billing` in the sidebar.
 
-Before the merge, these were two separate pages
-(`/control-center/billing` and `/control-center/plan`) that
-shared most of their data. The merged view avoids two round-trips
-for the "should I upgrade and how do I pay" question the operator
-actually has.
+The two questions a plan change raises — "can I afford the next
+tier" and "how do I pay for it" — share one fetch and one loading
+state, so the operator never waits on two round-trips to answer
+them.
 
 The active tab is encoded in the URL via `?tab=billing|plan` so the
 view is shareable + reload-safe. `?tab=plan` is the common inbound
@@ -35,8 +34,8 @@ The hero card surfaces:
   (4-state machine; `Trialing` is not a state — paid plans go
   straight to `Active` after Polar checkout; Lite is free forever
   with no trial).
-- **Manage subscription** button (opens the customer portal — see
-  the migration note below).
+- **Manage subscription** button (see the customer-portal note
+  below).
 - **Update payment method** button.
 
 Below the hero:

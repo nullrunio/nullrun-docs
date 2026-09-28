@@ -20,8 +20,8 @@ returned by `POST /api/v1/auth/verify` (`organization_id` field).
 The SDK negotiates this automatically — only set the URL by hand
 when you are building a custom WebSocket client.
 
-The OpenAPI spec is generated from the router and is the source of
-truth.
+Endpoint behaviour is defined by the gateway router; this page is
+the reader-facing summary of the routes a user or an SDK calls.
 
 ## Authentication
 
@@ -75,11 +75,7 @@ documents every field.
 | `GET` | `/api/v1/orgs/{org_id}/status` | Control-plane poll fallback (only used when WS is down) |
 | `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat |
 | `POST` | `/api/v1/cancel` | Cancel an in-flight execution. Idempotent; the reservation TTL cleans up even if the call doesn't reach the gateway. |
-
-| Method | Path | Status |
-| --- | --- | --- |
-| `POST` | `/api/v1/check` | Returns `410 Gone` with `replacement: /api/v1/gate`. Use `/gate` for new integrations. |
-| `POST` | `/api/v1/execute` | Per-tool invocation with gate pre-flight and budget reservation (thin adapter in front of the unified gate engine). |
+| `POST` | `/api/v1/execute` | Per-tool invocation with gate pre-flight and budget reservation. Used by `MCPAdapter` so MCP tool calls pass the same policies as `@protect`-decorated functions. |
 
 ## Auth
 

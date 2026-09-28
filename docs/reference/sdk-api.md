@@ -48,13 +48,13 @@ twice returns the same singleton without re-running the lazy trigger.
 |---|---|---|---|
 | `init(api_key=None, api_url=None, debug=False, fail_on_exit=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). With `fail_on_exit=True`, missing config prints the developer report and `sys.exit(1)` instead of raising. The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
 | `@protect` | Wrap a function for **gate** enforcement (control plane / budget / span / per-tool policy). Takes no kwargs. Every call routes through `/execute`; the backend decides allow / block / require-approval. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — ships `tool_name + args + kwargs` on the wire for every protected call. Wrap the call site in `with nullrun.guard():` for the structured 4-line dev report on failure. | ✅ |
-| `with nullrun.guard():` | Context manager for friendly exit — catches every `NullRunError` raised inside the block (the kill signal `WorkflowKilledInterrupt` re-raises), renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
+| `with nullrun.guard():` | Context manager for friendly exit — catches every `NullRunError` raised inside the block (the kill signal re-raises), renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Keyword-only `exit_code` overrides the exit status: `with nullrun.guard(exit_code=2):`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
 | `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
 | `chain(chain_id: str, op: str = "start")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
 | `span(name=None)` | Context manager for nested trace spans. | (lazy) |
 | `agent(name=None)` | Context manager for agent identity. | (lazy) |
 | `set_call_context(model=None, tools=None)` | Per-call context the SDK forwards to `/gate` so the backend's budget + tool-block enforcement sees real values. | (lazy) |
-| `on_error(hook)` | Register a global error hook. Fires for every `NullRunError` subclass — including the kill signal (`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) — BEFORE the exception propagates. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Filter inside the hook by `error_code` (`"NR-W002"`) if you need to skip kill. Returns an idempotent unregister callable. | ✅ |
+| `on_error(hook)` | Register a global error hook. Fires for every `NullRunError` subclass BEFORE the exception propagates. A kill signalled through a **sync** `@protect` arrives as a re-wrapped `NullRunBlockedException` carrying `error_code="NR-W002"` — that re-wrapped form is what the hook sees. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Filter inside the hook by `error_code`. Returns an idempotent unregister callable. | ✅ |
 | `runtime.track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` | Manual escape hatch for non-HTTP LLM calls. Reach it via `nullrun.get_runtime()`. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. Cost is recomputed on the backend from `input_tokens` + `output_tokens` + org pricing policy. | (runtime method) |
 | `runtime.track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool-call tracking on the runtime instance. `tool_name` flows through to the policy engine — a `ToolBlock` policy with matching pattern catches the call. | (runtime method) |
 | `runtime.track(event: dict)` | Generic manual-event emission on the runtime instance. Pass a dict with `type` (event category) and any additional payload fields; buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. Use for arbitrary observability signals (milestones, errors, business events). | (runtime method) |
@@ -62,7 +62,7 @@ twice returns the same singleton without re-running the lazy trigger.
 | `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
 | `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
 | `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads. Auto-registered with `atexit` inside `init()`, so long-running scripts get a clean WS close on process exit without an explicit call. Calling it manually is safe and idempotent. | ✅ |
-| `nullrun.get_runtime().status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `offline` / `misconfigured`). Thread-safe, side-effect-free. Raises `NullRunConfigError` with `error_code="NR-C004"` if the runtime hasn't been initialised yet. | (lazy) |
+| `nullrun.get_runtime().status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `misconfigured`). Thread-safe, side-effect-free. | (lazy) |
 
 Rows marked **lazy** are exposed under `nullrun.*` via `__getattr__`
 on first access; they do not appear in `dir(nullrun)` until used.
@@ -143,8 +143,9 @@ in `nullrun/__init__.py`: `__version__`, `init`, `protect`,
 `set_user_message`, `guard`, plus the
 structured exception names `NullRunError`, `NullRunAuthError`,
 `NullRunConfigError`, `NullRunBackendError`, `NullRunBudgetError`,
-`NullRunToolBlockedError`, `WorkflowKilledInterrupt`, and the
-typed MCP / approval subclasses. The lazy surface (PEP 562) adds
+`NullRunToolBlockedError`, `WorkflowKilledInterrupt`,
+`NullRunWorkflowKilledError`, `NullRunApprovalDbUnavailableError`,
+and the typed MCP subclasses. The lazy surface (PEP 562) adds
 `workflow`, `span`, `agent`, `chain`,
 `set_call_context`, the audit classes (`AuditQuery`, `AuditEntry`,
 …), the tracer (`SpanContext`, `get_current_span`, …), and the
@@ -152,11 +153,12 @@ additional exception names (`WorkflowPausedException`,
 `NullRunBlockedException`, `NullRunApproval*Error`, etc.).
 
 For a runtime snapshot, reach `NullRunStatus` via
-`nullrun.get_runtime().status()`. Returns the same frozen
-`NullRunStatus` dataclass (`ok` / `degraded` / `offline` /
-`misconfigured`); thread-safe, side-effect-free; raises
-`NullRunConfigError` (`error_code="NR-C004"`) if the runtime
-hasn't been initialised yet.
+`nullrun.get_runtime().status()`. Returns a frozen
+`NullRunStatus` dataclass (`ok` / `degraded` / `misconfigured`);
+thread-safe, side-effect-free. `get_runtime()` builds the runtime
+from `NULLRUN_API_KEY` if none exists yet, and raises
+`NullRunConfigError` with `error_code="NR-C001"` when no API key is
+available.
 
 ## Exceptions
 

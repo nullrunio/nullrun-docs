@@ -10,7 +10,7 @@ The **MCP servers** page in the dashboard is the operator's view of
 the Model Context Protocol servers your agents actually call. Each
 row in the page is one **action source** — the gateway's canonical
 name for "one MCP server (or built-in provider) that the SDK has
-talked to". The page lives under **Governance → MCP servers** in the
+talked to". The page lives under **Governance → Action Sources** in the
 sidebar.
 
 This page covers:
