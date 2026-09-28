@@ -4,9 +4,17 @@ description: Runtime decision layer for tool-using AI agents. Gates every tool a
 home: true
 ---
 
-<!-- Brand hero — title, subtitle, screenshot, CTA buttons.
+<!-- Brand hero — title, subtitle, install + protect code, CTA buttons.
      All hero/sections/feature classes live in extra.css
-     (.nr-hero, .nr-section, .nr-features, .nr-feature, etc.). -->
+     (.nr-hero, .nr-section, .nr-features, .nr-feature, etc.).
+
+     The hero leads with code, not with a screenshot. A reader who
+     landed here from a search result or a link in an issue came for
+     the integration, and the dashboard image was the only thing above
+     the fold telling them what the product looks like rather than what
+     it does. The dashboard shot moved to its own section below the
+     fold, where it still runs but answers a question the code above
+     it has already framed. -->
 <section class="nr-hero md-grid md-typeset">
   <div>
     <h1 class="nr-hero__title">Runtime decision layer for tool-using AI agents</h1>
@@ -14,20 +22,54 @@ home: true
       <code>allow</code>, <code>block</code>, or
       <code>require_approval</code> — backed by tool patterns, budgets, rate limits, and human approvals.
     </p>
+
+    <div class="nr-hero__install"><code>pip install nullrun</code></div>
+
+    <div class="nr-hero__code">
+
+```python title="your_tool.py"
+import nullrun
+
+nullrun.init()
+
+
+@nullrun.protect
+def refund_customer(order_id: str, amount_cents: int) -> str:
+    """The gate answers before this body runs."""
+    return payments.refund(order_id, amount_cents)
+```
+
+    </div>
+
+    <p class="nr-hero__codefoot">
+      Decorate the tool. The gate evaluates the call; your function
+      runs only if the decision is <code>allow</code> — and waits for a
+      human if the policy says <code>require_approval</code>.
+    </p>
+
+    <!-- Three CTA levels, not one repeated. Primary is the docs'
+         own next step; the FLAG plate is the external prerequisite a
+         reader hits on the same screen; the tertiary is an in-docs
+         read that is useful but not the thing they came to do. -->
     <div class="nr-hero__cta">
       <a class="primary" href="getting-started/quickstart/">Get started →</a>
       <a class="secondary" href="https://nullrun.io">Get an API key</a>
-      <a class="secondary" href="concepts/circuit-breaker/">How the gate works</a>
+      <a class="tertiary" href="concepts/circuit-breaker/">How the gate works</a>
     </div>
   </div>
-  <div>
-    <figure class="nr-shot">
-      <img class="nr-shot__light" src="assets/images/screenshots/dashboard-hero-light.png"
-           alt="NullRun dashboard home showing the workflow control panel.">
-      <img class="nr-shot__dark" src="assets/images/screenshots/dashboard-hero-dark.png"
-           alt="NullRun dashboard home showing the workflow control panel.">
-    </figure>
-  </div>
+</section>
+
+<section class="nr-section nr-section--shot md-grid md-typeset">
+  <figure class="nr-shot">
+    <img class="nr-shot__light" src="assets/images/screenshots/dashboard-hero-light.png"
+         alt="NullRun dashboard home showing the workflow control panel.">
+    <img class="nr-shot__dark" src="assets/images/screenshots/dashboard-hero-dark.png"
+         alt="NullRun dashboard home showing the workflow control panel.">
+    <figcaption class="nr-shot__caption">
+      Every gate decision, budget reservation, and cost event lands in
+      the dashboard. That is the whole surface an operator touches.
+    </figcaption>
+  </figure>
 </section>
 
 <section class="nr-section md-grid md-typeset" markdown="1">

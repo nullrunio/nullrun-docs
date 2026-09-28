@@ -24,7 +24,8 @@
    The sidebar occupies the full left edge (top: 0 → bottom: 0).
    The menu-bar lives in the right column, NOT spanning the full
    page width — its left edge starts at 340px. The footer is
-   removed entirely (no prev/next pager, no Material chrome).
+   minimal and custom: copyright + GitHub + support, no prev/next
+   pager, no Material chrome (see §10).
 
    Palette (mirrors frontend tokens)
    ---------------------------------
@@ -316,7 +317,17 @@ html { font-size: 100%; }
    flex layout naturally positions content + TOC to its right. The
    header (menu-bar) is independently constrained to the same content
    area via `margin-left: 340px; width: calc(100% - 340px)` (see §4). */
-.md-footer { display: none; }
+
+/* The footer is a sibling of `.md-main` inside Material's flex
+   `md-container`, so it starts at the viewport's left edge and would
+   run under the fixed sidebar. It carries the same 340px left offset
+   the menu-bar does, so its rule lines up with the article. The
+   @media print block in §15 hides it for the printed page. */
+.md-footer {
+  margin-left: 340px;
+  width: calc(100% - 340px);
+  max-width: calc(100% - 340px);
+}
 /* NOTE: the mobile (max-width: 76em) overrides live in section 16 at
    the end of the file, not here. The desktop rules that follow this
    point (`.md-header { margin-left: 340px }`,
@@ -345,6 +356,15 @@ body.nr-sidebar-hidden .nr-menubar {
 body.nr-sidebar-hidden .md-main__inner {
   margin-left: 0 !important;
   max-width: 100vw !important;
+}
+/* The footer carries the same 340px offset the menu-bar does, so it
+   has to release it too — otherwise collapsing the sidebar widens the
+   article and the menu-bar but leaves the footer indented under a
+   column that no longer exists. */
+body.nr-sidebar-hidden .md-footer {
+  margin-left: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -1107,6 +1127,163 @@ body.nr-sidebar-hidden .md-sidebar--primary {
 /* ────────────────────────────────────────────────────────────────────────────
    7. CONTENT — flush against sidebar, max-width, Inter body
    ──────────────────────────────────────────────────────────────────────────── */
+
+/* Maturity badge — emitted by the `content` block in
+   overrides/main.html from each page's `maturity:` front matter. Only
+   non-stable values reach this selector; a `stable` page renders no
+   element at all, so there is no plate to hide here.
+
+   Shape follows the FLAG block vocabulary used elsewhere in this file:
+   hard 2px border, zero radius, hard offset shadow, uppercase mono
+   tag. The tag is a solid FLAG plate; the explanatory sentence beside
+   it is plain prose, because the sentence is the part a reader
+   actually needs and setting it in mono caps would be unreadable at
+   length. */
+.nr-badge {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 20px 0;
+  padding: 10px 12px;
+  color: var(--md-default-fg-color);
+  background: var(--md-default-bg-color);
+  border: 2px solid var(--md-default-fg-color);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 0 var(--nr-shadow);
+}
+.nr-badge__tag {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  font-family: var(--md-code-font-family);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.5;
+  color: var(--md-default-bg-color);
+  background: var(--accent-flag);
+  border: 2px solid var(--md-default-fg-color);
+  text-transform: uppercase;
+  /* FLAG, not BLOCK: a maturity state is a "look here" note, and the
+     BLOCK red is reserved for refusals. A new maturity value declared
+     later picks this up without a CSS change. */
+  background: var(--accent-flag);
+}
+.nr-badge__text {
+  flex: 1 1 auto;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--md-default-fg-color);
+}
+@media screen and (max-width: 44.984375em) {
+  .nr-badge {
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+/* Page actions (the "Edit this page" pencil from
+   `content.action.edit`) — Material floats it to the top-right of the
+   content column. It renders inside `.md-content__inner` before the
+   article, so the float puts it above the H1; left as Material's bare
+   grey icon it reads as stray chrome next to a bordered H1. Re-skinned
+   as a small brutalist plate with an always-visible hairline border so
+   it registers as chrome rather than an artefact. */
+.md-content__inner > .md-content__button.md-icon {
+  float: right;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin: 4px 0 8px 12px;
+  padding: 0;
+  color: var(--md-default-fg-color);
+  background: var(--md-default-bg-color);
+  border: 2px solid var(--md-default-fg-color);
+  border-radius: 0;
+  box-shadow: 3px 3px 0 0 var(--nr-shadow);
+  transition: transform 120ms linear, box-shadow 120ms linear,
+              background-color 120ms linear;
+}
+.md-content__inner > .md-content__button.md-icon:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 5px 0 0 var(--nr-shadow);
+  background: var(--accent-flag);
+}
+.md-content__inner > .md-content__button.md-icon:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.md-content__inner > .md-content__button.md-icon svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+/* Heading anchors — `toc.permalink: true` emits a real
+   `<a class="headerlink">` on every heading, so a reader can
+   right-click → "copy link to section". Material reveals its `¶` on
+   heading hover at 0 → 1 opacity; that is the behaviour we want, but
+   the stock glyph is a pilcrow in a light grey, which reads as debris
+   against the neo-brutalist headings. Restyled below to a small ink
+   plate in the FLAG colour, revealed on hover / keyboard focus. The
+   resting page shows nothing, exactly as before. */
+.md-typeset .headerlink {
+  margin-left: 0.4em;
+  color: var(--md-default-fg-color);
+  opacity: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 3px;
+  background: var(--accent-flag);
+  border: 2px solid var(--md-default-fg-color);
+  border-radius: 0;
+  box-shadow: 2px 2px 0 0 var(--nr-shadow);
+  text-decoration: none;
+  transition: opacity 120ms linear, transform 120ms linear;
+  /* Keeps the anchor from being announced as a bare pilcrow; the
+     `title` Material sets ("Permanent link") is the accessible name. */
+  font-size: 0;
+}
+.md-typeset .headerlink::before {
+  content: "#";
+  font-family: var(--md-code-font);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.md-typeset h1:hover > .headerlink,
+.md-typeset h2:hover > .headerlink,
+.md-typeset h3:hover > .headerlink,
+.md-typeset h4:hover > .headerlink,
+.md-typeset h5:hover > .headerlink,
+.md-typeset h6:hover > .headerlink,
+.md-typeset .headerlink:focus-visible {
+  opacity: 1;
+}
+.md-typeset .headerlink:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 0 var(--nr-shadow);
+}
+.md-typeset .headerlink:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Headings sit next to an anchor that appears on hover; reserve the
+   space so the reveal doesn't reflow the line. */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-typeset h5,
+.md-typeset h6 {
+  scroll-margin-top: 80px;
+}
+
 .md-content {
   /* Column width. Was 1400px, which at a 165-character measure meant
      the eye had to travel most of a desktop's width and back on every
@@ -1405,12 +1582,26 @@ article.md-content__inner,
   grid-template-columns: 1fr;
   gap: 24px;
 }
-.nr-hero__title {
+/* The hero headline is 44px, not 66px. At the old clamp the title ran
+   to three full-width lines on a laptop, so the code block and the CTA
+   row both fell below the fold — the visitor saw a slogan and nothing
+   else. 44px keeps it to two lines at 1280px and still reads as a
+   headline rather than body text.
+
+   The selector is `.nr-hero .nr-hero__title`, not the bare class, and
+   that is load-bearing. The hero `<section>` carries `md-typeset`, so
+   the page-wide `.md-typeset h1` rule also matches this element — and
+   an element+class selector (0,1,1) outranks a lone class (0,1,0), so a
+   bare `.nr-hero__title` lost and the headline rendered at the generic
+   H1 size instead. The same applies to the two media-query rules for
+   this element further down: they have to out-specify `.md-typeset h1`
+   too, or the phone floor never applies either. */
+.nr-hero .nr-hero__title {
   font-family: var(--font-display);
-  font-size: clamp(2rem, 5vw, 3rem);
+  font-size: clamp(1.85rem, 3.6vw, 2.75rem);
   font-weight: 700;
   letter-spacing: -0.025em;
-  line-height: 1.05;
+  line-height: 1.1;
   margin: 0 0 16px;
   color: var(--md-default-fg-color);
 }
@@ -1418,7 +1609,7 @@ article.md-content__inner,
   font-size: 1.1rem;
   line-height: 1.5;
   color: var(--md-default-fg-color--light);
-  margin: 0 0 24px;
+  margin: 0 0 20px;
   max-width: 640px;
 }
 .nr-hero__screenshot {
@@ -1428,6 +1619,52 @@ article.md-content__inner,
   border: 2px solid var(--md-default-fg-color);
   box-shadow: 6px 6px 0 0 var(--nr-shadow);
   display: block;
+}
+
+/* Install line — the one command, set as a slab above the example so
+   the copy / paste is a single line and not confusable with the code
+   that follows it. */
+.nr-hero__install {
+  display: inline-block;
+  margin: 0 0 16px;
+  padding: 8px 14px;
+  background: var(--md-default-bg-color);
+  border: 2px solid var(--md-default-fg-color);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 0 var(--nr-shadow);
+}
+.nr-hero__install code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--md-default-fg-color);
+}
+
+/* The example. A code block in the hero has to be narrower than the
+   prose column, or the line lengths of the sample become unreadable —
+   Material's default `.highlight` is full width. The frame matches the
+   rest of the site's plates so the hero doesn't introduce a fourth
+   box style next to the CTA row. */
+.nr-hero__code .highlight {
+  margin: 0;
+  border: 2px solid var(--md-default-fg-color);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 0 var(--nr-shadow);
+  background: var(--md-default-bg-color);
+  max-width: 560px;
+}
+.nr-hero__code .highlight pre {
+  margin: 0;
+  padding: 14px 16px;
+}
+.nr-hero__codefoot {
+  margin: 12px 0 0;
+  max-width: 560px;
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: var(--md-default-fg-color--light);
 }
 
 /* CTA cluster — primary + secondary brutalist plates */
@@ -1471,6 +1708,46 @@ article.md-content__inner,
   transform: translate(-2px, -2px);
   box-shadow: 6px 6px 0 0 var(--nr-shadow);
   background: var(--accent-flag-ink);
+}
+
+/* Tertiary — the third CTA level. The old row had two links wearing
+   the identical FLAG plate, so nothing told the eye which of them was
+   the one to click; and in dark scheme the primary plate inverts to
+   cream-on-black, which made the primary and the secondary the same
+   weight. Three levels now: ink (primary), FLAG (secondary), and a
+   bare underlined link (tertiary) that carries no plate at all.
+
+   The tertiary is deliberately not a plate. It is the in-docs read a
+   visitor can take later, and a third box in the row would put it
+   back on equal footing with the two actions. */
+.nr-hero__cta a.tertiary {
+  padding: 12px 4px;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  color: var(--md-default-fg-color);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+.nr-hero__cta a.tertiary:hover {
+  background: none;
+  transform: none;
+  box-shadow: none;
+  color: var(--accent-flag-ink);
+  text-decoration-color: var(--accent-flag);
+}
+
+/* The dashboard shot moved out of the hero into its own band. It is
+   the answer to "what does the operator actually see?", which is a
+   second question — the first one is answered by the code above. */
+.nr-section--shot {
+  display: flex;
+  justify-content: center;
+}
+.nr-section--shot .nr-shot {
+  margin: 0 auto;
+  max-width: 900px;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -1536,10 +1813,78 @@ article.md-content__inner,
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   10. FOOTER — removed entirely (Material emits nothing via partial override)
-   ──────────────────────────────────────────────────────────────────────────── */
+   10. FOOTER — minimal: copyright + GitHub + support
+   ────────────────────────────────────────────────────────────────────────────
+   Material's own footer chrome is still suppressed: `.md-footer-meta`
+   carries the "Made with Material" line and the prev/next pager, and
+   `navigation.footer` is off in mkdocs.yml, so leaving either visible
+   would put stock-theme furniture under a custom footer. The markup
+   that renders is `overrides/partials/footer.html`; only these two
+   selectors hide Material's. */
 .md-footer-meta,
 .md-footer-meta__inner { display: none; }
+
+/* Material positions `.md-footer` itself; we need it to sit below the
+   content column at the same 340px offset the menu-bar uses, so the
+   footer's left edge lines up with the article rather than the
+   sidebar. */
+.md-footer {
+  margin-top: 0;
+  background: transparent;
+}
+
+.nr-footer__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding: 20px 20px 28px;
+  border-top: 2px solid var(--nr-sidebar-spacer);
+}
+
+.nr-footer__copy {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--md-default-fg-color--light);
+}
+
+.nr-footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nr-footer__links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--md-code-font);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--md-default-fg-color);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  transition: border-color 120ms linear;
+}
+.nr-footer__links a:hover {
+  border-bottom-color: var(--accent-flag);
+}
+.nr-footer__links a:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.nr-footer__links svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  stroke: none;
+}
 
 /* ────────────────────────────────────────────────────────────────────────────
    11. BACK-TO-TOP BUTTON — Material `navigation.top` centered on content
@@ -2006,7 +2351,7 @@ body.nr-print-page .md-content {
     padding: 28px 0 24px;
     gap: 16px;
   }
-  .nr-hero__title { font-size: clamp(1.65rem, 5vw, 2.25rem); }
+  .nr-hero .nr-hero__title { font-size: clamp(1.65rem, 5vw, 2.25rem); }
 }
 
 @media screen and (max-width: 30em) {
@@ -2064,9 +2409,17 @@ body.nr-print-page .md-content {
     padding: 16px 0;
     gap: 12px;
   }
-  .nr-hero__title { font-size: clamp(1.5rem, 7vw, 2rem); }
+  .nr-hero .nr-hero__title { font-size: clamp(1.5rem, 7vw, 2rem); }
   .nr-hero__subtitle { font-size: 1rem; }
   .nr-hero__cta { flex-direction: column; }
+  /* The tertiary is the one CTA that must NOT go full-width on a
+     phone. As a plate it matched the other two's geometry; as a bare
+     underlined link it reads as a caption under them, and a
+     full-width underlined block would look like a broken button. */
+  .nr-hero__cta a.tertiary {
+    align-self: flex-start;
+    padding: 4px 0;
+  }
   .nr-hero__cta a {
     width: 100%;
     justify-content: center;

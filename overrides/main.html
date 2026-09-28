@@ -343,3 +343,36 @@
   }
   </script>
 {% endblock %}
+
+{# ── Maturity badge ────────────────────────────────────────────────
+   Every page in the nav carries `maturity:` in its front matter, and
+   until now nothing rendered it — 28 pages declared a value the reader
+   never saw. This block is where that value becomes visible.
+
+   Only `beta` gets a badge. A `STABLE` plate on 38 pages would be
+   noise: stability is the default, and a reader who has to be told
+   "this one is fine" on every page stops reading the plates. A beta
+   page is the exception worth surfacing, because the page is where
+   the behaviour described may still change under the reader.
+
+   The badge is emitted above the page's first heading rather than
+   inside it — the H1 is the page's identity and injecting a sibling
+   element into it would change every selector that targets
+   `.md-typeset h1`, including print.md's renumbering.
+
+   The `_maturity` local is read with `default('stable')` so a page
+   that omits the key renders nothing rather than an empty plate.
+   The comparison is case-insensitive because YAML front matter is
+   hand-written and `Beta` is a natural typo. #}
+{% block content %}
+  {%- if page and page.meta and page.meta.maturity -%}
+    {%- set _maturity = page.meta.maturity | string | lower -%}
+    {%- if _maturity not in ['stable', 'true', 'false', 'none', ''] -%}
+      <p class="nr-badge nr-badge--{{ _maturity }}" role="note">
+        <span class="nr-badge__tag">{{ _maturity }}</span>
+        <span class="nr-badge__text">This page documents a part of NullRun whose surface may still change.</span>
+      </p>
+    {%- endif -%}
+  {%- endif -%}
+  {{ super() }}
+{% endblock %}

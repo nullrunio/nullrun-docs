@@ -793,6 +793,674 @@ disable the gate — bypassing it is a dev/test opt-out.
 
 ---
 
+# Source: https://docs.nullrun.io/concepts/policies/
+
+title: Policies
+maturity: stable
+description: How BudgetLimit, RateLimit, ToolBlock, and LoopDetection policies are aggregated — most-restrictive-wins semantics across scopes.
+# Policies
+
+A **policy** is a rule attached to your organization or a single
+workflow. In the dashboard they live under **Governance → Policies**.
+Each policy answers one question:
+
+- "Is this call allowed, blocked, or does it need a human to approve?"
+
+## What you see in the dashboard
+
+The **Policies** page lists every policy in your org. Each row
+shows:
+
+- **Name** — you set this when you created the policy
+- **Type** — what the policy caps (see the table below)
+- **Scope** — applies to the whole org, or only one workflow
+- **Active** toggle — on/off without deleting
+- **Effective from** — when the policy was last edited
+
+Click a policy to edit it. Changes apply to the next gate call —
+there's no need to redeploy your agent.
+
+## The three policy types
+
+| Type | What it controls | Example value |
+|---|---|---|
+| **BudgetLimit** | Maximum spend per workflow per period | `5000` ($50.00) |
+| **RateLimit** | Maximum calls per minute | `60` (one call per second sustained) |
+| **ToolBlock** | Tools the agent must not call | `["send_*", "db.drop", "stripe.charge"]` |
+
+Each type has a JSON config payload — see the [Tool policies](tool-policies.md)
+page for the glob-match syntax inside `ToolBlock`.
+
+## BudgetLimit — extra fields
+
+A `BudgetLimit` policy can carry these optional fields:
+
+| Field | Default | What it does |
+|---|---|---|
+| `enforcement_mode` | `"Hard"` | `Hard` blocks on budget exceeded. `Soft` allows a bounded overdraft when an active chain is present. |
+| `max_overdraft_cents` | `0` | Maximum overdraft in cents (per-org aggregate). Both `cents` and `percent` apply — the lower cap wins. |
+| `max_overdraft_percent` | `0` | Maximum overdraft as percent of the budget. |
+| `max_chain_duration_seconds` | `3600` | Maximum duration of a chain started under this policy before the gate refuses. |
+
+The gate reads these fields from every applicable `BudgetLimit` and
+uses **most-restrictive-wins**: `enforcement_mode` (Hard > Soft),
+`max_overdraft_cents` (min), `max_overdraft_percent` (min).
+
+### Soft mode requirements
+
+Soft mode requires **all three**:
+
+1. The policy uses `enforcement_mode = Soft` (not Hard)
+2. An **active `chain_id`** exists (declared via `with chain(...)`)
+3. The projected cost stays within `max_overdraft_cents` and
+   `max_overdraft_percent`
+
+If any of the three is missing, soft mode is unavailable and the
+gate behaves as Hard. Multiple parallel chains on the same org share
+one overdraft counter — N concurrent chains do **not** multiply the
+overdraft cap.
+
+A chain dies on the first of: `op="end"`, 5 minutes of `/gate`
+inactivity (idle TTL), or exceeding `max_chain_duration_seconds`.
+Chain time is read server-side, eliminating clock skew between
+backend nodes.
+
+## Aggregation
+
+When two policies in the merged set compete, the engine picks the
+**most restrictive** one for numeric caps and the **union** for tool
+patterns.
+
+| Field | If two policies disagree |
+|---|---|
+| `budget_cents` | The smaller number wins |
+| `max_calls_per_minute` | The smaller number wins |
+| `enforcement_mode` | `Hard` beats `Soft` |
+| `max_overdraft_cents` | The smaller number wins |
+| `max_overdraft_percent` | The smaller number wins |
+| `tool_pattern` / `blocked_tools` / `tools` | Both lists are merged (a tool blocked anywhere is blocked everywhere) |
+
+You can't accidentally un-block a tool the org blocks. There is no
+"allow" rule that overrides a "block" — the system is conservative
+on purpose.
+
+## Org-level vs workflow-level
+
+A policy has one of two scopes:
+
+- **Org** — applies to every workflow in your organization. Useful
+  for "all our agents must block `db.drop`" or "everyone gets 60
+  calls/min".
+- **Workflow** — applies to one workflow only. Useful for "this
+  specific agent gets $500/month" or "this one agent can call
+  `send_email`".
+
+Both scopes apply at the same time. There's no "overrides" — both
+sets of rules run together. The dashboard's **Effective policy** tab
+on a workflow page shows the merged set.
+
+## Templates
+
+The dashboard ships with **templates** — pre-built policies for
+common patterns. To enable one:
+
+1. On the **Policies** page, click **Templates**.
+2. Pick a template (e.g. "Cap dev workflow at 100c/min" or "Block
+   all write tools").
+3. Click **Enable**.
+
+The template materialises as a real policy in your org using its
+config and name. Disable reverses it. Templates save you from
+hand-authoring JSON.
+
+## Plan gating
+
+Some policy features are plan-restricted:
+
+| Feature | Available on |
+|---|---|
+| `BudgetLimit` policies | All plans |
+| `RateLimit` policies | All plans |
+| `ToolBlock` policies | Growth+ |
+| Approval rules with typed predicates | Growth+ |
+
+If you try to create a feature your plan doesn't include, the
+dashboard shows the feature greyed out with an "Upgrade" link.
+
+## Approval rules — separate from ToolBlock
+
+Approval rules are **not** a `ToolBlock` policy with an `action =
+require_approval` field. They are a separate rule object with
+`tool_patterns`, a projected-cost threshold, a typed `BusinessImpact`
+predicate, and operational metadata.
+
+When a rule fires, the gate returns `decision = "require_approval"`
+and the SDK parks until the operator clicks Approve / Deny. See
+[Human approval](human-approval.md) for the full flow, the typed
+`action_digest` binding, and the WebSocket push resume path.
+
+## How to create one
+
+1. **Governance → Policies → New policy**.
+2. Pick the type (BudgetLimit / RateLimit / ToolBlock).
+3. Pick the scope (Org or specific workflow).
+4. Fill in the config. The dashboard validates the JSON in real
+   time and shows errors before you save.
+5. Save. The policy is active immediately.
+
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/policies-list-light.png"
+       alt="Policies list with the New policy button highlighted in the top right.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/policies-list-dark.png"
+       alt="Policies list with the New policy button highlighted in the top right.">
+  <figcaption class="nr-shot__caption">Governance · Policies · New policy</figcaption>
+</figure>
+
+To test a new policy before rolling it out broadly, scope it to
+one workflow. The dashboard's **Effective policy** tab on that
+workflow's detail page shows the merged result so you can see exactly
+what your agent will see.
+
+## What gets logged
+
+Every policy decision is recorded in **Governance → Audit log**.
+You can filter by:
+
+- Workflow
+- Decision type (`allow` / `block` / `require_approval`)
+- Time window
+- Tool name (for `ToolBlock` matches)
+
+The audit log is the source of truth for "why did my agent stop
+working at 14:32 yesterday?". Pair it with [Traces](tracing.md) to
+see the exact request that triggered the decision.
+
+## See also
+
+- [Tool policies](tool-policies.md) — the `ToolBlock` matching rules
+- [Budgets](budgets.md) — how `BudgetLimit` interacts with the
+  period rollover
+- [Human approval](human-approval.md) — typed `BusinessImpact` rules
+  that produce `require_approval`
+- [Workflows](workflow.md) — where the merged policy is applied
+
+!!! info "Deep dive"
+
+    The merged view is computed once per policy refresh and is
+    the same value the gate reads on every call, so the set an
+    operator sees on a workflow's effective-policy view is not a
+    second, independent computation that can drift from the one
+    actually enforced. Numeric caps reduce to the smallest value
+    found across every applicable policy, and tool patterns
+    reduce to the union of every applicable list. A tool blocked
+    at one scope cannot be unblocked at another: the merge has no
+    allow arm for a block to lose.
+
+    Decisions resolve in a fixed order, and the first outcome
+    other than allow short-circuits the rest. Tool blocking is
+    evaluated ahead of any budget reservation, so a call refused
+    for its tool name never has a budget envelope minted for it.
+    A tool block is unconditional: whatever `enforcement_mode` a
+    budget policy carries, a matching pattern blocks. Rate
+    limiting at the organization level is authoritative and
+    refuses the call when it cannot be evaluated; the per-key
+    rate limit is a secondary signal that defers to the budget
+    gate rather than refusing a call on its own.
+
+    A per-workflow budget cap is tri-state. No applicable policy
+    means the per-workflow check is skipped entirely, which is a
+    different thing from a cap of zero, which rejects every call.
+    Collapsing the two would let an organization that meant to
+    forbid spending fall through to the organization-wide cap
+    instead.
+
+    Soft enforcement belongs to budgets alone and needs three
+    things at once: the policy set to soft, an active chain, and
+    a projected cost inside both the cent and the percentage
+    overdraft limits. If any is missing the budget behaves as
+    hard. Concurrent chains on one organization share a single
+    overdraft counter, so parallelism does not multiply the
+    allowance. Tool-block policies and approval rules are gated
+    to Growth and above; on plans without the feature the server
+    refuses the mutation, and rules inherited from a higher tier
+    are retained for audit while no new one can be created.
+
+---
+
+# Source: https://docs.nullrun.io/concepts/tool-policies/
+
+title: Tool policies
+maturity: stable
+description: Glob patterns for tool names with a 4 KB cap per pattern, union semantics across applicable scopes, and validation traps to avoid.
+# Tool policies
+
+A `ToolBlock` policy decides which tools the agent is allowed to call
+and which it can't. In the dashboard these rules live under a policy
+of type **ToolBlock** — see [Policies](policies.md) for the general
+overview. This page covers how to write the patterns inside the
+policy.
+
+## Where you see it in the dashboard
+
+When you create or edit a policy and pick **ToolBlock** as the
+type, the dashboard shows a JSON editor for the `tool_pattern`,
+`blocked_tools`, or `tools` array. The "Test pattern" preview at the
+bottom lets you paste a tool name and see whether any pattern
+matches — useful for debugging.
+
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/policies-list-light.png"
+       alt="Policies list with the New policy button highlighted in the top right.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/policies-list-dark.png"
+       alt="Policies list with the New policy button highlighted in the top right.">
+  <figcaption class="nr-shot__caption">Governance · Policies · New policy</figcaption>
+</figure>
+
+## What a tool name looks like
+
+The agent calls tools by name. The canonical tool name format:
+
+| Type | Format | Example |
+|---|---|---|
+| Built-in tool | lowercase string | `bash`, `file_write`, `execute_code` |
+| MCP tool | `mcp://{server}/{tool}` | `mcp://filesystem/read` |
+| Custom tool | `custom:{name}` | `custom:my_tool` |
+
+The policy matcher is name-based. The SDK sends the tool name to the
+gate, the gate checks it against every active ToolBlock policy, and
+the verdict comes back as `allow`, `block`, or `require_approval`.
+
+## How to write the patterns
+
+Each entry in a ToolBlock policy is one of:
+
+- **Exact name** — `"stripe.charge"` blocks only that one tool.
+- **Glob** — `"send_*"` blocks anything starting with `send_`.
+- **`*` alone** — blocks everything.
+
+Each entry is capped at **4096 bytes**. The cap exists because the
+matcher scans every pattern on every gate call — a 10 MB pattern
+would burn CPU on each call.
+
+The matcher runs case-insensitively against the canonical tool name.
+
+## What a ToolBlock policy does
+
+A ToolBlock policy **blocks** tool calls whose name matches one of
+its patterns. There is no `action = require_approval` field on a
+ToolBlock — for "I want a human to approve before this tool runs",
+create an **approval rule** instead (see
+[Human approval](human-approval.md)). The two are separate rule
+objects; ToolBlock and approval rules don't share a configuration
+schema.
+
+ToolBlock is **always Hard**: it never lets through, regardless of
+the budget's `enforcement_mode`. See
+[Reliability matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable).
+If the gate cannot evaluate the ToolBlock check (Redis or policy
+cache unavailable), it fails closed — `403 TOOL_BLOCKED` (SDK
+`error_code = "NR-T001"`). The agent never runs an unverified
+sensitive operation.
+
+ToolBlock and approval rules are distinct rule objects — they don't
+share a configuration schema. A ToolBlock policy always *blocks*; to
+require human review first, use an approval rule instead.
+
+## A worked example
+
+Suppose your agent has these tools: `tavily_search`, `send_email`,
+`db.write`, `db.drop`, `stripe.charge`, `read_file`.
+
+You want to:
+
+- Allow read-only operations (`tavily_search`, `read_file`)
+- Block destructive operations (`db.drop`, `stripe.charge`)
+- Require approval for any outbound communication (`send_email`)
+- Allow normal DB writes (`db.write`) but block `db.drop`
+
+Two ToolBlock policies and one approval rule:
+
+!!! info "The example below shows the request payload shape — what you POST to the dashboard / API. It's not the storage schema, just the public input format."
+
+```json title="tool_block_policy.json"
+{
+  "policies": [
+    {
+      "name": "Block destructive",
+      "type": "ToolBlock",
+      "scope": "Org",
+      "config": {
+        "tool_pattern": ["db.drop", "stripe.*"]
+      }
+    }
+  ],
+  "approval_rules": [
+    {
+      "name": "Outbound needs approval",
+      "tool_patterns": ["send_email"],
+      "action_label": "send email to customer",
+      "expires_in_seconds": 300
+    }
+  ]
+}
+```
+
+`send_email` now triggers the approval flow (a human clicks
+**Approve** in the dashboard before the call goes through). `db.drop`
+and `stripe.charge` are blocked outright. The two policies do not
+interact — ToolBlock checks and approval-rule checks are independent
+paths in the gate.
+
+## Validation at policy creation
+
+The dashboard rejects invalid patterns at save time:
+
+| Error | Cause | Fix |
+|---|---|---|
+| `400 bare_string_pattern` | `"pattern": "send_*"` instead of `"pattern": ["send_*"]` | Always use an array, even for one entry |
+| `400 pattern_too_long` | An entry longer than the per-pattern byte cap | Split into multiple patterns |
+| `400 invalid_glob` | Contains control characters | Remove `\n`, `\r`, `\t` |
+
+## Plan gating
+
+`ToolBlock` policies require the Custom Policies feature, which is
+on **Growth+** plans. Lite and Starter can have `BudgetLimit` and
+`RateLimit` policies, but not ToolBlock.
+
+**Approval rules** (separate from ToolBlock) are gated by the
+`approvals` plan feature. The per-tier cap matches:
+
+| Plan | Approval rules allowed | Why |
+|---|---|---|
+| Lite | 0 | `approvals` feature disabled |
+| Starter | 0 | `approvals` feature disabled (server-side invariant: `approval_rules > 0 ⇒ approvals == true`) |
+| Growth | 20 | `approvals` enabled |
+| Scale | unlimited | `approvals` enabled, no cap |
+| Enterprise | unlimited | `approvals` enabled, no cap |
+
+The gate enforces `approval_rules = 0` server-side on Lite and
+Starter — even if you mint a key on a higher tier and downgrade,
+existing rules are kept (for audit) but no new rule can be created
+until the plan is upgraded back.
+
+On Lite / Starter, the dashboard shows ToolBlock policy creation
+greyed out with an "Upgrade" link.
+
+## How to debug a block you didn't expect
+
+If your agent reports `error_code = "NR-T001"` (wire `TOOL_BLOCKED`) on
+a call you think should be allowed:
+
+1. Open the workflow in the dashboard.
+2. Click **Effective policy**. The merged set shows every ToolBlock
+   pattern that could match.
+3. Open the **Audit log** and filter by `decision = block` and
+   the tool name. The log shows which pattern matched.
+4. If a pattern is too broad (`*` matches everything), narrow it
+   in the policy editor.
+5. If the pattern is wrong entirely, deactivate the policy and
+   re-create it with the correct list.
+
+## See also
+
+- [Policies](policies.md) — the dashboard view, aggregation rules,
+  and most-restrictive-wins semantics
+- [Sensitive tools](sensitive-tools.md) — the policy-driven way to
+  express "this tool needs review" (not a built-in SDK list)
+- [Tool catalog](../reference/llm-tool-catalog.md) — common tool
+  names with risk ratings
+- [Human approval](human-approval.md) — the approval-rule path,
+  distinct from ToolBlock
+
+!!! info "Deep dive"
+
+    A ToolBlock check operates on the canonical tool name and nothing
+    else. The gate resolves the effective tool list from the request
+    before evaluating anything, so a call carrying one tool and a call
+    carrying a list are treated alike. Patterns are collected from the
+    `tool_pattern`, `blocked_tools` and `tools` keys, trimmed and
+    de-duplicated, so `"bash"` and `"bash "` collapse into one entry.
+    Matching runs case-insensitively against the canonical name, and
+    control characters in either the incoming tool name or a pattern
+    are rejected before the check runs.
+
+    The pattern language is small. `*` is the only metacharacter: it
+    matches any run of characters, so `send_*` matches anything
+    starting with `send_` and `bash.*` matches the bare name `bash`
+    as well as dotted continuations like `bash.foo` and `bash.foo.bar`.
+    A pattern with several stars, such as `*.drop_*`, matches when
+    every literal segment appears in order, which is why `*.drop_*`
+    matches `s3.drop_table` but not `s3.execute_drop`. `|` collapses
+    several alternatives into a single entry. Neither `?` nor `**`
+    is supported — both are matched as ordinary characters — and a
+    bare literal matches only itself, never a substring. Each entry is
+    capped at 4096 bytes, bounding the work the matcher does on every
+    gate call.
+
+    ToolBlock is always hard, independent of a budget's enforcement
+    mode, and it is evaluated ahead of rate-limit and budget
+    accounting, so a blocked call never receives a budget envelope. If
+    the check cannot be evaluated at all, the gate fails closed. A
+    block reports the pattern that fired, which is what the audit log
+    records, so an unexpected block can always be traced to one entry.
+
+    Validation at creation time rejects the configurations that would
+    otherwise mean "block nothing": an empty string, an empty array,
+    an empty config object, and the plural `tool_patterns` key. A typo
+    such as `block_tools` or `blocked_tool` is an error rather than a
+    silently ignored rule. Because `*` on its own blocks everything,
+    narrowing a policy is the operator's responsibility, and the
+    merged effective set is what the dashboard shows before a change
+    ships. Matching never inspects tool arguments: a rule is about
+    which tool runs, not what it is called with.
+
+---
+
+# Source: https://docs.nullrun.io/concepts/sensitive-tools/
+
+title: Sensitive tools
+maturity: stable
+description: How `@protect` plus the server-side ToolBlock policy enforce "this tool needs review" without any SDK-side sensitive list.
+# Sensitive tools
+
+A **sensitive tool** is one that should never run without a human
+paying attention. Sending an email, moving money, deleting a record —
+all of these have consequences the agent can't easily undo.
+
+The way to express "this tool needs review" in NullRun is a
+**[ToolBlock policy](tool-policies.md)** — a glob pattern that fails
+the gate at `/gate` evaluation time, regardless of the SDK's local
+context. This page covers the *recommended* patterns and how to wire
+them.
+
+!!! info "The canonical entry point is `@protect`"
+    Every protected tool is automatically eligible for ToolParameters
+    Approval Rules — `@protect` ships `tool_name + args + kwargs` on
+    the wire, and the backend reads argument values out of `kwargs`
+    by `param_name`. No SDK-side extractor or extra decorator is
+    required.
+
+!!! info "ToolBlock vs typed predicates"
+    Two complementary mechanisms, often confused:
+
+    - **`ToolBlock` (server-side)** — a policy rule evaluated by
+      the gate on every `/gate` call. The gate fails-CLOSED if it
+      cannot reach Redis or the policy cache to evaluate. This is
+      the canonical "this tool is forbidden" mechanism.
+    - **Typed predicates (`money_amount`, `tool_parameters`)** —
+      built into approval rules in the dashboard. The gate
+      evaluates a DNF over argument values, bound to the
+      SHA-256 `action_digest` for tamper-proof approval. Use these
+      for finer-grained rules ("refunds over $500 need
+      approval", "sends to non-internal recipients need review").
+
+    Use `ToolBlock` for hard rules ("never call `bash`"). Use typed
+    predicates when the rule depends on the call's arguments.
+
+## What a sensitive tool is, in policy terms
+
+There is no built-in tool catalogue shipped by the SDK — every
+enforcement decision is evaluated by the gate on every `/gate` call,
+so you can't accidentally miss a tool you didn't register locally.
+You express "sensitive" with one of two complementary mechanisms:
+
+- **`@protect` (SDK-side, canonical)** — wraps a function and
+  ships `tool_name + args + kwargs` on the wire. The backend
+  reads argument values out of `kwargs` by `param_name` for
+  ToolParameters approval rules. No SDK-side extractor is needed.
+- **`ToolBlock` (server-side)** — a policy rule evaluated by the
+  gate. The gate fails-CLOSED if it cannot reach Redis or the policy
+  cache to evaluate. Use this for hard rules — "never call `bash`".
+- **Approval rules with typed predicates (server-side)** — for
+  finer-grained control, an approval rule references `param_name`
+  and the gate evaluates a DNF of up to 5 named parameters against
+  Equals / OneOf / NumericRange / Regex / Exists matchers. The
+  grant is bound to the SHA-256 `action_digest` of the live
+  payload; the post-approval `/execute` re-check refuses on
+  drift.
+
+For the typed-predicate wiring, see
+[Human approval → typed predicates](human-approval.md#typed-predicates).
+
+Recommended starter patterns (see
+[Tool catalog → Recommended ToolBlock starter list](../reference/llm-tool-catalog.md#recommended-toolblock-starter-list)
+for the maintained list):
+
+| Category | Pattern examples |
+|---|---|
+| Money | `mcp://payments/refund*`, `mcp://stripe/charge`, `mcp://stripe/refund` |
+| Email & messaging | `mcp://gmail/send`, `mcp://slack/post`, `send_email` |
+| Database destructive | `mcp://postgres/drop_table`, `mcp://postgres/delete_row`, `execute_sql` |
+| External API writes | `mcp://*/post`, `mcp://*/put`, `mcp://*/delete` |
+| Files & storage | `mcp://s3/delete`, `file_delete`, `bash` |
+| Admin | `mcp://admin/delete_user`, `mcp://admin/disable_user` |
+
+These are the canonical tool names a policy matches against. The
+**exact name** comes from your MCP server / framework integration —
+see the tool catalog for the curated list with risk ratings.
+
+## Why the SDK does not ship a built-in list
+
+A built-in "sensitive tools" SDK list would force every framework to
+register its tools against NullRun's expectations — and would be
+silently wrong for any tool not on the list. The current model
+inverts this:
+
+- You write a ToolBlock policy that names the tools you care about.
+- The policy is evaluated server-side on every `/gate` call.
+- The decision is returned to the SDK as `TOOL_BLOCKED` (403); the SDK
+  raises `NullRunToolBlockedError` with `error_code = "NR-T001"`.
+
+The gate **does not inspect tool arguments** — it cannot distinguish
+two calls to the same tool by payload. If you want a narrower rule
+(e.g. "block refunds over $500"), use a typed `tool_parameters`
+predicate: the SDK ships `kwargs` on the wire and the gate evaluates
+a DNF of up to 5 named parameters against Equals / OneOf /
+NumericRange / Regex / Exists matchers. See
+[Human approval → typed predicates](human-approval.md#typed-predicates).
+
+## Why ToolBlock is enforced at the gate
+
+ToolBlock is enforced at the gate: sensitive operations never run
+when the policy engine is unreachable. If the gate returns
+`403 TOOL_BLOCKED` (SDK `error_code = "NR-T001"`), the SDK raises
+before your function body executes. ToolBlock is **always Hard**,
+regardless of the budget's `enforcement_mode`.
+
+## What's NOT in a ToolBlock policy
+
+A ToolBlock policy matches **tool name only** — not:
+
+- prompt content or semantic intent
+- the recipient of a payment (use a typed predicate instead)
+- tool arguments beyond the `kwargs` the SDK ships on the wire
+- the tool's runtime sandbox (that's your infrastructure concern)
+
+Read operations are never sensitive regardless of the tool. The
+canonical name alone decides.
+
+## Where the sensitive list lives
+
+You write the policy in the dashboard under **Policies** (sidebar
+under **Governance**). Click **New policy**, pick **Tool block** as
+the policy type, and the modal shows the **Tool pattern** field
+where you enter the glob(s). The dashboard shows you the canonical
+tool name for every framework integration. Your policy applies to:
+
+- All workflows under the org (default)
+- A specific workflow (scope to `workflow_id`)
+- A specific API key (scope to `api_key_id`)
+
+Per the [aggregation rules](../concepts/policies.md#aggregation):
+ToolBlock patterns **union** across applicable policies — every
+pattern that matches fires.
+
+## Audit trail
+
+When a sensitive tool is blocked, the **audit log** records the
+block with reason `TOOL_BLOCKED` (SDK `error_code = "NR-T001"`),
+the pattern that matched, and the workflow + api_key + tool_name.
+The audit log is hash-chained — see
+[Audit records](../concepts/error-handling.md#audit-trail).
+
+This gives you a complete audit trail of every blocked attempt,
+regardless of whether the block came from your policy or from the
+default `TOOL_BLOCKED` rejection of an unknown tool name.
+
+For sensitive tools you want to allow after explicit human review,
+pair them with an **approval rule** instead of removing them from
+the blocking surface. The approval row in the dashboard gives you
+the audit trail, and the SHA-256 `action_digest` ensures the grant
+is bound to the exact action payload the SDK sent on `/gate`. See
+[Human approval](human-approval.md).
+
+## See also
+
+- [Tool policies](tool-policies.md) — the actual rule structure
+- [Tool catalog](../reference/llm-tool-catalog.md) — recommended
+  patterns with risk ratings
+- [Human approval](../concepts/human-approval.md) — the safer
+  alternative to disabling a ToolBlock rule
+- [Decorators & context managers](../reference/decorators.md) —
+  `@protect` wire payload and how the gate receives `kwargs`
+- [Circuit breaker → fail-CLOSED matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable)
+
+!!! info "Deep dive"
+
+    A pattern is not a regular expression. Alternatives are
+    separated by a pipe, and a pattern with a single wildcard
+    matches both the bare name and any dotted continuation past
+    it, which is what lets one pattern cover a whole server's
+    namespace. A pattern with several wildcards splits on each one
+    and requires the literal segments between them to appear in
+    order. Matching sees the tool name and nothing else, so two
+    calls to the same tool are indistinguishable at this step
+    whatever their payloads.
+
+    Patterns union across every applicable policy at both org and
+    workflow scope. The most-restrictive-wins rule applies within
+    a single policy type, not across types; across types the gate
+    takes the first outcome other than allow in its fixed order,
+    and tool blocking is evaluated ahead of budget reservation, so
+    a blocked call never receives a spending envelope.
+
+    The block is unconditional. A policy's enforcement mode does
+    not soften it, and when the policy set for a key cannot be
+    read, the call is treated as blocked rather than allowed —
+    the trade-off is a refusal that has to be retried over a
+    silent pass that goes unnoticed. Enforcement also applies on
+    the cost-tracking path, so an SDK that does not declare its
+    tools in the request still has the same rules applied before
+    the call's cost is recorded.
+
+    Rules that depend on arguments are a different mechanism. A
+    tool block cannot inspect a refund amount or a recipient;
+    that needs an approval rule with typed predicates, where the
+    grant is bound to a digest of the exact payload and a later
+    change to that payload invalidates the grant.
+
+---
+
 # Source: https://docs.nullrun.io/concepts/api-keys/
 
 title: API keys
@@ -1262,208 +1930,304 @@ unavailable", never as `≈ $0 spent`.
 
 ---
 
-# Source: https://docs.nullrun.io/concepts/sensitive-tools/
+# Source: https://docs.nullrun.io/concepts/human-approval/
 
-title: Sensitive tools
-maturity: stable
-description: How `@protect` plus the server-side ToolBlock policy enforce "this tool needs review" without any SDK-side sensitive list.
-# Sensitive tools
+title: Human approval
+maturity: beta
+description: Bind approvals to a typed BusinessImpact predicate and a SHA-256 action_digest so the grant refuses if the action payload drifts.
+# Human approval
 
-A **sensitive tool** is one that should never run without a human
-paying attention. Sending an email, moving money, deleting a record —
-all of these have consequences the agent can't easily undo.
+Some operations need a human to click **Approve** before they run.
+Sending an email to a customer, moving money, deleting a record —
+operations where you want a paper trail and a conscious decision.
 
-The way to express "this tool needs review" in NullRun is a
-**[ToolBlock policy](tool-policies.md)** — a glob pattern that fails
-the gate at `/gate` evaluation time, regardless of the SDK's local
-context. This page covers the *recommended* patterns and how to wire
-them.
+In the dashboard, pending approvals live under **Approvals** in the
+sidebar. When the agent hits an approval rule, the call pauses. The
+agent stays paused until a human clicks **Approve** or **Deny**, or
+the approval times out.
 
-!!! info "The canonical entry point is `@protect`"
-    Every protected tool is automatically eligible for ToolParameters
-    Approval Rules — `@protect` ships `tool_name + args + kwargs` on
-    the wire, and the backend reads argument values out of `kwargs`
-    by `param_name`. No SDK-side extractor or extra decorator is
-    required.
+## Approval rules — separate from ToolBlock
 
-!!! info "ToolBlock vs typed predicates"
-    Two complementary mechanisms, often confused:
+Approval rules are **not** `ToolBlock` policies with an `action =
+require_approval` field. They are a separate concept with these
+fields:
 
-    - **`ToolBlock` (server-side)** — a policy rule evaluated by
-      the gate on every `/gate` call. The gate fails-CLOSED if it
-      cannot reach Redis or the policy cache to evaluate. This is
-      the canonical "this tool is forbidden" mechanism.
-    - **Typed predicates (`money_amount`, `tool_parameters`)** —
-      built into approval rules in the dashboard. The gate
-      evaluates a DNF over argument values, bound to the
-      SHA-256 `action_digest` for tamper-proof approval. Use these
-      for finer-grained rules ("refunds over $500 need
-      approval", "sends to non-internal recipients need review").
-
-    Use `ToolBlock` for hard rules ("never call `bash`"). Use typed
-    predicates when the rule depends on the call's arguments.
-
-## What a sensitive tool is, in policy terms
-
-There is no built-in tool catalogue shipped by the SDK — every
-enforcement decision is evaluated by the gate on every `/gate` call,
-so you can't accidentally miss a tool you didn't register locally.
-You express "sensitive" with one of two complementary mechanisms:
-
-- **`@protect` (SDK-side, canonical)** — wraps a function and
-  ships `tool_name + args + kwargs` on the wire. The backend
-  reads argument values out of `kwargs` by `param_name` for
-  ToolParameters approval rules. No SDK-side extractor is needed.
-- **`ToolBlock` (server-side)** — a policy rule evaluated by the
-  gate. The gate fails-CLOSED if it cannot reach Redis or the policy
-  cache to evaluate. Use this for hard rules — "never call `bash`".
-- **Approval rules with typed predicates (server-side)** — for
-  finer-grained control, an approval rule references `param_name`
-  and the gate evaluates a DNF of up to 5 named parameters against
-  Equals / OneOf / NumericRange / Regex / Exists matchers. The
-  grant is bound to the SHA-256 `action_digest` of the live
-  payload; the post-approval `/execute` re-check refuses on
-  drift.
-
-For the typed-predicate wiring, see
-[Human approval → typed predicates](human-approval.md#typed-predicates).
-
-Recommended starter patterns (see
-[Tool catalog → Recommended ToolBlock starter list](../reference/llm-tool-catalog.md#recommended-toolblock-starter-list)
-for the maintained list):
-
-| Category | Pattern examples |
+| Field | Purpose |
 |---|---|
-| Money | `mcp://payments/refund*`, `mcp://stripe/charge`, `mcp://stripe/refund` |
-| Email & messaging | `mcp://gmail/send`, `mcp://slack/post`, `send_email` |
-| Database destructive | `mcp://postgres/drop_table`, `mcp://postgres/delete_row`, `execute_sql` |
-| External API writes | `mcp://*/post`, `mcp://*/put`, `mcp://*/delete` |
-| Files & storage | `mcp://s3/delete`, `file_delete`, `bash` |
-| Admin | `mcp://admin/delete_user`, `mcp://admin/disable_user` |
+| `name` | Display name for the rule |
+| `tool_patterns` | Glob patterns matching the tool name |
+| `per_call_threshold_cents` | Projected-cost threshold (estimated tokens × model rate) |
+| `action_predicate` | Typed `BusinessImpact` predicate |
+| `priority` | Ordering for tied rules |
+| `expires_in_seconds` | How long the operator has to decide |
+| `action_label` | Display label shown in the dashboard |
 
-These are the canonical tool names a policy matches against. The
-**exact name** comes from your MCP server / framework integration —
-see the tool catalog for the curated list with risk ratings.
+When an SDK calls a tool that matches an approval rule, the gate
+returns `decision = "require_approval"` and parks the SDK on a
+`threading.Event` until the operator clicks Approve / Deny.
 
-## Why the SDK does not ship a built-in list
+## Predicate kinds
 
-A built-in "sensitive tools" SDK list would force every framework to
-register its tools against NullRun's expectations — and would be
-silently wrong for any tool not on the list. The current model
-inverts this:
+Two predicate fields can fire the same approval rule:
 
-- You write a ToolBlock policy that names the tools you care about.
-- The policy is evaluated server-side on every `/gate` call.
-- The decision is returned to the SDK as `TOOL_BLOCKED` (403); the SDK
-  raises `NullRunToolBlockedError` with `error_code = "NR-T001"`.
+- **`per_call_threshold_cents`** — projected execution cost in
+  cents, evaluated against the SDK-reported `estimated_tokens`.
+- **`action_predicate`** — a typed condition over a structured
+  `BusinessImpact` extracted from the live function call.
 
-The gate **does not inspect tool arguments** — it cannot distinguish
-two calls to the same tool by payload. If you want a narrower rule
-(e.g. "block refunds over $500"), use a typed `tool_parameters`
-predicate: the SDK ships `kwargs` on the wire and the gate evaluates
-a DNF of up to 5 named parameters against Equals / OneOf /
-NumericRange / Regex / Exists matchers. See
-[Human approval → typed predicates](human-approval.md#typed-predicates).
+When both are set, the rule fires only when **both** pass. Either
+may be `None`, in which case it does not contribute. A rule with
+both `None` matches every call.
 
-## Why ToolBlock is enforced at the gate
+### Typed predicates
 
-ToolBlock is enforced at the gate: sensitive operations never run
-when the policy engine is unreachable. If the gate returns
-`403 TOOL_BLOCKED` (SDK `error_code = "NR-T001"`), the SDK raises
-before your function body executes. ToolBlock is **always Hard**,
-regardless of the budget's `enforcement_mode`.
+Two predicate kinds are supported on `action_predicate`:
 
-## What's NOT in a ToolBlock policy
+1. **`money_amount`** — per-call monetary threshold.
+   ```json
+   {
+     "kind": "money_amount",
+     "direction": "outflow",
+     "operator": "gt",
+     "threshold_minor": 5000,
+     "currency": "USD"
+   }
+   ```
 
-A ToolBlock policy matches **tool name only** — not:
+2. **`tool_parameters`** — DNF over up to 5 named
+   parameters with Equals / OneOf / NumericRange / Regex / Exists
+   matchers.
 
-- prompt content or semantic intent
-- the recipient of a payment (use a typed predicate instead)
-- tool arguments beyond the `kwargs` the SDK ships on the wire
-- the tool's runtime sandbox (that's your infrastructure concern)
+   ```json
+   {
+     "kind": "tool_parameters",
+     "trigger_logic": "any",
+     "conditions": [
+       {"param_name": "refund_amount", "matcher": {"kind": "numeric_range", "min": 500, "max": null}},
+       {"param_name": "recipient", "matcher": {"kind": "regex", "pattern": "^(?!internal@).*"}}
+     ]
+   }
+   ```
 
-Read operations are never sensitive regardless of the tool. The
-canonical name alone decides.
+The `tool_parameters` predicate reads values out of `kwargs` the
+SDK ships on `/execute`. Every `@protect`-decorated function ships
+`tool_name + args + kwargs` on the wire — the predicate references
+the value by `param_name` in the dashboard rule editor and the
+gate evaluates it directly. Positional args are dropped; `float` /
+`set` / custom objects are filtered; PII-masked sentinels like
+`"***"` for `password` / `token` / `api_key` keys are stripped
+before wire. No second decorator is needed to make a tool
+eligible for `tool_parameters` rules.
 
-## Where the sensitive list lives
+## `action_digest` — tamper-evident binding
 
-You write the policy in the dashboard under **Policies** (sidebar
-under **Governance**). Click **New policy**, pick **Tool block** as
-the policy type, and the modal shows the **Tool pattern** field
-where you enter the glob(s). The dashboard shows you the canonical
-tool name for every framework integration. Your policy applies to:
+When the gate fires an approval rule with a typed `BusinessImpact`,
+it computes a SHA-256 digest of the canonical-JSON
+`{"kind":"money_amount", direction, operator, threshold_minor,
+currency, extractor_id, extractor_version}` (Money variant) or the
+`ToolCallParams` envelope (ToolCall variant). The digest is stored
+on the approval row.
 
-- All workflows under the org (default)
-- A specific workflow (scope to `workflow_id`)
-- A specific API key (scope to `api_key_id`)
+After the operator clicks Approve, the SDK's post-approval `/execute`
+re-check sends the live `business_impact` and `action_digest` back
+to the gate. The grant consume is atomic — concurrent re-checks are
+serialized, and the gate surfaces `Allow` / `DigestMismatch` /
+`NotFound` / `Expired` / `ReplayRejected` outcomes.
 
-Per the [aggregation rules](../concepts/policies.md#aggregation):
-ToolBlock patterns **union** across applicable policies — every
-pattern that matches fires.
+## Approval resume flow
 
-## Audit trail
+The complete flow, end-to-end:
 
-When a sensitive tool is blocked, the **audit log** records the
-block with reason `TOOL_BLOCKED` (SDK `error_code = "NR-T001"`),
-the pattern that matched, and the workflow + api_key + tool_name.
-The audit log is hash-chained — see
-[Audit records](../concepts/error-handling.md#audit-trail).
+1. SDK sends `/api/v1/gate` with the live `BusinessImpact`. Gate
+   evaluates rules. Match fires.
+2. Gate creates a pending approval record with the `business_impact`,
+   `action_digest`, and an `expires_at` set server-side
+   (clamped `[1, 3600]` s from `expires_in_seconds`). The gateway
+   then emits an `approval_required` alert to configured channels.
+3. Gate returns `decision = "require_approval"` plus `approval_id`,
+   `approval_timeout_seconds`, `approval_expires_at`.
+4. SDK parks on `threading.Event.wait(timeout=approval_timeout_seconds)`.
+5. Operator clicks Approve / Deny in the dashboard (or auto-deny
+   timer fires).
+6. Backend publishes `ApprovalResolved` event on the WS push
+   channel.
+7. SDK wakes the parked thread; agent resumes with the operator's
+   outcome.
+8. SDK auto-consumes the approval row via
+   `POST /api/v1/approvals/{approval_id}/consume` so the row
+   closes on the success path (the prior behaviour left
+   `mode="inline"` rows at `status=APPROVED` past `expires_at`
+   because the consume SQL was only reachable from the
+   `/execute` orchestrator Step 6, which `inline` tools bypass).
+   On the operator-cancel path the row closes via the spawned
+   cancel step instead.
 
-This gives you a complete audit trail of every blocked attempt,
-regardless of whether the block came from your policy or from the
-default `TOOL_BLOCKED` rejection of an unknown tool name.
+If the WS push is silent for `approval_timeout_seconds`, the SDK
+**fails CLOSED**: `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`)
+is raised and the agent dies. A silent network must not silently
+approve a privileged action. There is no `/status` HTTP-poll
+fallback for approvals — deliberate, the operator's word is final.
 
-For sensitive tools you want to allow after explicit human review,
-pair them with an **approval rule** instead of removing them from
-the blocking surface. The approval row in the dashboard gives you
-the audit trail, and the SHA-256 `action_digest` ensures the grant
-is bound to the exact action payload the SDK sent on `/gate`. See
-[Human approval](human-approval.md).
+## What you see in the dashboard
+
+The **Approvals** page lists every pending, approved, denied, and
+expired request. Each row shows:
+
+- The tool the agent wanted to call (e.g. `send_email`)
+- The workflow that requested it
+- The action digest (first 16 hex chars — full digest in tooltip)
+- For typed predicates: the rendered impact summary
+  - `Money`: `Spend $499.00 USD · 4.99× above the $100.00 limit`
+  - `ToolCall`: `tool:stripe.charge` + raw `params` key/value block
+- How long ago it was created
+- How long until `expires_at`
+
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/approvals-light.png"
+       alt="Approvals page listing every pending, approved, denied and expired request.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/approvals-dark.png"
+       alt="Approvals page listing every pending, approved, denied and expired request.">
+  <figcaption class="nr-shot__caption">Approvals</figcaption>
+</figure>
+
+Click an approval to see the full context — what the agent was
+trying to do, the tool's arguments, and any notes you attached.
+
+## How to approve or deny
+
+In the **Approvals** page, click an open request. You see:
+
+1. The agent's goal (what it was trying to accomplish)
+2. The tool it wants to call (e.g. `send_email`)
+3. The typed impact summary or the projected cost
+4. The action digest (the SHA-256 binding)
+5. How long the approval has been pending
+
+Two buttons:
+
+- **Approve** — the gate releases the reservation, the agent's
+  call resumes. On `/execute`, the gate re-checks the
+  `action_digest` against the live payload and refuses on mismatch
+  (returns `DigestMismatch`).
+- **Deny** — the gate rejects, the agent sees `WorkflowKilledInterrupt`
+  (alias `NullRunWorkflowKilledError`). The agent can catch it and
+  clean up; most agents don't.
+
+If you don't click either within the approval's `expires_at` window,
+the request expires. The SDK raises `WorkflowKilledInterrupt`
+(alias `NullRunWorkflowKilledError`) after `approval_timeout_seconds`
+(server-clamped `[1, 3600]` s). The agent can retry or give up.
+
+## Notification channels
+
+When an approval is created, the gateway notifies every active
+channel configured on your org:
+
+- **Slack** — uses your org's installed Slack OAuth.
+- **Webhook** — generic HTTPS POST with HMAC-SHA256 signature
+  (`X-NullRun-Signature`, 5-minute clock-skew tolerance, 10-minute
+  nonce replay defence).
+
+Disable a channel per-user or per-channel under
+**Notifications** in the sidebar (the page has Channels, Alert rules,
+and an Event subscriptions matrix).
+
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/approval-rules-light.png"
+       alt="Approval rules page with the New rule button highlighted in the top right.">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/approval-rules-dark.png"
+       alt="Approval rules page with the New rule button highlighted in the top right.">
+  <figcaption class="nr-shot__caption">Governance · Approval rules · New rule</figcaption>
+</figure>
+
+## Programmatic approval (for automations)
+
+The dashboard is for humans. If you want a CI bot or on-call rotation
+to approve requests programmatically, the same endpoints are
+exposed via REST:
+
+```bash title="approve_via_api.sh"
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/approve" \
+  -H "Authorization: Bearer ***"
+
+# Or deny explicitly
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/deny" \
+  -H "Authorization: Bearer ***"
+```
+
+Both endpoints are idempotent — calling approve on an already-approved
+request returns `409 approval_already_decided`; calling deny twice on
+the same request is a no-op. Use these in your incident-response
+automation: an approval surfaces in Slack, your bot detects the
+`risk_level = high`, and approves or denies based on your runbook.
+
+## When to use approval instead of blocking
+
+Approval makes sense when:
+
+- The operation is sensitive but **you want the agent to be able to
+  do it** under human review (sending customer emails, creating
+  invoices, deploying builds).
+- The blast radius is bounded (a single email vs. an entire
+  database drop).
+- You have someone on-call who can review within minutes.
+
+Blocking (not approval) makes more sense when:
+
+- The operation is never legitimate (`db.drop` in a read-only
+  workflow).
+- The blast radius is unbounded (admin operations, mass deletes).
+- No one is on-call to review approvals in time.
+
+Approval is a feature, not a default. Most teams should default to
+blocking and switch specific patterns to approval as the need
+arises.
+
+## What's logged
+
+Every approval decision is in **Governance → Audit log**. You can
+filter by:
+
+- Approver (which user clicked Approve/Deny)
+- Workflow
+- Tool name
+- Time window
+- Outcome (approved / denied / expired)
+
+The audit log is the source of truth for "who approved this?" —
+both for compliance and for incident review. The action digest is the
+immutable anchor that proves the operator approved the exact payload
+the SDK sent on `/gate` (not "any refund" — the exact amount and
+arguments).
+
+## SDK-side envelope
+
+The `action_digest` is **produced** by the SDK on every `@protect`
+call. The envelope is the canonical NoImpact payload
+(`BusinessImpact.no_impact()` — `{"kind": "none"}`); the SDK
+canonicalises it (compact JSON, `nullrun/v1/business_impact:`
+prefix) and SHA-256-hashes it. The digest flows onto the wire on
+both `/gate` and `/execute`, and the backend re-computes the
+digest from the live payload to verify the grant.
+
+The NoImpact envelope is the same for every `@protect` call — the
+SDK is policy-blind and ships only `tool_name + args + kwargs`.
+Approval rules reference `param_name` in the dashboard to read
+argument values for typed predicates (`money_amount` /
+`tool_parameters`). No SDK-side extractor or factory is needed.
+
+A drift between SDK and backend canonicalisation is a P0 security
+regression covered by the SDK's source-pin tests.
 
 ## See also
 
-- [Tool policies](tool-policies.md) — the actual rule structure
-- [Tool catalog](../reference/llm-tool-catalog.md) — recommended
-  patterns with risk ratings
-- [Human approval](../concepts/human-approval.md) — the safer
-  alternative to disabling a ToolBlock rule
-- [Decorators & context managers](../reference/decorators.md) —
-  `@protect` wire payload and how the gate receives `kwargs`
-- [Circuit breaker → fail-CLOSED matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable)
-
-!!! info "Deep dive"
-
-    A pattern is not a regular expression. Alternatives are
-    separated by a pipe, and a pattern with a single wildcard
-    matches both the bare name and any dotted continuation past
-    it, which is what lets one pattern cover a whole server's
-    namespace. A pattern with several wildcards splits on each one
-    and requires the literal segments between them to appear in
-    order. Matching sees the tool name and nothing else, so two
-    calls to the same tool are indistinguishable at this step
-    whatever their payloads.
-
-    Patterns union across every applicable policy at both org and
-    workflow scope. The most-restrictive-wins rule applies within
-    a single policy type, not across types; across types the gate
-    takes the first outcome other than allow in its fixed order,
-    and tool blocking is evaluated ahead of budget reservation, so
-    a blocked call never receives a spending envelope.
-
-    The block is unconditional. A policy's enforcement mode does
-    not soften it, and when the policy set for a key cannot be
-    read, the call is treated as blocked rather than allowed —
-    the trade-off is a refusal that has to be retried over a
-    silent pass that goes unnoticed. Enforcement also applies on
-    the cost-tracking path, so an SDK that does not declare its
-    tools in the request still has the same rules applied before
-    the call's cost is recorded.
-
-    Rules that depend on arguments are a different mechanism. A
-    tool block cannot inspect a refund amount or a recipient;
-    that needs an approval rule with typed predicates, where the
-    grant is bound to a digest of the exact payload and a later
-    change to that payload invalidates the grant.
+- [Tool policies](tool-policies.md) — `ToolBlock` rules (no
+  `require_approval` action; that's a separate entity)
+- [Sensitive tools](sensitive-tools.md) — when blocking is
+  enough
+- [Workflows → operator controls](workflow.md#how-to-control-one) —
+  Pause / Kill work the same way as approval
+- [API keys](api-keys.md) — how to mint a key bound to a workflow
 
 ---
 
@@ -1914,469 +2678,6 @@ the standard OpenAI / Anthropic / Gemini / Cohere clients.
 
 ---
 
-# Source: https://docs.nullrun.io/concepts/policies/
-
-title: Policies
-maturity: stable
-description: How BudgetLimit, RateLimit, ToolBlock, and LoopDetection policies are aggregated — most-restrictive-wins semantics across scopes.
-# Policies
-
-A **policy** is a rule attached to your organization or a single
-workflow. In the dashboard they live under **Governance → Policies**.
-Each policy answers one question:
-
-- "Is this call allowed, blocked, or does it need a human to approve?"
-
-## What you see in the dashboard
-
-The **Policies** page lists every policy in your org. Each row
-shows:
-
-- **Name** — you set this when you created the policy
-- **Type** — what the policy caps (see the table below)
-- **Scope** — applies to the whole org, or only one workflow
-- **Active** toggle — on/off without deleting
-- **Effective from** — when the policy was last edited
-
-Click a policy to edit it. Changes apply to the next gate call —
-there's no need to redeploy your agent.
-
-## The three policy types
-
-| Type | What it controls | Example value |
-|---|---|---|
-| **BudgetLimit** | Maximum spend per workflow per period | `5000` ($50.00) |
-| **RateLimit** | Maximum calls per minute | `60` (one call per second sustained) |
-| **ToolBlock** | Tools the agent must not call | `["send_*", "db.drop", "stripe.charge"]` |
-
-Each type has a JSON config payload — see the [Tool policies](tool-policies.md)
-page for the glob-match syntax inside `ToolBlock`.
-
-## BudgetLimit — extra fields
-
-A `BudgetLimit` policy can carry these optional fields:
-
-| Field | Default | What it does |
-|---|---|---|
-| `enforcement_mode` | `"Hard"` | `Hard` blocks on budget exceeded. `Soft` allows a bounded overdraft when an active chain is present. |
-| `max_overdraft_cents` | `0` | Maximum overdraft in cents (per-org aggregate). Both `cents` and `percent` apply — the lower cap wins. |
-| `max_overdraft_percent` | `0` | Maximum overdraft as percent of the budget. |
-| `max_chain_duration_seconds` | `3600` | Maximum duration of a chain started under this policy before the gate refuses. |
-
-The gate reads these fields from every applicable `BudgetLimit` and
-uses **most-restrictive-wins**: `enforcement_mode` (Hard > Soft),
-`max_overdraft_cents` (min), `max_overdraft_percent` (min).
-
-### Soft mode requirements
-
-Soft mode requires **all three**:
-
-1. The policy uses `enforcement_mode = Soft` (not Hard)
-2. An **active `chain_id`** exists (declared via `with chain(...)`)
-3. The projected cost stays within `max_overdraft_cents` and
-   `max_overdraft_percent`
-
-If any of the three is missing, soft mode is unavailable and the
-gate behaves as Hard. Multiple parallel chains on the same org share
-one overdraft counter — N concurrent chains do **not** multiply the
-overdraft cap.
-
-A chain dies on the first of: `op="end"`, 5 minutes of `/gate`
-inactivity (idle TTL), or exceeding `max_chain_duration_seconds`.
-Chain time is read server-side, eliminating clock skew between
-backend nodes.
-
-## Aggregation
-
-When two policies in the merged set compete, the engine picks the
-**most restrictive** one for numeric caps and the **union** for tool
-patterns.
-
-| Field | If two policies disagree |
-|---|---|
-| `budget_cents` | The smaller number wins |
-| `max_calls_per_minute` | The smaller number wins |
-| `enforcement_mode` | `Hard` beats `Soft` |
-| `max_overdraft_cents` | The smaller number wins |
-| `max_overdraft_percent` | The smaller number wins |
-| `tool_pattern` / `blocked_tools` / `tools` | Both lists are merged (a tool blocked anywhere is blocked everywhere) |
-
-You can't accidentally un-block a tool the org blocks. There is no
-"allow" rule that overrides a "block" — the system is conservative
-on purpose.
-
-## Org-level vs workflow-level
-
-A policy has one of two scopes:
-
-- **Org** — applies to every workflow in your organization. Useful
-  for "all our agents must block `db.drop`" or "everyone gets 60
-  calls/min".
-- **Workflow** — applies to one workflow only. Useful for "this
-  specific agent gets $500/month" or "this one agent can call
-  `send_email`".
-
-Both scopes apply at the same time. There's no "overrides" — both
-sets of rules run together. The dashboard's **Effective policy** tab
-on a workflow page shows the merged set.
-
-## Templates
-
-The dashboard ships with **templates** — pre-built policies for
-common patterns. To enable one:
-
-1. On the **Policies** page, click **Templates**.
-2. Pick a template (e.g. "Cap dev workflow at 100c/min" or "Block
-   all write tools").
-3. Click **Enable**.
-
-The template materialises as a real policy in your org using its
-config and name. Disable reverses it. Templates save you from
-hand-authoring JSON.
-
-## Plan gating
-
-Some policy features are plan-restricted:
-
-| Feature | Available on |
-|---|---|
-| `BudgetLimit` policies | All plans |
-| `RateLimit` policies | All plans |
-| `ToolBlock` policies | Growth+ |
-| Approval rules with typed predicates | Growth+ |
-
-If you try to create a feature your plan doesn't include, the
-dashboard shows the feature greyed out with an "Upgrade" link.
-
-## Approval rules — separate from ToolBlock
-
-Approval rules are **not** a `ToolBlock` policy with an `action =
-require_approval` field. They are a separate rule object with
-`tool_patterns`, a projected-cost threshold, a typed `BusinessImpact`
-predicate, and operational metadata.
-
-When a rule fires, the gate returns `decision = "require_approval"`
-and the SDK parks until the operator clicks Approve / Deny. See
-[Human approval](human-approval.md) for the full flow, the typed
-`action_digest` binding, and the WebSocket push resume path.
-
-## How to create one
-
-1. **Governance → Policies → New policy**.
-2. Pick the type (BudgetLimit / RateLimit / ToolBlock).
-3. Pick the scope (Org or specific workflow).
-4. Fill in the config. The dashboard validates the JSON in real
-   time and shows errors before you save.
-5. Save. The policy is active immediately.
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../../assets/images/screenshots/policies-list-light.png"
-       alt="Policies list with the New policy button highlighted in the top right.">
-  <img class="nr-shot__dark" src="../../assets/images/screenshots/policies-list-dark.png"
-       alt="Policies list with the New policy button highlighted in the top right.">
-  <figcaption class="nr-shot__caption">Governance · Policies · New policy</figcaption>
-</figure>
-
-To test a new policy before rolling it out broadly, scope it to
-one workflow. The dashboard's **Effective policy** tab on that
-workflow's detail page shows the merged result so you can see exactly
-what your agent will see.
-
-## What gets logged
-
-Every policy decision is recorded in **Governance → Audit log**.
-You can filter by:
-
-- Workflow
-- Decision type (`allow` / `block` / `require_approval`)
-- Time window
-- Tool name (for `ToolBlock` matches)
-
-The audit log is the source of truth for "why did my agent stop
-working at 14:32 yesterday?". Pair it with [Traces](tracing.md) to
-see the exact request that triggered the decision.
-
-## See also
-
-- [Tool policies](tool-policies.md) — the `ToolBlock` matching rules
-- [Budgets](budgets.md) — how `BudgetLimit` interacts with the
-  period rollover
-- [Human approval](human-approval.md) — typed `BusinessImpact` rules
-  that produce `require_approval`
-- [Workflows](workflow.md) — where the merged policy is applied
-
-!!! info "Deep dive"
-
-    The merged view is computed once per policy refresh and is
-    the same value the gate reads on every call, so the set an
-    operator sees on a workflow's effective-policy view is not a
-    second, independent computation that can drift from the one
-    actually enforced. Numeric caps reduce to the smallest value
-    found across every applicable policy, and tool patterns
-    reduce to the union of every applicable list. A tool blocked
-    at one scope cannot be unblocked at another: the merge has no
-    allow arm for a block to lose.
-
-    Decisions resolve in a fixed order, and the first outcome
-    other than allow short-circuits the rest. Tool blocking is
-    evaluated ahead of any budget reservation, so a call refused
-    for its tool name never has a budget envelope minted for it.
-    A tool block is unconditional: whatever `enforcement_mode` a
-    budget policy carries, a matching pattern blocks. Rate
-    limiting at the organization level is authoritative and
-    refuses the call when it cannot be evaluated; the per-key
-    rate limit is a secondary signal that defers to the budget
-    gate rather than refusing a call on its own.
-
-    A per-workflow budget cap is tri-state. No applicable policy
-    means the per-workflow check is skipped entirely, which is a
-    different thing from a cap of zero, which rejects every call.
-    Collapsing the two would let an organization that meant to
-    forbid spending fall through to the organization-wide cap
-    instead.
-
-    Soft enforcement belongs to budgets alone and needs three
-    things at once: the policy set to soft, an active chain, and
-    a projected cost inside both the cent and the percentage
-    overdraft limits. If any is missing the budget behaves as
-    hard. Concurrent chains on one organization share a single
-    overdraft counter, so parallelism does not multiply the
-    allowance. Tool-block policies and approval rules are gated
-    to Growth and above; on plans without the feature the server
-    refuses the mutation, and rules inherited from a higher tier
-    are retained for audit while no new one can be created.
-
----
-
-# Source: https://docs.nullrun.io/concepts/tool-policies/
-
-title: Tool policies
-maturity: stable
-description: Glob patterns for tool names with a 4 KB cap per pattern, union semantics across applicable scopes, and validation traps to avoid.
-# Tool policies
-
-A `ToolBlock` policy decides which tools the agent is allowed to call
-and which it can't. In the dashboard these rules live under a policy
-of type **ToolBlock** — see [Policies](policies.md) for the general
-overview. This page covers how to write the patterns inside the
-policy.
-
-## Where you see it in the dashboard
-
-When you create or edit a policy and pick **ToolBlock** as the
-type, the dashboard shows a JSON editor for the `tool_pattern`,
-`blocked_tools`, or `tools` array. The "Test pattern" preview at the
-bottom lets you paste a tool name and see whether any pattern
-matches — useful for debugging.
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../../assets/images/screenshots/policies-list-light.png"
-       alt="Policies list with the New policy button highlighted in the top right.">
-  <img class="nr-shot__dark" src="../../assets/images/screenshots/policies-list-dark.png"
-       alt="Policies list with the New policy button highlighted in the top right.">
-  <figcaption class="nr-shot__caption">Governance · Policies · New policy</figcaption>
-</figure>
-
-## What a tool name looks like
-
-The agent calls tools by name. The canonical tool name format:
-
-| Type | Format | Example |
-|---|---|---|
-| Built-in tool | lowercase string | `bash`, `file_write`, `execute_code` |
-| MCP tool | `mcp://{server}/{tool}` | `mcp://filesystem/read` |
-| Custom tool | `custom:{name}` | `custom:my_tool` |
-
-The policy matcher is name-based. The SDK sends the tool name to the
-gate, the gate checks it against every active ToolBlock policy, and
-the verdict comes back as `allow`, `block`, or `require_approval`.
-
-## How to write the patterns
-
-Each entry in a ToolBlock policy is one of:
-
-- **Exact name** — `"stripe.charge"` blocks only that one tool.
-- **Glob** — `"send_*"` blocks anything starting with `send_`.
-- **`*` alone** — blocks everything.
-
-Each entry is capped at **4096 bytes**. The cap exists because the
-matcher scans every pattern on every gate call — a 10 MB pattern
-would burn CPU on each call.
-
-The matcher runs case-insensitively against the canonical tool name.
-
-## What a ToolBlock policy does
-
-A ToolBlock policy **blocks** tool calls whose name matches one of
-its patterns. There is no `action = require_approval` field on a
-ToolBlock — for "I want a human to approve before this tool runs",
-create an **approval rule** instead (see
-[Human approval](human-approval.md)). The two are separate rule
-objects; ToolBlock and approval rules don't share a configuration
-schema.
-
-ToolBlock is **always Hard**: it never lets through, regardless of
-the budget's `enforcement_mode`. See
-[Reliability matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable).
-If the gate cannot evaluate the ToolBlock check (Redis or policy
-cache unavailable), it fails closed — `403 TOOL_BLOCKED` (SDK
-`error_code = "NR-T001"`). The agent never runs an unverified
-sensitive operation.
-
-ToolBlock and approval rules are distinct rule objects — they don't
-share a configuration schema. A ToolBlock policy always *blocks*; to
-require human review first, use an approval rule instead.
-
-## A worked example
-
-Suppose your agent has these tools: `tavily_search`, `send_email`,
-`db.write`, `db.drop`, `stripe.charge`, `read_file`.
-
-You want to:
-
-- Allow read-only operations (`tavily_search`, `read_file`)
-- Block destructive operations (`db.drop`, `stripe.charge`)
-- Require approval for any outbound communication (`send_email`)
-- Allow normal DB writes (`db.write`) but block `db.drop`
-
-Two ToolBlock policies and one approval rule:
-
-!!! info "The example below shows the request payload shape — what you POST to the dashboard / API. It's not the storage schema, just the public input format."
-
-```json title="tool_block_policy.json"
-{
-  "policies": [
-    {
-      "name": "Block destructive",
-      "type": "ToolBlock",
-      "scope": "Org",
-      "config": {
-        "tool_pattern": ["db.drop", "stripe.*"]
-      }
-    }
-  ],
-  "approval_rules": [
-    {
-      "name": "Outbound needs approval",
-      "tool_patterns": ["send_email"],
-      "action_label": "send email to customer",
-      "expires_in_seconds": 300
-    }
-  ]
-}
-```
-
-`send_email` now triggers the approval flow (a human clicks
-**Approve** in the dashboard before the call goes through). `db.drop`
-and `stripe.charge` are blocked outright. The two policies do not
-interact — ToolBlock checks and approval-rule checks are independent
-paths in the gate.
-
-## Validation at policy creation
-
-The dashboard rejects invalid patterns at save time:
-
-| Error | Cause | Fix |
-|---|---|---|
-| `400 bare_string_pattern` | `"pattern": "send_*"` instead of `"pattern": ["send_*"]` | Always use an array, even for one entry |
-| `400 pattern_too_long` | An entry longer than the per-pattern byte cap | Split into multiple patterns |
-| `400 invalid_glob` | Contains control characters | Remove `\n`, `\r`, `\t` |
-
-## Plan gating
-
-`ToolBlock` policies require the Custom Policies feature, which is
-on **Growth+** plans. Lite and Starter can have `BudgetLimit` and
-`RateLimit` policies, but not ToolBlock.
-
-**Approval rules** (separate from ToolBlock) are gated by the
-`approvals` plan feature. The per-tier cap matches:
-
-| Plan | Approval rules allowed | Why |
-|---|---|---|
-| Lite | 0 | `approvals` feature disabled |
-| Starter | 0 | `approvals` feature disabled (server-side invariant: `approval_rules > 0 ⇒ approvals == true`) |
-| Growth | 20 | `approvals` enabled |
-| Scale | unlimited | `approvals` enabled, no cap |
-| Enterprise | unlimited | `approvals` enabled, no cap |
-
-The gate enforces `approval_rules = 0` server-side on Lite and
-Starter — even if you mint a key on a higher tier and downgrade,
-existing rules are kept (for audit) but no new rule can be created
-until the plan is upgraded back.
-
-On Lite / Starter, the dashboard shows ToolBlock policy creation
-greyed out with an "Upgrade" link.
-
-## How to debug a block you didn't expect
-
-If your agent reports `error_code = "NR-T001"` (wire `TOOL_BLOCKED`) on
-a call you think should be allowed:
-
-1. Open the workflow in the dashboard.
-2. Click **Effective policy**. The merged set shows every ToolBlock
-   pattern that could match.
-3. Open the **Audit log** and filter by `decision = block` and
-   the tool name. The log shows which pattern matched.
-4. If a pattern is too broad (`*` matches everything), narrow it
-   in the policy editor.
-5. If the pattern is wrong entirely, deactivate the policy and
-   re-create it with the correct list.
-
-## See also
-
-- [Policies](policies.md) — the dashboard view, aggregation rules,
-  and most-restrictive-wins semantics
-- [Sensitive tools](sensitive-tools.md) — the policy-driven way to
-  express "this tool needs review" (not a built-in SDK list)
-- [Tool catalog](../reference/llm-tool-catalog.md) — common tool
-  names with risk ratings
-- [Human approval](human-approval.md) — the approval-rule path,
-  distinct from ToolBlock
-
-!!! info "Deep dive"
-
-    A ToolBlock check operates on the canonical tool name and nothing
-    else. The gate resolves the effective tool list from the request
-    before evaluating anything, so a call carrying one tool and a call
-    carrying a list are treated alike. Patterns are collected from the
-    `tool_pattern`, `blocked_tools` and `tools` keys, trimmed and
-    de-duplicated, so `"bash"` and `"bash "` collapse into one entry.
-    Matching runs case-insensitively against the canonical name, and
-    control characters in either the incoming tool name or a pattern
-    are rejected before the check runs.
-
-    The pattern language is small. `*` is the only metacharacter: it
-    matches any run of characters, so `send_*` matches anything
-    starting with `send_` and `bash.*` matches the bare name `bash`
-    as well as dotted continuations like `bash.foo` and `bash.foo.bar`.
-    A pattern with several stars, such as `*.drop_*`, matches when
-    every literal segment appears in order, which is why `*.drop_*`
-    matches `s3.drop_table` but not `s3.execute_drop`. `|` collapses
-    several alternatives into a single entry. Neither `?` nor `**`
-    is supported — both are matched as ordinary characters — and a
-    bare literal matches only itself, never a substring. Each entry is
-    capped at 4096 bytes, bounding the work the matcher does on every
-    gate call.
-
-    ToolBlock is always hard, independent of a budget's enforcement
-    mode, and it is evaluated ahead of rate-limit and budget
-    accounting, so a blocked call never receives a budget envelope. If
-    the check cannot be evaluated at all, the gate fails closed. A
-    block reports the pattern that fired, which is what the audit log
-    records, so an unexpected block can always be traced to one entry.
-
-    Validation at creation time rejects the configurations that would
-    otherwise mean "block nothing": an empty string, an empty array,
-    an empty config object, and the plural `tool_patterns` key. A typo
-    such as `block_tools` or `blocked_tool` is an error rather than a
-    silently ignored rule. Because `*` on its own blocks everything,
-    narrowing a policy is the operator's responsibility, and the
-    merged effective set is what the dashboard shows before a change
-    ships. Matching never inspects tool arguments: a rule is about
-    which tool runs, not what it is called with.
-
----
-
 # Source: https://docs.nullrun.io/concepts/error-handling/
 
 title: Error handling
@@ -2744,507 +3045,6 @@ arm above.
     `@nullrun.on_error` hook fires for every `NullRunError`,
     including kill; filter on the kill error code if you would
     rather not see it in your error tracker.
-
----
-
-# Source: https://docs.nullrun.io/concepts/human-approval/
-
-title: Human approval
-maturity: beta
-description: Bind approvals to a typed BusinessImpact predicate and a SHA-256 action_digest so the grant refuses if the action payload drifts.
-# Human approval
-
-Some operations need a human to click **Approve** before they run.
-Sending an email to a customer, moving money, deleting a record —
-operations where you want a paper trail and a conscious decision.
-
-In the dashboard, pending approvals live under **Approvals** in the
-sidebar. When the agent hits an approval rule, the call pauses. The
-agent stays paused until a human clicks **Approve** or **Deny**, or
-the approval times out.
-
-## Approval rules — separate from ToolBlock
-
-Approval rules are **not** `ToolBlock` policies with an `action =
-require_approval` field. They are a separate concept with these
-fields:
-
-| Field | Purpose |
-|---|---|
-| `name` | Display name for the rule |
-| `tool_patterns` | Glob patterns matching the tool name |
-| `per_call_threshold_cents` | Projected-cost threshold (estimated tokens × model rate) |
-| `action_predicate` | Typed `BusinessImpact` predicate |
-| `priority` | Ordering for tied rules |
-| `expires_in_seconds` | How long the operator has to decide |
-| `action_label` | Display label shown in the dashboard |
-
-When an SDK calls a tool that matches an approval rule, the gate
-returns `decision = "require_approval"` and parks the SDK on a
-`threading.Event` until the operator clicks Approve / Deny.
-
-## Predicate kinds
-
-Two predicate fields can fire the same approval rule:
-
-- **`per_call_threshold_cents`** — projected execution cost in
-  cents, evaluated against the SDK-reported `estimated_tokens`.
-- **`action_predicate`** — a typed condition over a structured
-  `BusinessImpact` extracted from the live function call.
-
-When both are set, the rule fires only when **both** pass. Either
-may be `None`, in which case it does not contribute. A rule with
-both `None` matches every call.
-
-### Typed predicates
-
-Two predicate kinds are supported on `action_predicate`:
-
-1. **`money_amount`** — per-call monetary threshold.
-   ```json
-   {
-     "kind": "money_amount",
-     "direction": "outflow",
-     "operator": "gt",
-     "threshold_minor": 5000,
-     "currency": "USD"
-   }
-   ```
-
-2. **`tool_parameters`** — DNF over up to 5 named
-   parameters with Equals / OneOf / NumericRange / Regex / Exists
-   matchers.
-
-   ```json
-   {
-     "kind": "tool_parameters",
-     "trigger_logic": "any",
-     "conditions": [
-       {"param_name": "refund_amount", "matcher": {"kind": "numeric_range", "min": 500, "max": null}},
-       {"param_name": "recipient", "matcher": {"kind": "regex", "pattern": "^(?!internal@).*"}}
-     ]
-   }
-   ```
-
-The `tool_parameters` predicate reads values out of `kwargs` the
-SDK ships on `/execute`. Every `@protect`-decorated function ships
-`tool_name + args + kwargs` on the wire — the predicate references
-the value by `param_name` in the dashboard rule editor and the
-gate evaluates it directly. Positional args are dropped; `float` /
-`set` / custom objects are filtered; PII-masked sentinels like
-`"***"` for `password` / `token` / `api_key` keys are stripped
-before wire. No second decorator is needed to make a tool
-eligible for `tool_parameters` rules.
-
-## `action_digest` — tamper-evident binding
-
-When the gate fires an approval rule with a typed `BusinessImpact`,
-it computes a SHA-256 digest of the canonical-JSON
-`{"kind":"money_amount", direction, operator, threshold_minor,
-currency, extractor_id, extractor_version}` (Money variant) or the
-`ToolCallParams` envelope (ToolCall variant). The digest is stored
-on the approval row.
-
-After the operator clicks Approve, the SDK's post-approval `/execute`
-re-check sends the live `business_impact` and `action_digest` back
-to the gate. The grant consume is atomic — concurrent re-checks are
-serialized, and the gate surfaces `Allow` / `DigestMismatch` /
-`NotFound` / `Expired` / `ReplayRejected` outcomes.
-
-## Approval resume flow
-
-The complete flow, end-to-end:
-
-1. SDK sends `/api/v1/gate` with the live `BusinessImpact`. Gate
-   evaluates rules. Match fires.
-2. Gate creates a pending approval record with the `business_impact`,
-   `action_digest`, and an `expires_at` set server-side
-   (clamped `[1, 3600]` s from `expires_in_seconds`). The gateway
-   then emits an `approval_required` alert to configured channels.
-3. Gate returns `decision = "require_approval"` plus `approval_id`,
-   `approval_timeout_seconds`, `approval_expires_at`.
-4. SDK parks on `threading.Event.wait(timeout=approval_timeout_seconds)`.
-5. Operator clicks Approve / Deny in the dashboard (or auto-deny
-   timer fires).
-6. Backend publishes `ApprovalResolved` event on the WS push
-   channel.
-7. SDK wakes the parked thread; agent resumes with the operator's
-   outcome.
-8. SDK auto-consumes the approval row via
-   `POST /api/v1/approvals/{approval_id}/consume` so the row
-   closes on the success path (the prior behaviour left
-   `mode="inline"` rows at `status=APPROVED` past `expires_at`
-   because the consume SQL was only reachable from the
-   `/execute` orchestrator Step 6, which `inline` tools bypass).
-   On the operator-cancel path the row closes via the spawned
-   cancel step instead.
-
-If the WS push is silent for `approval_timeout_seconds`, the SDK
-**fails CLOSED**: `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`)
-is raised and the agent dies. A silent network must not silently
-approve a privileged action. There is no `/status` HTTP-poll
-fallback for approvals — deliberate, the operator's word is final.
-
-## What you see in the dashboard
-
-The **Approvals** page lists every pending, approved, denied, and
-expired request. Each row shows:
-
-- The tool the agent wanted to call (e.g. `send_email`)
-- The workflow that requested it
-- The action digest (first 16 hex chars — full digest in tooltip)
-- For typed predicates: the rendered impact summary
-  - `Money`: `Spend $499.00 USD · 4.99× above the $100.00 limit`
-  - `ToolCall`: `tool:stripe.charge` + raw `params` key/value block
-- How long ago it was created
-- How long until `expires_at`
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../../assets/images/screenshots/approvals-light.png"
-       alt="Approvals page listing every pending, approved, denied and expired request.">
-  <img class="nr-shot__dark" src="../../assets/images/screenshots/approvals-dark.png"
-       alt="Approvals page listing every pending, approved, denied and expired request.">
-  <figcaption class="nr-shot__caption">Approvals</figcaption>
-</figure>
-
-Click an approval to see the full context — what the agent was
-trying to do, the tool's arguments, and any notes you attached.
-
-## How to approve or deny
-
-In the **Approvals** page, click an open request. You see:
-
-1. The agent's goal (what it was trying to accomplish)
-2. The tool it wants to call (e.g. `send_email`)
-3. The typed impact summary or the projected cost
-4. The action digest (the SHA-256 binding)
-5. How long the approval has been pending
-
-Two buttons:
-
-- **Approve** — the gate releases the reservation, the agent's
-  call resumes. On `/execute`, the gate re-checks the
-  `action_digest` against the live payload and refuses on mismatch
-  (returns `DigestMismatch`).
-- **Deny** — the gate rejects, the agent sees `WorkflowKilledInterrupt`
-  (alias `NullRunWorkflowKilledError`). The agent can catch it and
-  clean up; most agents don't.
-
-If you don't click either within the approval's `expires_at` window,
-the request expires. The SDK raises `WorkflowKilledInterrupt`
-(alias `NullRunWorkflowKilledError`) after `approval_timeout_seconds`
-(server-clamped `[1, 3600]` s). The agent can retry or give up.
-
-## Notification channels
-
-When an approval is created, the gateway notifies every active
-channel configured on your org:
-
-- **Slack** — uses your org's installed Slack OAuth.
-- **Webhook** — generic HTTPS POST with HMAC-SHA256 signature
-  (`X-NullRun-Signature`, 5-minute clock-skew tolerance, 10-minute
-  nonce replay defence).
-
-Disable a channel per-user or per-channel under
-**Notifications** in the sidebar (the page has Channels, Alert rules,
-and an Event subscriptions matrix).
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../../assets/images/screenshots/approval-rules-light.png"
-       alt="Approval rules page with the New rule button highlighted in the top right.">
-  <img class="nr-shot__dark" src="../../assets/images/screenshots/approval-rules-dark.png"
-       alt="Approval rules page with the New rule button highlighted in the top right.">
-  <figcaption class="nr-shot__caption">Governance · Approval rules · New rule</figcaption>
-</figure>
-
-## Programmatic approval (for automations)
-
-The dashboard is for humans. If you want a CI bot or on-call rotation
-to approve requests programmatically, the same endpoints are
-exposed via REST:
-
-```bash title="approve_via_api.sh"
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/approve" \
-  -H "Authorization: Bearer ***"
-
-# Or deny explicitly
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/deny" \
-  -H "Authorization: Bearer ***"
-```
-
-Both endpoints are idempotent — calling approve on an already-approved
-request returns `409 approval_already_decided`; calling deny twice on
-the same request is a no-op. Use these in your incident-response
-automation: an approval surfaces in Slack, your bot detects the
-`risk_level = high`, and approves or denies based on your runbook.
-
-## When to use approval instead of blocking
-
-Approval makes sense when:
-
-- The operation is sensitive but **you want the agent to be able to
-  do it** under human review (sending customer emails, creating
-  invoices, deploying builds).
-- The blast radius is bounded (a single email vs. an entire
-  database drop).
-- You have someone on-call who can review within minutes.
-
-Blocking (not approval) makes more sense when:
-
-- The operation is never legitimate (`db.drop` in a read-only
-  workflow).
-- The blast radius is unbounded (admin operations, mass deletes).
-- No one is on-call to review approvals in time.
-
-Approval is a feature, not a default. Most teams should default to
-blocking and switch specific patterns to approval as the need
-arises.
-
-## What's logged
-
-Every approval decision is in **Governance → Audit log**. You can
-filter by:
-
-- Approver (which user clicked Approve/Deny)
-- Workflow
-- Tool name
-- Time window
-- Outcome (approved / denied / expired)
-
-The audit log is the source of truth for "who approved this?" —
-both for compliance and for incident review. The action digest is the
-immutable anchor that proves the operator approved the exact payload
-the SDK sent on `/gate` (not "any refund" — the exact amount and
-arguments).
-
-## SDK-side envelope
-
-The `action_digest` is **produced** by the SDK on every `@protect`
-call. The envelope is the canonical NoImpact payload
-(`BusinessImpact.no_impact()` — `{"kind": "none"}`); the SDK
-canonicalises it (compact JSON, `nullrun/v1/business_impact:`
-prefix) and SHA-256-hashes it. The digest flows onto the wire on
-both `/gate` and `/execute`, and the backend re-computes the
-digest from the live payload to verify the grant.
-
-The NoImpact envelope is the same for every `@protect` call — the
-SDK is policy-blind and ships only `tool_name + args + kwargs`.
-Approval rules reference `param_name` in the dashboard to read
-argument values for typed predicates (`money_amount` /
-`tool_parameters`). No SDK-side extractor or factory is needed.
-
-A drift between SDK and backend canonicalisation is a P0 security
-regression covered by the SDK's source-pin tests.
-
-## See also
-
-- [Tool policies](tool-policies.md) — `ToolBlock` rules (no
-  `require_approval` action; that's a separate entity)
-- [Sensitive tools](sensitive-tools.md) — when blocking is
-  enough
-- [Workflows → operator controls](workflow.md#how-to-control-one) —
-  Pause / Kill work the same way as approval
-- [API keys](api-keys.md) — how to mint a key bound to a workflow
-
----
-
-# Source: https://docs.nullrun.io/concepts/approvals/
-
-# Approvals (UI surface)
-
-The **Approvals** page is where a human reviews and decides every
-`require_approval` decision the gate returns. It lives at
-`/control-center/approvals` (sidebar badge counts pending requests)
-and is gated by the `approvals` plan feature — Growth and above.
-
-This page covers the **UI surface** — terminal-feed rows, the
-friction-level approve flow, the click-to-Dialog detail panel, and
-the history tab. The wire contract (action_digest, typed
-predicates, plan-tier gating) lives in [Human approval](human-approval.md).
-Programmatic decision-making (REST endpoints, idempotency, retry
-semantics) is at the bottom of this page; the API reference is in
-[HTTP API → approvals](../reference/http-api.md#approvals).
-
-## Page layout — terminal feed
-
-The pending queue renders as a **terminal feed**: hairline-divided
-rows in the spirit of the audit log + terminal-window vocabulary,
-not bordered cards. Each row reads as a continuous log line; the
-operator's eye locks onto the icon-prefix marker before parsing the
-rest of the row.
-
-### Status prefix markers
-
-The first character of every row is a marker that encodes status
-and tone:
-
-| Marker | Tone | Status |
-|---|---|---|
-| `●` | state-block | `pending` |
-| `✓` | state-allow | `approved` (history tab) |
-| `✗` | state-flag | `denied` (history tab) |
-| `⌧` | fg-muted | `expired` / `consumed` (history tab) |
-
-### Row anatomy
-
-From left to right:
-
-1. **Prefix marker + workflow name + actor label** ("requested by X").
-2. **Hero amount** — for money-kind approvals, the spend line is
-   on the row with the ▲ N× above $X limit relationship encoder
-   so the operator sees both the value and why it's over the
-   limit in one glance. Tabular-nums at 28px semibold.
-3. **Why this needs approval** — the rule label, deep-linkable to
-   the rule's config page.
-4. **Inline live countdown** — a colour-shifting bar + pipe +
-   tabular `mm:ss` label that shrinks as the review window runs
-   out. Colour flips green → amber → coral at 40% / 15% of the
-   remaining window.
-5. **Action button(s)** — see below.
-
-For **tool-call approvals** (money kind = `tool_call`), the hero
-amount is replaced by the operator-approved tool name + the raw
-parameter bag, so the operator sees exactly what the SDK is about
-to run. The `action_digest` is the tamper-evident binding, not a
-display artefact — the dashboard shows the bag verbatim, never
-reconstructed from the digest.
-
-When the SDK forwarded `tool_class="mcp"` annotations, the row
-also renders a class badge (`MCP tool` / `builtin` / `custom` /
-`unknown`) plus a chip row for `destructive`, `read-only`,
-`open-world` (each chip shows `yes` / `no` / `unknown`).
-
-## Friction-level approve flow
-
-The action button label encodes the friction level — operators
-never fire an action without seeing the value they are approving:
-
-- **Low risk** → single-click `[ approve ]`.
-- **Medium risk** → `[ approve ]` → `[ type 499.00 to confirm ]`.
-- **High risk** → `[ approve ]` → `[ type 1,000.00 ]` →
-  `[ type refund_customer to confirm ]`.
-
-The amount being approved is surfaced inside the button label
-itself, not only in the confirmation step. The deny path is a
-single click on every risk level — see the human-approval page for
-why deny is unconditional.
-
-## Click-to-Dialog
-
-Clicking anywhere on a row (outside the action button) opens a
-Dialog with the full detail panel:
-
-- Hero summary (amount / tool name + parameter bag).
-- **Why this needs approval** — the matched rule's human-readable
-  predicate (`amount ≥ $50 USD`, `ANY(amount ≥ 5000, region IN [EU,US])`).
-- **Technical details** accordion — open by default. Rows:
-  Action fingerprint, Execution ID, Rule + rule label, Tool
-  patterns, Per-call threshold, Rule priority (lower = higher),
-  Review window, Trust level chip (`typed impact` /
-  `LLM-cost only`), Rule created, and the rendered Action
-  predicate.
-
-The Dialog intentionally has **no Approve / Deny controls** — the
-friction-level flow lives on the row, and the Dialog is for
-review, not decision.
-
-## History tab
-
-The history view is the same page at `?tab=history` — a tab strip
-in the page header switches between **Pending** (default) and
-**History**.
-
-History rows are filtered to the last 30 days by default and
-support the same search / status filters as the pending feed.
-Resolved rows are grouped by outcome (`approved`, `denied`,
-`expired`, `consumed`) with the same prefix-marker vocabulary
-(✓ / ✗ / ⌧) so an operator can scan a week of decisions in one
-glance.
-
-### Bulk toolbar
-
-A hairline-divided toolbar above the feed exposes **Approve all**
-and **Deny all** when more than one row is selected. Both bulk
-actions require the same friction-level confirmations as the
-single-row flow.
-
-## Page chrome
-
-- **Plan gate** — the page itself renders a `TierGate` upgrade
-  prompt for plans without the `approvals` feature. The sidebar
-  link is also hidden for those plans.
-- **SSE live update** — every new approval request lands in the
-  feed within a few seconds without refresh; the badge count in
-  the sidebar updates in lockstep.
-- **Audit trail** — every approve / deny decision is recorded in
-  the audit log (`Audit log` under **Governance**) with the
-  decided_by UUID, decided_at timestamp, and the operator label
-  (or `System` for server-side expiry).
-
-## Programmatic approval
-
-For CI bots and on-call rotations, the same endpoints are exposed
-via REST and the page chrome has no opinion:
-
-```bash title="approve_via_api.sh"
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/approve" \
-  -H "Authorization: Bearer ***"
-
-# Or deny explicitly
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/deny" \
-  -H "Authorization: Bearer ***"
-```
-
-The full endpoint catalog — idempotency rules (`409
-approval_already_decided`), the post-approval `/execute`
-binding, and digest-mismatch drift cases — is in
-[HTTP API → approvals](../reference/http-api.md#approvals).
-
-## Where to read next
-
-- [Human approval](human-approval.md) — wire contract, action
-  digest, typed predicates, plan-tier gating.
-- [HTTP API → approvals](../reference/http-api.md#approvals) —
-  REST endpoints for programmatic decision-making.
-- [Audit log](error-handling.md#audit-trail) — every decision
-  lands in the hash-chained audit log; the operator + `decided_by`
-  UUID + `decided_at` are searchable.
-
-!!! info "Deep dive"
-
-    The approval flow is two-phase. The gate returns
-    `require_approval`, the operator decides, and the waiting SDK is
-    resumed by a push once the decision lands. Each approval row is
-    bound to a digest of the action payload it was raised for, and the
-    post-approval execute re-check recomputes that digest and refuses
-    any call that does not match. An approved grant therefore cannot be
-    redirected at a different action before it is spent.
-
-    A decision is applied atomically: the outcome and the consumption
-    stamp move together, so no reader can observe a half-decided row.
-    Approving releases the pending reservation and decrements the
-    outstanding-approval count as part of the same operation. Rows are
-    scoped to the organization when they are read, so an identifier
-    belonging to another organization reads as absent rather than
-    forbidden, and the response gives away nothing about whether it
-    exists.
-
-    Expiry runs on a sweep rather than on the reader clock. Pending
-    rows past their window become expired and are attributed to the
-    system; approved rows that are no longer usable are closed
-    separately, and closing them preserves the original decider and
-    timestamp so a later automated transition cannot overwrite an
-    explicit human decision.
-
-    The push to the waiting SDK is best-effort, and a missed push is
-    recovered by a periodic reconciliation pass. Audit emission is
-    also best-effort: a transient failure there never blocks the
-    decision itself. The stored decision is a typed value rather than
-    free text, and the friction level the operator had to clear is
-    recorded alongside it. Denial is terminal, and the SDK raises
-    `WorkflowKilledInterrupt`. The auto-consume path reports consumed,
-    already-consumed, and not-approved distinctly, and the SDK treats
-    all three as success.
 
 ---
 
@@ -3683,6 +3483,206 @@ probe scheduler on it.
     reads every source belonging to the organization rather than one
     page of them, so a large tenant pays proportionally more sweep
     work while its own footprint stays bounded.
+
+---
+
+# Source: https://docs.nullrun.io/concepts/approvals/
+
+# Approvals (UI surface)
+
+The **Approvals** page is where a human reviews and decides every
+`require_approval` decision the gate returns. It lives at
+`/control-center/approvals` (sidebar badge counts pending requests)
+and is gated by the `approvals` plan feature — Growth and above.
+
+This page covers the **UI surface** — terminal-feed rows, the
+friction-level approve flow, the click-to-Dialog detail panel, and
+the history tab. The wire contract (action_digest, typed
+predicates, plan-tier gating) lives in [Human approval](human-approval.md).
+Programmatic decision-making (REST endpoints, idempotency, retry
+semantics) is at the bottom of this page; the API reference is in
+[HTTP API → approvals](../reference/http-api.md#approvals).
+
+## Page layout — terminal feed
+
+The pending queue renders as a **terminal feed**: hairline-divided
+rows in the spirit of the audit log + terminal-window vocabulary,
+not bordered cards. Each row reads as a continuous log line; the
+operator's eye locks onto the icon-prefix marker before parsing the
+rest of the row.
+
+### Status prefix markers
+
+The first character of every row is a marker that encodes status
+and tone:
+
+| Marker | Tone | Status |
+|---|---|---|
+| `●` | state-block | `pending` |
+| `✓` | state-allow | `approved` (history tab) |
+| `✗` | state-flag | `denied` (history tab) |
+| `⌧` | fg-muted | `expired` / `consumed` (history tab) |
+
+### Row anatomy
+
+From left to right:
+
+1. **Prefix marker + workflow name + actor label** ("requested by X").
+2. **Hero amount** — for money-kind approvals, the spend line is
+   on the row with the ▲ N× above $X limit relationship encoder
+   so the operator sees both the value and why it's over the
+   limit in one glance. Tabular-nums at 28px semibold.
+3. **Why this needs approval** — the rule label, deep-linkable to
+   the rule's config page.
+4. **Inline live countdown** — a colour-shifting bar + pipe +
+   tabular `mm:ss` label that shrinks as the review window runs
+   out. Colour flips green → amber → coral at 40% / 15% of the
+   remaining window.
+5. **Action button(s)** — see below.
+
+For **tool-call approvals** (money kind = `tool_call`), the hero
+amount is replaced by the operator-approved tool name + the raw
+parameter bag, so the operator sees exactly what the SDK is about
+to run. The `action_digest` is the tamper-evident binding, not a
+display artefact — the dashboard shows the bag verbatim, never
+reconstructed from the digest.
+
+When the SDK forwarded `tool_class="mcp"` annotations, the row
+also renders a class badge (`MCP tool` / `builtin` / `custom` /
+`unknown`) plus a chip row for `destructive`, `read-only`,
+`open-world` (each chip shows `yes` / `no` / `unknown`).
+
+## Friction-level approve flow
+
+The action button label encodes the friction level — operators
+never fire an action without seeing the value they are approving:
+
+- **Low risk** → single-click `[ approve ]`.
+- **Medium risk** → `[ approve ]` → `[ type 499.00 to confirm ]`.
+- **High risk** → `[ approve ]` → `[ type 1,000.00 ]` →
+  `[ type refund_customer to confirm ]`.
+
+The amount being approved is surfaced inside the button label
+itself, not only in the confirmation step. The deny path is a
+single click on every risk level — see the human-approval page for
+why deny is unconditional.
+
+## Click-to-Dialog
+
+Clicking anywhere on a row (outside the action button) opens a
+Dialog with the full detail panel:
+
+- Hero summary (amount / tool name + parameter bag).
+- **Why this needs approval** — the matched rule's human-readable
+  predicate (`amount ≥ $50 USD`, `ANY(amount ≥ 5000, region IN [EU,US])`).
+- **Technical details** accordion — open by default. Rows:
+  Action fingerprint, Execution ID, Rule + rule label, Tool
+  patterns, Per-call threshold, Rule priority (lower = higher),
+  Review window, Trust level chip (`typed impact` /
+  `LLM-cost only`), Rule created, and the rendered Action
+  predicate.
+
+The Dialog intentionally has **no Approve / Deny controls** — the
+friction-level flow lives on the row, and the Dialog is for
+review, not decision.
+
+## History tab
+
+The history view is the same page at `?tab=history` — a tab strip
+in the page header switches between **Pending** (default) and
+**History**.
+
+History rows are filtered to the last 30 days by default and
+support the same search / status filters as the pending feed.
+Resolved rows are grouped by outcome (`approved`, `denied`,
+`expired`, `consumed`) with the same prefix-marker vocabulary
+(✓ / ✗ / ⌧) so an operator can scan a week of decisions in one
+glance.
+
+### Bulk toolbar
+
+A hairline-divided toolbar above the feed exposes **Approve all**
+and **Deny all** when more than one row is selected. Both bulk
+actions require the same friction-level confirmations as the
+single-row flow.
+
+## Page chrome
+
+- **Plan gate** — the page itself renders a `TierGate` upgrade
+  prompt for plans without the `approvals` feature. The sidebar
+  link is also hidden for those plans.
+- **SSE live update** — every new approval request lands in the
+  feed within a few seconds without refresh; the badge count in
+  the sidebar updates in lockstep.
+- **Audit trail** — every approve / deny decision is recorded in
+  the audit log (`Audit log` under **Governance**) with the
+  decided_by UUID, decided_at timestamp, and the operator label
+  (or `System` for server-side expiry).
+
+## Programmatic approval
+
+For CI bots and on-call rotations, the same endpoints are exposed
+via REST and the page chrome has no opinion:
+
+```bash title="approve_via_api.sh"
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/approve" \
+  -H "Authorization: Bearer ***"
+
+# Or deny explicitly
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/deny" \
+  -H "Authorization: Bearer ***"
+```
+
+The full endpoint catalog — idempotency rules (`409
+approval_already_decided`), the post-approval `/execute`
+binding, and digest-mismatch drift cases — is in
+[HTTP API → approvals](../reference/http-api.md#approvals).
+
+## Where to read next
+
+- [Human approval](human-approval.md) — wire contract, action
+  digest, typed predicates, plan-tier gating.
+- [HTTP API → approvals](../reference/http-api.md#approvals) —
+  REST endpoints for programmatic decision-making.
+- [Audit log](error-handling.md#audit-trail) — every decision
+  lands in the hash-chained audit log; the operator + `decided_by`
+  UUID + `decided_at` are searchable.
+
+!!! info "Deep dive"
+
+    The approval flow is two-phase. The gate returns
+    `require_approval`, the operator decides, and the waiting SDK is
+    resumed by a push once the decision lands. Each approval row is
+    bound to a digest of the action payload it was raised for, and the
+    post-approval execute re-check recomputes that digest and refuses
+    any call that does not match. An approved grant therefore cannot be
+    redirected at a different action before it is spent.
+
+    A decision is applied atomically: the outcome and the consumption
+    stamp move together, so no reader can observe a half-decided row.
+    Approving releases the pending reservation and decrements the
+    outstanding-approval count as part of the same operation. Rows are
+    scoped to the organization when they are read, so an identifier
+    belonging to another organization reads as absent rather than
+    forbidden, and the response gives away nothing about whether it
+    exists.
+
+    Expiry runs on a sweep rather than on the reader clock. Pending
+    rows past their window become expired and are attributed to the
+    system; approved rows that are no longer usable are closed
+    separately, and closing them preserves the original decider and
+    timestamp so a later automated transition cannot overwrite an
+    explicit human decision.
+
+    The push to the waiting SDK is best-effort, and a missed push is
+    recovered by a periodic reconciliation pass. Audit emission is
+    also best-effort: a transient failure there never blocks the
+    decision itself. The stored decision is a typed value rather than
+    free text, and the friction level the operator had to clear is
+    recorded alongside it. Denial is terminal, and the SDK raises
+    `WorkflowKilledInterrupt`. The auto-consume path reports consumed,
+    already-consumed, and not-approved distinctly, and the SDK treats
+    all three as success.
 
 ---
 
@@ -7629,6 +7629,149 @@ approval for sends to non-`@internal` addresses"), use the typed
 
 ---
 
+# Source: https://docs.nullrun.io/glossary/
+
+# Glossary
+
+The vocabulary NullRun uses, in one place. Each entry says what the
+term means and links to the page that goes deeper on it.
+
+## Enforcement
+
+**Gate**
+:   The check that runs before a supported tool or model call executes.
+    It returns one of three decisions — `allow`, `block`, or
+    `require_approval` — and it is the only thing standing between an
+    agent's intent and its side effects. See
+    [Circuit breaker](concepts/circuit-breaker.md).
+
+**Policy**
+:   A rule attached to your organization or to a single workflow. Each
+    policy answers one enforcement question, and the applicable ones
+    are aggregated most-restrictive-wins across scopes. The four types
+    are `BudgetLimit`, `RateLimit`, `ToolBlock`, and
+    `LoopDetection`. See [Policies](concepts/policies.md).
+
+**ToolBlock**
+:   The policy type that decides which tools an agent may call. Its
+    patterns are glob matches over canonical tool names, unioned across
+    every scope that applies. It is **always hard**: it fails closed on
+    a transport error regardless of the budget's
+    `enforcement_mode`. See [Tool policies](concepts/tool-policies.md).
+
+**Sensitive tool**
+:   A tool that should never run without a human paying attention —
+    sending mail, moving money, deleting a record. NullRun does not
+    ship a built-in list of these; you express them as `ToolBlock`
+    patterns. See [Sensitive tools](concepts/sensitive-tools.md).
+
+**Fail-closed / fail-open**
+:   What the gate does when it cannot reach the policy engine.
+    `ToolBlock` and aggregate rate limiting fail **closed** (the call is
+    refused) because the policy is the authoritative gate; per-key rate
+    limits and budget checks fail **open** because the budget
+    enforcement layer behind them is the real backstop. See
+    [Policies](concepts/policies.md).
+
+**Circuit breaker**
+:   The SDK-side guard that short-circuits gate calls after repeated
+    infrastructure failures, so an unreachable gateway does not turn
+    into a hang. It opens on transport errors and closes again after a
+    cooldown. See [Circuit breaker](concepts/circuit-breaker.md).
+
+## Cost
+
+**Budget**
+:   The maximum a workflow may spend in one billing period. Amounts are
+    in cents. See [Budgets](concepts/budgets.md).
+
+**Enforcement mode**
+:   Whether a budget blocks hard or soft. `Hard` refuses the call once
+    the projected cost exceeds what is left. `Soft` allows a bounded
+    overdraft, but only when all three hold: the policy is set to
+    `Soft`, an active `chain_id` exists, and the cost stays inside both
+    `max_overdraft_cents` and `max_overdraft_percent`. The chain
+    returns to Hard mode once the cap is exhausted. See
+    [Budgets](concepts/budgets.md).
+
+**Reservation**
+:   The amount a workflow commits at gate time, before the call runs.
+    The actual cost is consumed against it afterwards, so the reserve /
+    consume invariant keeps a single call from being implicitly
+    re-reserved. See [Budgets](concepts/budgets.md).
+
+## Runtime
+
+**Workflow**
+:   One agent you run. Each workflow carries its own budget, its own API
+    keys, and its own policies, and its cost binds to it as a logical
+    unit rather than to a single session. See
+    [Workflow context](concepts/workflow.md).
+
+**Chain**
+:   A group of workflows that run as one logical unit under a shared
+    chain context, so a kill or an overrun surfaces across the rest. A
+    chain that exceeds its max duration is rejected by the gate with
+    `CHAIN_MAX_DURATION_EXCEEDED`. See
+    [Workflow context](concepts/workflow.md).
+
+**Action**
+:   One concrete operation an agent wants to perform — a tool call or a
+    model call, with its arguments. The unit the gate evaluates and the
+    unit an approval is bound to. See
+    [Human approval](concepts/human-approval.md).
+
+**Action source**
+:   The gateway's name for one MCP server (or built-in provider) the SDK
+    has talked to. One row in **Governance → Action Sources**. See
+    [MCP servers](concepts/mcp-servers.md).
+
+**Trace**
+:   Everything that happened during one run of your agent: every LLM
+    call, every tool call, and how long each took. See
+    [Tracing](concepts/tracing.md).
+
+**Span**
+:   One node in a trace — a single LLM or tool call, with its timing and
+    its correlation ids. Spans nest, and a parent trace id propagates
+    across a workflow so the dashboard renders a true waterfall. See
+    [Tracing](concepts/tracing.md).
+
+## Control
+
+**Approval**
+:   A human decision that lets one specific action run. The grant is
+    bound to the exact action payload through a SHA-256
+    `action_digest`; if the payload drifts, the grant is refused. See
+    [Human approval](concepts/human-approval.md).
+
+**action_digest**
+:   The SHA-256 hash that binds an approval to the action it approves.
+    A digest mismatch after approval produces a hard block rather than
+    letting the substituted action through. See
+    [Human approval](concepts/human-approval.md).
+
+**Control plane**
+:   The WebSocket channel between the dashboard and your running agent.
+    It is what makes **Kill**, **Pause**, and **Resume** take effect
+    immediately rather than on the next gate call. See
+    [Control plane](concepts/control-plane.md).
+
+**Kill**
+:   The control-plane signal that stops a workflow. It arrives as
+    `WorkflowKilledInterrupt`, which inherits from `NullRunError`
+    directly — it is not a policy decision, so
+    `except NullRunDecision` does not catch it. See
+    [Error handling](concepts/error-handling.md).
+
+**Pause**
+:   The control-plane signal that suspends a workflow. It surfaces as
+    `WorkflowPausedException` carrying a `resume_after`, and maps to
+    HTTP `503` with a `Retry-After` header. See
+    [Error handling](concepts/error-handling.md).
+
+---
+
 # Source: https://docs.nullrun.io/compliance/index/
 
 # Compliance
@@ -9309,3 +9452,186 @@ source. Future maintainers: when editing, add or amend a row below.
   [NullRun `/compare`](https://nullrun.io/compare) ·
   [NullRun `/security`](https://nullrun.io/security) ·
   [NullRun `/trust`](https://nullrun.io/trust)
+
+---
+
+# Source: https://docs.nullrun.io/changelog/
+
+# Changelog
+
+Every released version of the `nullrun` Python SDK, newest first. Entries
+cover what someone building on NullRun can observe: the API surface, the
+behaviour a protected run exhibits, and the wire contract.
+
+The docs are the source of truth for **how** each of these behaves —
+this page records **when** it changed. A version listed here is
+described in full in the chapters it affects; if a symbol appears in an
+entry, it is documented on one of those pages.
+
+!!! info "Reading version numbers"
+
+    The SDK is versioned `0.MINOR.PATCH`. The **minor** position is
+    where the public surface moves — a symbol appears, changes shape, or
+    goes away. The **patch** position carries behaviour fixes and
+    additions that do not alter the surface.
+
+    All versions below the current one are available on PyPI:
+
+    ```bash
+    pip install nullrun==0.18.5
+    ```
+
+## 0.18.5 — 2026-09-26
+
+The public surface is reduced to the smallest set that still does the
+job. Four entry points collapse into two, and a set of internals stops
+being importable.
+
+### Changed
+
+- **`nullrun.guard` replaces `nullrun.handle`.** Same `@contextmanager`
+  body: it catches `NullRunError`, re-raises `WorkflowKilledInterrupt`
+  untouched, prints a developer-facing report, and exits non-zero on
+  failure. See [Error handling](concepts/error-handling.md) for the
+  full context-manager set and where `guard` sits among them.
+
+- **`nullrun.init(fail_on_exit=True)` replaces `init_or_die()`.**
+  Fail-fast is now a keyword argument on `init` rather than a separate
+  function. The default is `False`, which preserves the raise-on-bad-config
+  behaviour that embedders want.
+
+- **`nullrun.shutdown()` is registered automatically.** `init()` arranges
+  for a clean WebSocket close at process exit, so a long-running script
+  no longer needs an explicit shutdown call. Calling it yourself is
+  still valid and still idempotent.
+
+- **Install is a single line.** Per-framework install groups are gone;
+  `pip install nullrun` is the whole instruction. The framework
+  auto-detection in [Framework integrations](how-to/llm-frameworks.md)
+  is unchanged.
+
+### Removed
+
+These names are no longer importable from the top-level `nullrun`
+namespace. `dir(nullrun)` now returns exactly:
+
+```text
+__version__, init, protect, shutdown, on_error, guard,
+NullRunError, NullRunAuthError, NullRunConfigError,
+NullRunBackendError, NullRunBudgetError, NullRunToolBlockedError,
+WorkflowKilledInterrupt, NullRunWorkflowKilledError,
+NullRunMcpDestructiveBlockedError,
+NullRunMcpReadonlyBypassBlockedError,
+NullRunMcpApprovalRequiredError,
+NullRunApprovalDbUnavailableError,
+format_user_message, set_user_message
+```
+
+- `nullrun.status()` — the snapshot is reached through
+  `nullrun.get_runtime().status()`, which returns the same
+  `NullRunStatus` dataclass. `NullRunStatus` itself remains importable
+  as a type.
+- `@nullrun.guarded` — the decorator form is `with nullrun.guard():`.
+- `nullrun.auto_instrument`, `nullrun.is_auto_instrumented`, and the
+  module-level `track_event` alias. The `runtime.track_event` method is
+  unaffected.
+- `NullRunCallback` from the lazy-export table. The framework
+  integrations do not need it.
+
+The wire contract is unchanged from 0.18.0.
+
+## 0.18.2 — 2026-09-22
+
+`@protect` is established as the single entry point. Every call routes
+through the execute endpoint unconditionally — there is no opt-out and
+no per-tool registry to maintain.
+
+```python
+import nullrun
+
+nullrun.init()
+
+@nullrun.protect
+def my_tool(query: str) -> str:
+    ...
+```
+
+See [Decorators & extractors](reference/decorators.md) for the full
+decorator reference and [Tool policies](concepts/tool-policies.md)
+for what the gate evaluates.
+
+## 0.18.1 — 2026-09-22
+
+Aimed squarely at the moment a developer first runs an example and it
+does not work.
+
+- **A four-line error report on the fail-fast paths.** A configuration
+  or gate failure at startup prints what failed, where it failed (wire
+  endpoint, status code, transport source), why it failed (the
+  underlying exception and its machine `error_code`), and what to do
+  about it. The end-user-facing message is still the headline, so an
+  end-user deployment still sees a single clean sentence. See
+  [Troubleshooting](troubleshooting.md).
+
+- **A warning when a protected tool fires 50 times with no model
+  activity.** The usual cause is a tool wired up without the agent loop
+  that feeds it, which otherwise bills nothing and looks like it works.
+
+## 0.18.0 — 2026-09-21
+
+- **Approved actions are consumed on success.** When an action runs
+  after approval, the grant is closed automatically. Grants left open
+  past their expiry no longer accumulate, so the approvals surface
+  reflects only what is actually waiting on a human.
+
+## 0.17.1 — 2026-09-15
+
+- **Every gate call carries its own operation id.** A single id is no
+  longer reused across calls in the same scope, which removes a class of
+  spurious budget errors where an unrelated call inherited the identity
+  of the first one. The error codes in
+  [Error codes](reference/errors.md) are unchanged.
+
+## 0.17.0 — 2026-09-12
+
+- **The circuit breaker serialises sync and async callers against each
+  other.** A threaded call and an `asyncio` call on the same breaker
+  instance previously took different locks, so their state transitions
+  could interleave. Both paths now contend on one lock. See
+  [Circuit breaker](concepts/circuit-breaker.md).
+
+- **The impact helpers resolve off the top-level `nullrun` namespace**
+  rather than needing a deep import into a private module. The helpers
+  that [Sensitive tools](concepts/sensitive-tools.md) describes are
+  what this fixes; the exception they were raising on first call is
+  gone.
+
+## 0.16.x — August–September 2026
+
+The hardening series. The surface settled here; everything above is a
+change to it.
+
+- **Kill propagates as an exception rather than an exit.** A
+  `WorkflowKilledInterrupt` raised by [Kill](concepts/control-plane.md)
+  is not swallowed by an enclosing error handler, so an agent that is
+  stopped from the dashboard stops. See
+  [Control plane](concepts/control-plane.md).
+
+- **Fail-closed policy fetches.** A policy the gate cannot retrieve is a
+  refusal, not a pass. `ToolBlock` and aggregate rate limiting fail
+  closed; per-key limits and budget checks fail open, because the budget
+  layer behind them is the backstop. See
+  [Policies](concepts/policies.md).
+
+- **Cost accounting is decimal, not floating point.** Amounts are
+  serialized without binary-float drift, so a reserved cost and its
+  consumption net to zero. See [Budgets](concepts/budgets.md).
+
+- **Reservations are released on the exception path.** A protected call
+  that raises leaves no reservation behind.
+
+---
+
+Reports something that does not match what you are reading here? The
+SDK repository takes issues, and the [GitHub](https://github.com/nullrunio/nullrun-docs)
+link in the footer points at this docs repository.
