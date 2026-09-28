@@ -62,9 +62,11 @@ def refund_customer(order_id: str, amount_cents: int) -> str:
 <section class="nr-section nr-section--shot md-grid md-typeset">
   <figure class="nr-shot">
     <img class="nr-shot__light" src="assets/images/screenshots/dashboard-hero-light.png"
-         alt="NullRun dashboard home showing the workflow control panel.">
+       alt="NullRun dashboard home showing the workflow control panel."
+       loading="lazy" decoding="async">
     <img class="nr-shot__dark" src="assets/images/screenshots/dashboard-hero-dark.png"
-         alt="NullRun dashboard home showing the workflow control panel.">
+       alt="NullRun dashboard home showing the workflow control panel."
+       loading="lazy" decoding="async">
     <figcaption class="nr-shot__caption">
       Every gate decision, budget reservation, and cost event lands in
       the dashboard. That is the whole surface an operator touches.
@@ -86,8 +88,10 @@ flowchart LR
 ```
 </section>
 
-<section class="nr-section md-grid md-typeset">
-  <h2 class="nr-section__title">What you get out of the box</h2>
+<section class="nr-section md-grid md-typeset" markdown="1">
+## What you get out of the box
+{.nr-section__title}
+
   <div class="nr-features">
     <div class="nr-feature">
       <div class="nr-feature__icon">
@@ -213,23 +217,11 @@ sequenceDiagram
 ```
 
 *End-to-end: the gate evaluation, cost accounting, and the kill path.*
-</section>
 
-<section class="nr-section md-grid md-typeset">
-  <h2 class="nr-section__title">How the runtime fits together</h2>
-  <p>
-    The Python SDK runs inside your own process and talks to the
-    NullRun gateway over HTTPS. Every gate decision, budget
-    reservation, and cost event travels over that connection — the
-    SDK adds a network round-trip and nothing else to your
-    deployment.
-  </p>
-  <p>
-    Policies, workflows, approvals, and the operator controls live in
-    the NullRun dashboard, which is where your team configures what
-    the gate enforces. See
-    <a href="https://docs.nullrun.io/">the docs</a> for the SDK
-    surface and <a href="https://nullrun.io/about">/about</a> for
-    the runtime contract.
-  </p>
+The Python SDK runs inside your own process and talks to the NullRun
+gateway over HTTPS. Every gate decision, budget reservation, and cost
+event travels over that connection — the SDK adds a network round-trip
+and nothing else to your deployment. Policies, workflows, approvals,
+and the operator controls live in the dashboard, which is where your
+team configures what the gate enforces.
 </section>

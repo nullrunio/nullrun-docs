@@ -52,9 +52,11 @@ In the dashboard:
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/api-keys-list-light.png"
-       alt="API keys page showing the New key button highlighted in the top right.">
+       alt="API keys page showing the New key button highlighted in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/api-keys-list-dark.png"
-       alt="API keys page showing the New key button highlighted in the top right.">
+       alt="API keys page showing the New key button highlighted in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">API keys · New key</figcaption>
 </figure>
 
@@ -125,9 +127,11 @@ page, under **Governance** in the sidebar). You will see:
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/audit-log-light.png"
-       alt="Audit log page — Allow / Deny / Require approval filter chips and the events table.">
+       alt="Audit log page — Allow / Deny / Require approval filter chips and the events table."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/audit-log-dark.png"
-       alt="Audit log page — Allow / Deny / Require approval filter chips and the events table.">
+       alt="Audit log page — Allow / Deny / Require approval filter chips and the events table."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Governance · Audit log</figcaption>
 </figure>
 

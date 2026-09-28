@@ -922,8 +922,42 @@ body.nr-sidebar-hidden .md-sidebar--primary {
    Material's bundle defaults. */
 .md-sidebar--secondary {
   position: static !important;
-  margin-right: 0 !important;
+  /* C6 — restore the right gutter.
+
+     `padding-right: 0` was doing what it said and costing the layout:
+     the rail's text ran to the last pixel column of the viewport, so
+     the long entries ("/track outbound path (the only enforcement-side
+     store write)") wrapped against nothing and read as body text
+     bleeding off the page. 24px puts the rail back inside the frame
+     the way the primary sidebar sits inside the 340px column. */
+  margin-right: 24px !important;
   padding-right: 0 !important;
+}
+
+/* C6 — hierarchy by weight, not only by indent.
+
+     Material's TOC indents nested levels (1.4rem / 2rem / 2.6rem) and
+     that indentation is doing all the work here, because every level
+     ships at `font-weight: 400`. A reader scanning the rail for "the
+     heading about the third hop" cannot tell a section from a
+     subsection without counting pixels. Top level gets 600 and the
+     ink colour; children drop to 500 and the light ink; anything
+     deeper drops again. The active entry is the one that gets the
+     FLAG underline so the current position is findable at a glance
+     rather than by reading every line. */
+.md-nav--secondary .md-nav__link {
+  font-weight: 500;
+  color: var(--nr-sidebar-fg);
+  line-height: 1.35;
+}
+.md-nav--secondary > .md-nav__list > .md-nav__item > .md-nav__link {
+  font-weight: 600;
+  color: var(--md-default-fg-color);
+}
+.md-nav--secondary .md-nav__link--active {
+  color: var(--md-default-fg-color);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 0 var(--accent-flag);
 }
 
 @media (max-width: 76em) {
@@ -1417,13 +1451,32 @@ article.md-content__inner,
 
 /* Inline code — bg-inset half-step darker surface + 1px ink border.
    Matches product's inline-code pill (globals.css .inline-code). */
+/* Inline code — monospace + weight, no box.
+
+   A page of prose here names a technical noun on almost every line
+   (`@protect`, `NR-B004`, `require_approval`, `action_digest`). The
+   old 1px border + tinted surface + 2px radius put a chip around each
+   one, so a paragraph that should have read as a sentence read as a
+   wall of little boxes — the border competed with the punctuation and
+   the surface tint fought the FLAG accents used for real emphasis.
+   Weight 500 in the ink colour carries the same distinction: the token
+   is visibly code, and the page goes back to being prose.
+
+   Deliberately no background, no border, no radius. The neo-brutalist
+   vocabulary is 2px plates and hard shadows; a 1px hairline chip is
+   neither, which is what made it read as noise rather than as brand.
+
+   Inline `code` inside a fenced block is neutralised further down by
+   `.md-typeset .highlight pre code` and `.md-typeset pre code`, so
+   removing the chip here does not strip the block plates. */
 .md-typeset code {
-  background: var(--md-default-bg-color--light);
+  background: none;
   color: var(--nr-inline-code-color);
-  padding: 0.1em 0.35em;
-  border-radius: 2px;
-  border: 1px solid var(--nr-sidebar-spacer);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   font-size: 0.9em;
+  font-weight: 500;
   font-family: var(--md-code-font);
 }
 
@@ -1513,7 +1566,15 @@ article.md-content__inner,
   border: none;
 }
 
-/* Tables — ink plate header (--table-header-bg in product = ink + paper text). */
+/* Tables — ink plate header in light, recessed plate in dark.
+
+   The header was `background: var(--md-default-fg-color)`, which is
+   correct in light (ink on cream) but inverts to a near-white slab in
+   dark, so a reference table changed character entirely between
+   themes and the header out-shouted the page title. The dark rule
+   below swaps the fill for the page surface and keeps the weight in a
+   2px underline, which reads as a header without becoming the
+   brightest object on screen. */
 .md-typeset table:not([class]) {
   width: 100%;
   border-collapse: collapse;
@@ -1535,6 +1596,47 @@ article.md-content__inner,
 .md-typeset table:not([class]) td {
   padding: 6px 12px;
   border-bottom: 1px solid var(--nr-sidebar-spacer);
+}
+
+/* C2 — table cells must not break a token across lines.
+
+   The reference tables are dense with hyphenated identifiers —
+   `NR-B004`, `NullRunToolBlockedError`, `per_call_threshold_cents`.
+   `overflow-wrap: anywhere` (Material's default on table cells in this
+   build) broke those mid-token at narrow widths, so the reader saw
+   "NR-" / "B004" on consecutive lines and had to reassemble the code
+   themselves. The correct tool for a long unbreakable token inside a
+   table is `word-break: normal` plus normal wrapping, with the
+   first column held on one line because it is the identifier column —
+   that is the whole point of the row, and it is the column that gets
+   squeezed first when the table is narrow.
+
+   `white-space: nowrap` on `th:first-child, td:first-child` is scoped
+   to the first column only; applying it to every cell would stop long
+   prose descriptions in the second and third columns from wrapping
+   at all, which overflows the table horizontally. */
+.md-typeset table:not([class]) :is(th, td) {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.md-typeset table:not([class]) :is(th, td) code {
+  white-space: nowrap;
+}
+.md-typeset table:not([class]) :is(th, td):first-child {
+  white-space: nowrap;
+}
+
+/* C3 — dark-scheme header. Recessed rather than inverted. */
+body[data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
+  background: var(--md-default-bg-color);
+  color: var(--md-default-fg-color);
+  box-shadow: inset 0 -2px 0 0 var(--md-default-fg-color);
+}
+body[data-md-color-scheme="slate"] .md-typeset table:not([class]) td {
+  border-bottom-color: var(--nr-sidebar-spacer);
+}
+body[data-md-color-scheme="slate"] .md-typeset table:not([class]) {
+  border-color: var(--nr-sidebar-spacer);
 }
 
 /* Admonitions — neo-brutalist treatment: 2px ink border + 4px offset

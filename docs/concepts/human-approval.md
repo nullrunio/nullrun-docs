@@ -150,9 +150,11 @@ expired request. Each row shows:
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/approvals-light.png"
-       alt="Approvals page listing every pending, approved, denied and expired request.">
+       alt="Approvals page listing every pending, approved, denied and expired request."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/approvals-dark.png"
-       alt="Approvals page listing every pending, approved, denied and expired request.">
+       alt="Approvals page listing every pending, approved, denied and expired request."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Approvals</figcaption>
 </figure>
 
@@ -200,9 +202,11 @@ and an Event subscriptions matrix).
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/approval-rules-light.png"
-       alt="Approval rules page with the New rule button highlighted in the top right.">
+       alt="Approval rules page with the New rule button highlighted in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/approval-rules-dark.png"
-       alt="Approval rules page with the New rule button highlighted in the top right.">
+       alt="Approval rules page with the New rule button highlighted in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Governance · Approval rules · New rule</figcaption>
 </figure>
 

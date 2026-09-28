@@ -109,9 +109,11 @@ To set the budget:
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/workflow-detail-light.png"
-       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap.">
+       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/workflow-detail-dark.png"
-       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap.">
+       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Workflows · Budget card</figcaption>
 </figure>
 

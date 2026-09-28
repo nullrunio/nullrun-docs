@@ -102,9 +102,11 @@ when you need them.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/api-key-new-light.png"
-       alt="NullRun New API key dialog, with the workflow dropdown and key name field.">
+       alt="NullRun New API key dialog, with the workflow dropdown and key name field."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/api-key-new-dark.png"
-       alt="NullRun New API key dialog, with the workflow dropdown and key name field.">
+       alt="NullRun New API key dialog, with the workflow dropdown and key name field."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">API keys · New key</figcaption>
 </figure>
 
@@ -287,9 +289,11 @@ In the dashboard:
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/api-keys-list-light.png"
-       alt="API keys page showing the New key button highlighted in the top right.">
+       alt="API keys page showing the New key button highlighted in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/api-keys-list-dark.png"
-       alt="API keys page showing the New key button highlighted in the top right.">
+       alt="API keys page showing the New key button highlighted in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">API keys · New key</figcaption>
 </figure>
 
@@ -360,9 +364,11 @@ page, under **Governance** in the sidebar). You will see:
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/audit-log-light.png"
-       alt="Audit log page — Allow / Deny / Require approval filter chips and the events table.">
+       alt="Audit log page — Allow / Deny / Require approval filter chips and the events table."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/audit-log-dark.png"
-       alt="Audit log page — Allow / Deny / Require approval filter chips and the events table.">
+       alt="Audit log page — Allow / Deny / Require approval filter chips and the events table."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Governance · Audit log</figcaption>
 </figure>
 
@@ -1008,9 +1014,11 @@ and the SDK parks until the operator clicks Approve / Deny. See
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/policies-list-light.png"
-       alt="Policies list with the New policy button highlighted in the top right.">
+       alt="Policies list with the New policy button highlighted in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/policies-list-dark.png"
-       alt="Policies list with the New policy button highlighted in the top right.">
+       alt="Policies list with the New policy button highlighted in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Governance · Policies · New policy</figcaption>
 </figure>
 
@@ -1105,9 +1113,11 @@ matches — useful for debugging.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/policies-list-light.png"
-       alt="Policies list with the New policy button highlighted in the top right.">
+       alt="Policies list with the New policy button highlighted in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/policies-list-dark.png"
-       alt="Policies list with the New policy button highlighted in the top right.">
+       alt="Policies list with the New policy button highlighted in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Governance · Policies · New policy</figcaption>
 </figure>
 
@@ -1568,17 +1578,21 @@ The dashboard will never show it again.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/api-keys-list-light.png"
-       alt="API keys list with the New key button highlighted in the top right.">
+       alt="API keys list with the New key button highlighted in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/api-keys-list-dark.png"
-       alt="API keys list with the New key button highlighted in the top right.">
+       alt="API keys list with the New key button highlighted in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">API keys · New key</figcaption>
 </figure>
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/api-key-new-light.png"
-       alt="New API key dialog open — Key name field, Workflow dropdown, Create button.">
+       alt="New API key dialog open — Key name field, Workflow dropdown, Create button."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/api-key-new-dark.png"
-       alt="New API key dialog open — Key name field, Workflow dropdown, Create button.">
+       alt="New API key dialog open — Key name field, Workflow dropdown, Create button."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">API keys · New key dialog</figcaption>
 </figure>
 
@@ -1867,9 +1881,11 @@ To set the budget:
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/workflow-detail-light.png"
-       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap.">
+       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/workflow-detail-dark.png"
-       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap.">
+       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Workflows · Budget card</figcaption>
 </figure>
 
@@ -2130,9 +2146,11 @@ expired request. Each row shows:
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/approvals-light.png"
-       alt="Approvals page listing every pending, approved, denied and expired request.">
+       alt="Approvals page listing every pending, approved, denied and expired request."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/approvals-dark.png"
-       alt="Approvals page listing every pending, approved, denied and expired request.">
+       alt="Approvals page listing every pending, approved, denied and expired request."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Approvals</figcaption>
 </figure>
 
@@ -2180,9 +2198,11 @@ and an Event subscriptions matrix).
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/approval-rules-light.png"
-       alt="Approval rules page with the New rule button highlighted in the top right.">
+       alt="Approval rules page with the New rule button highlighted in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/approval-rules-dark.png"
-       alt="Approval rules page with the New rule button highlighted in the top right.">
+       alt="Approval rules page with the New rule button highlighted in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Governance · Approval rules · New rule</figcaption>
 </figure>
 
@@ -2329,25 +2349,31 @@ tabs:
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/workflows-list-light.png"
-       alt="Workflows list with the New workflow button highlighted in the top right.">
+       alt="Workflows list with the New workflow button highlighted in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/workflows-list-dark.png"
-       alt="Workflows list with the New workflow button highlighted in the top right.">
+       alt="Workflows list with the New workflow button highlighted in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Workflows · New workflow</figcaption>
 </figure>
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/workflow-new-light.png"
-       alt="Create workflow dialog open — Workflow name field and External ID optional field.">
+       alt="Create workflow dialog open — Workflow name field and External ID optional field."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/workflow-new-dark.png"
-       alt="Create workflow dialog open — Workflow name field and External ID optional field.">
+       alt="Create workflow dialog open — Workflow name field and External ID optional field."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Workflows · Create dialog</figcaption>
 </figure>
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/workflow-detail-light.png"
-       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls.">
+       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/workflow-detail-dark.png"
-       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls.">
+       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Workflows · Workflow detail</figcaption>
 </figure>
 
@@ -2506,17 +2532,21 @@ The **Executions** page lists every agent run. Each row shows:
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/executions-light.png"
-       alt="Executions page listing every agent run with workflow, duration, status and cost columns.">
+       alt="Executions page listing every agent run with workflow, duration, status and cost columns."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/executions-dark.png"
-       alt="Executions page listing every agent run with workflow, duration, status and cost columns.">
+       alt="Executions page listing every agent run with workflow, duration, status and cost columns."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Executions</figcaption>
 </figure>
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/traces-light.png"
-       alt="Traces page with the waterfall of LLM and tool calls for a single execution.">
+       alt="Traces page with the waterfall of LLM and tool calls for a single execution."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/traces-dark.png"
-       alt="Traces page with the waterfall of LLM and tool calls for a single execution.">
+       alt="Traces page with the waterfall of LLM and tool calls for a single execution."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Traces · Waterfall</figcaption>
 </figure>
 
@@ -2749,9 +2779,11 @@ and for compliance review / incident forensics.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/audit-log-light.png"
-       alt="Audit log page listing every gate decision ever made by the org.">
+       alt="Audit log page listing every gate decision ever made by the org."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/audit-log-dark.png"
-       alt="Audit log page listing every gate decision ever made by the org.">
+       alt="Audit log page listing every gate decision ever made by the org."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Governance · Audit log</figcaption>
 </figure>
 
@@ -3354,9 +3386,11 @@ the first successful probe lands.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/action-sources-light.png"
-       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right.">
+       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/action-sources-dark.png"
-       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right.">
+       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">MCP servers · Add action source</figcaption>
 </figure>
 
@@ -3916,9 +3950,11 @@ Cancel and the destructive confirm button.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/alerts-light.png"
-       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point.">
+       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/alerts-dark.png"
-       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point.">
+       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Alerts · Set up alerts</figcaption>
 </figure>
 
@@ -4090,9 +4126,11 @@ past themselves.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/team-light.png"
-       alt="Team page — invite panel above the members table, with Email field, role selector, and Send invite button in the top right.">
+       alt="Team page — invite panel above the members table, with Email field, role selector, and Send invite button in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../assets/images/screenshots/team-dark.png"
-       alt="Team page — invite panel above the members table, with Email field, role selector, and Send invite button in the top right.">
+       alt="Team page — invite panel above the members table, with Email field, role selector, and Send invite button in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Team · Send invite</figcaption>
 </figure>
 

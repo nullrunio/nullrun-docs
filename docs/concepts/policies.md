@@ -153,9 +153,11 @@ and the SDK parks until the operator clicks Approve / Deny. See
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/policies-list-light.png"
-       alt="Policies list with the New policy button highlighted in the top right.">
+       alt="Policies list with the New policy button highlighted in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/policies-list-dark.png"
-       alt="Policies list with the New policy button highlighted in the top right.">
+       alt="Policies list with the New policy button highlighted in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Governance · Policies · New policy</figcaption>
 </figure>
 

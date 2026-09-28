@@ -48,9 +48,11 @@ past themselves.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/team-light.png"
-       alt="Team page — invite panel above the members table, with Email field, role selector, and Send invite button in the top right.">
+       alt="Team page — invite panel above the members table, with Email field, role selector, and Send invite button in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/team-dark.png"
-       alt="Team page — invite panel above the members table, with Email field, role selector, and Send invite button in the top right.">
+       alt="Team page — invite panel above the members table, with Email field, role selector, and Send invite button in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Team · Send invite</figcaption>
 </figure>
 

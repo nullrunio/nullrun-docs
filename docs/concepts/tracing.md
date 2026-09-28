@@ -25,17 +25,21 @@ The **Executions** page lists every agent run. Each row shows:
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/executions-light.png"
-       alt="Executions page listing every agent run with workflow, duration, status and cost columns.">
+       alt="Executions page listing every agent run with workflow, duration, status and cost columns."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/executions-dark.png"
-       alt="Executions page listing every agent run with workflow, duration, status and cost columns.">
+       alt="Executions page listing every agent run with workflow, duration, status and cost columns."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Executions</figcaption>
 </figure>
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/traces-light.png"
-       alt="Traces page with the waterfall of LLM and tool calls for a single execution.">
+       alt="Traces page with the waterfall of LLM and tool calls for a single execution."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/traces-dark.png"
-       alt="Traces page with the waterfall of LLM and tool calls for a single execution.">
+       alt="Traces page with the waterfall of LLM and tool calls for a single execution."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Traces · Waterfall</figcaption>
 </figure>
 

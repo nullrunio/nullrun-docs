@@ -254,8 +254,27 @@ markdown_extensions:
         kwds:
           case: lower
   - pymdownx.highlight:
-      anchor_linenums: true
-      line_spans: __span
+      # `anchor_linenums` and `line_spans` are OFF deliberately.
+      #
+      # Both options exist to serve `content.code.annotate`: the fenced
+      # `(!)` annotation syntax pairs a numbered callout with a line in
+      # the block, and these two options are what give each line the id
+      # and the jump target the callout links to. There is not a single
+      # annotation in the docs — 40 code blocks, zero callouts — so what
+      # the options actually bought was an empty `<a
+      # class="__codelineno">` anchor plus a `<span id="__span-N-M">`
+      # wrapper around every line of every block, with no CSS in
+      # extra.css targeting either class. That is ~1,100 empty anchors
+      # and ~1,100 extra spans in the DOM for a feature nothing uses.
+      #
+      # If annotations are added later, turn both back on and keep
+      # `content.code.annotate` in `features` (it is already there) —
+      # the two halves have to land together or the callouts link to
+      # nothing.
+      #
+      # `pygments_lang_class: true` stays: that one is what lets
+      # extra.css style a block by language (`.language-python`, and
+      # the diff/error callouts below).
       pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.snippets:

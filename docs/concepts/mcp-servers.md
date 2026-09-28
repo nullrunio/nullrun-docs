@@ -60,9 +60,11 @@ the first successful probe lands.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/action-sources-light.png"
-       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right.">
+       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/action-sources-dark.png"
-       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right.">
+       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">MCP servers · Add action source</figcaption>
 </figure>
 

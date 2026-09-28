@@ -27,9 +27,11 @@ and for compliance review / incident forensics.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/audit-log-light.png"
-       alt="Audit log page listing every gate decision ever made by the org.">
+       alt="Audit log page listing every gate decision ever made by the org."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/audit-log-dark.png"
-       alt="Audit log page listing every gate decision ever made by the org.">
+       alt="Audit log page listing every gate decision ever made by the org."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Governance · Audit log</figcaption>
 </figure>
 

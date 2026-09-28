@@ -22,9 +22,11 @@ when you need them.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/api-key-new-light.png"
-       alt="NullRun New API key dialog, with the workflow dropdown and key name field.">
+       alt="NullRun New API key dialog, with the workflow dropdown and key name field."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/api-key-new-dark.png"
-       alt="NullRun New API key dialog, with the workflow dropdown and key name field.">
+       alt="NullRun New API key dialog, with the workflow dropdown and key name field."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">API keys · New key</figcaption>
 </figure>
 

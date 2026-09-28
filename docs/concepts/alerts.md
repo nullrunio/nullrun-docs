@@ -39,9 +39,11 @@ Cancel and the destructive confirm button.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/alerts-light.png"
-       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point.">
+       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/alerts-dark.png"
-       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point.">
+       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Alerts · Set up alerts</figcaption>
 </figure>
 

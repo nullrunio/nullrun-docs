@@ -48,25 +48,31 @@ tabs:
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/workflows-list-light.png"
-       alt="Workflows list with the New workflow button highlighted in the top right.">
+       alt="Workflows list with the New workflow button highlighted in the top right."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/workflows-list-dark.png"
-       alt="Workflows list with the New workflow button highlighted in the top right.">
+       alt="Workflows list with the New workflow button highlighted in the top right."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Workflows · New workflow</figcaption>
 </figure>
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/workflow-new-light.png"
-       alt="Create workflow dialog open — Workflow name field and External ID optional field.">
+       alt="Create workflow dialog open — Workflow name field and External ID optional field."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/workflow-new-dark.png"
-       alt="Create workflow dialog open — Workflow name field and External ID optional field.">
+       alt="Create workflow dialog open — Workflow name field and External ID optional field."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Workflows · Create dialog</figcaption>
 </figure>
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/workflow-detail-light.png"
-       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls.">
+       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls."
+       loading="lazy" decoding="async">
   <img class="nr-shot__dark" src="../../assets/images/screenshots/workflow-detail-dark.png"
-       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls.">
+       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls."
+       loading="lazy" decoding="async">
   <figcaption class="nr-shot__caption">Workflows · Workflow detail</figcaption>
 </figure>
 
