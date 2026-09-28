@@ -32,9 +32,9 @@ theme:
     # The actual chrome / sidebar surface is painted by extra.css
     # (--bg, --sidebar-bg, --fg, --accent-flag, --accent-block,
     # --accent-allow, neo-brutalist variables).
-    # The earlier 3-theme (default + slate + navy JS hack) layout was
-    # retired on 2026-08-30 — navy was a helix-parity hack, not part of
-    # the product design system.
+    # There are two colour schemes, `default` and `slate`, and the
+    # choice between them is driven by the OS preference below. The
+    # theme picker in extra.js §1 lets a reader override it.
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: black
@@ -50,19 +50,26 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-    # navigation.tabs removed: top-level sections render in the left
-    # sidebar (`navigation.sections`), not as header tabs. The 2-column
-    # layout is sidebar (left, fixed) + content (center, max 750px).
-    # The "On this page" TOC is collapsed by default — sections in
-    # the left sidebar are numbered (1. / 2. / 2.1. …) and act as the
-    # primary navigation; the right-side TOC appears only on long pages.
+    # Top-level chapters render in the left sidebar
+    # (`navigation.sections`), not as header tabs. The 2-column layout
+    # is sidebar (left, fixed) + content (center, max 750px). The "On
+    # this page" TOC is collapsed by default — sections in the left
+    # sidebar are numbered (1. / 2. / 2.1. …) and act as the primary
+    # navigation; the right-side TOC appears only on long pages.
     #
-    # navigation.expand removed 2026-08-30: top-level chapters (1, 2,
-    # 3, 4, 5, 6) are now COLLAPSED by default — the sidebar acts as
-    # a drop-down tree. Clicking a chapter title expands its sub-pages.
-    # Material's stock `navigation.sections` toggle behaviour wires the
-    # click; the CSS at `.md-nav__item--expanded > .md-nav__link::after`
-    # rotates the chevron 90° on expand.
+    # Chapters are collapsed by default, so the sidebar is a drop-down
+    # tree: clicking a chapter title expands its sub-pages. The title
+    # is the toggle, and two things in extra.css make that work —
+    # `pointer-events: auto` on the section link, which Material
+    # otherwise sets to `none`, and a `::after` chevron whose rotation
+    # keys off `.md-nav__item--section > .md-nav__toggle:checked ~`,
+    # the checkbox Material expands the chapter from.
+    #
+    # navigation.indexes is off: it promotes a section's first page to
+    # the section heading, which both drops that page from the chapter
+    # list (losing "1.1" and "5.1" from the sidebar) and turns that
+    # chapter's title into a link instead of a toggle. Every chapter
+    # has to behave the same way, so no section gets an index page.
     #
     # navigation.tracking enabled: Material's bundle intercepts clicks
     # on internal links, fetches the next page in the background,
@@ -87,7 +94,6 @@ theme:
     - navigation.instant
     - navigation.instant.progress
     - navigation.top
-    - navigation.indexes
     - search.suggest
     - search.highlight
     - content.code.copy
@@ -160,13 +166,13 @@ nav:
       - 5.2. Geographic restrictions: compliance/geo-restrictions.md
       - 5.3. Sanctions screening: compliance/sanctions-screening.md
       - 5.4. Data handling & vendor review: compliance/data-handling.md
-  - 6. Troubleshooting: troubleshooting.md
   - 7. Operations:
-      - 7.1. Performance & limits: operations/performance.md
-      - 7.2. Framework & ecosystem positioning: operations/framework-positioning.md
+      - 7.1. Troubleshooting: troubleshooting.md
+      - 7.2. Performance & limits: operations/performance.md
+      - 7.3. Framework & ecosystem positioning: operations/framework-positioning.md
 
-# No announcement banner — banner removed on 2026-08-30 per design
-# decision. (Old: Plan-rebalance 2026-06-24 dismissible banner. Removed.)
+# The announcement-banner slot in overrides/main.html is intentionally
+# left empty — the design has no banner surface.
 extra:
   social:
     - icon: fontawesome/brands/github
@@ -195,12 +201,20 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences:
-      # Tier 1: inline architecture diagrams render in-browser via
-      # the bundled Mermaid runtime (no server roundtrip). Used by
-      # index.md and concepts/control-plane.md.
+      # Inline architecture diagrams render in-browser via the Mermaid
+      # runtime vendored at docs/javascripts/mermaid.min.js and driven
+      # by the loader in docs/javascripts/extra.js (§6).
+      #
+      # The fence class is `nr-mermaid`, NOT Material's stock
+      # `mermaid`. Material's bundle carries its own Mermaid
+      # integration that claims every `.mermaid` node, strips the
+      # class, and lazily fetches the runtime from unpkg.com — which
+      # the site CSP (overrides/main.html, `script-src 'self'`) blocks.
+      # That left every diagram on the site rendering as a raw code
+      # block. Owning the class keeps a single renderer: ours.
       custom_fences:
         - name: mermaid
-          class: mermaid
+          class: nr-mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
@@ -233,15 +247,27 @@ plugins:
 # one alias file is overkill. The canonical /llms.txt is the spec-
 # compliant location; /llms-full.txt is the full corpus.
 #
-# IMPORTANT — `docs/llms-full.txt` is a GENERATED corpus, not a hand-
-# edited file. It is rebuilt from the Markdown source files by
-# `infra/scripts/build-llms-full.ps1` after any content change in
-# `docs/**`. The script must apply a redaction pass before emitting:
-# it must strip any internal storage table names (audit_events,
-# approval_rules, approvals, overdraft_used), internal class names
-# (ApproximateBudget), internal service names (breaker-core,
-# gate-core, prod-guard), and any SQL fragments. The source MD
-# files are the contract — if the corpus diverges, regenerate it.
+# IMPORTANT — `docs/llms-full.txt` and `docs/print.md` are GENERATED
+# artefacts, not hand-edited files. Both are rebuilt from the Markdown
+# sources by a script in `infra/scripts/`, after any content change in
+# `docs/**`:
+#
+#   python infra/scripts/build-llms-full.py   # -> docs/llms-full.txt
+#   python infra/scripts/build-print.py       # -> docs/print.md
+#   python infra/scripts/build-print.py --check   # CI staleness check
+#
+# Both read the page list from the `nav:` tree above, so a page added
+# or moved here reaches both artefacts without editing a second list.
+#
+# The corpus build enforces a no-internals rule — internal storage
+# table names, internal service names, internal class names, ADR
+# references, and SQL fragments must not appear — by *failing* rather
+# than by substituting the tokens away. Rewriting them would let the
+# corpus drift from the Markdown it claims to mirror and would leave
+# half-sentences behind; a named failure points at the source page that
+# needs the edit. The storage-table half of the rule is waived for
+# `compliance/data-handling.md`, the vendor security-review page, which
+# names the fields it stores on purpose.
 validation:
   nav:
     omitted_files: ignore

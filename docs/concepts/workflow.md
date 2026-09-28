@@ -159,93 +159,40 @@ week and the same workflow handles it.
 
 !!! info "Deep dive"
 
-    A workflow is a row in `workflows` plus a runtime `State` entry
-    in the per-execution in-memory map at
-    `backend/src/decision/mod.rs` (`pause`, `kill`, `resume`). When
-    the operator clicks **Pause** / **Resume** / **Kill**,
-    `pause_workflow_handler` / `resume_workflow_handler` /
-    `kill_workflow_handler` in `backend/src/proxy/http/workflows.rs`
-    mutate the runtime CB state, write the audit row via
-    `record_audit_event_simple`, then push the transition through
-    `EventBus::publish_with_origin` (canonical
-    `WorkflowEventPayload::StateChanged`,
-    `backend/src/proxy/http/event_bus.rs`). The WebSocket upgrade
-    handler at `backend/src/proxy/http/ws_control.rs` is subscribed
-    to that channel via `subscribe_for_ws`; the envelope is
-    converted by `convert_envelope_to_ws_message`
-    (`ws_control.rs`) and emitted as
-    `WsMessage::StateChange { state: WsWorkflowState }`. Chains are
-    stored in Redis as `chain:{org}:{chain_id}` and extended on
-    every `/check` with `idle_ttl = 300s`
-    (`backend/src/redis/chain.rs`, `backend/src/redis/mod.rs`); the
-    default `max_chain_duration_seconds = 3600` lives in
-    `backend/src/enforcement/unified_evaluator.rs`.
+    A workflow combines a durable record with a runtime state that
+    the control plane can move between Active, Paused and Killed.
+    Transitions are validated rather than free-form: Killed is
+    terminal, and there is no path out of it, so a workflow that has
+    been killed has to be created again to be used again. Every
+    transition an operator triggers writes an audit entry and is
+    pushed to the agents attached to that workflow, so a manual kill
+    is visible both in the audit log and in the dashboard.
 
-    State transitions are validated through
-    `State::validate_transition` (`backend/src/decision/mod.rs`),
-    which makes `Killed → *` terminal — there is no path out.
-    `Killed` / `Paused` runtime events write `state = "KILLED"` /
-    `"PAUSED"` to the LIFECYCLE-only `workflows.state` column;
-    `Flagged` / `Tripped` CB events are gated on
-    `map_state_to_lifecycle_column` (None) and instead write
-    `cb_state` via `map_state_to_cb_state` (ADR-027 partition fix),
-    so the two column-truths never collide on the
-    `chk_workflows_state` CHECK constraint. The state field emitted
-    on the WS wire is PascalCase (`State::as_pascal_case`,
-    `decision/mod.rs`) so the SDK's `check_control_plane` comparison
-    matches; the HTTP-poll fallback `status_handler`
-    (`backend/src/proxy/handlers.rs`) emits the same PascalCase.
-    WebSocket frames are HMAC-signed with the per-org `secret_key`
-    (`SignedWsMessage::new`, `ws_control.rs`) and the WS upgrade
-    rejects API keys in query strings (SEC-7, `ws_control.rs`).
-    Cross-org envelope leakage is blocked by the `expected_org_id`
-    check in `convert_envelope_to_ws_message` (`ws_control.rs`,
-    NR-094). Chains are fail-safe via TTL only — Redis EXPIRE on
-    the chain key is the sole cleanup mechanism, with no worker
-    reaping stale rows.
+    Delivery is a WebSocket push to connected agents, and it is
+    authenticated per organisation: frames are signed, an upgrade that
+    tries to carry a credential in the query string is refused, and
+    an envelope belonging to a different organisation is dropped
+    rather than forwarded. An agent that cannot hold a WebSocket open
+    falls back to polling, and that path is bounded by a short
+    server-side cache window, so a workflow observed only by polling
+    reflects the new state at most about a minute late. If both
+    channels are unavailable, the agent learns of the kill on its next
+    gate call, which makes the worst case roughly one LLM call.
 
-    Workflow lifecycle writes are split across three concerns: the
-    CB runtime (in-memory + Redis), the DB lifecycle row
-    (`update_workflow_state` with `chk_workflows_state`-safe
-    mapping), and the EventBus broadcast. Each handler emits a
-    `tracing::warn!` plus a `record_audit_event_simple` row carrying
-    `actor_type` / `actor_id` (kill: P0-19, pause: DEF-TS12GRT-001 —
-    see `workflows.rs`), so a manual kill surfaces in both
-    `docker logs` and `/control-center/audit-log`. The same
-    EventBus payload drives three downstream consumers: WS
-    subscribers, alert dispatch
-    (`crate::alert::dispatch_workflow_state_alert`), and the
-    policy-cache invalidation. Chain context is a separate, opt-in
-    construct — `with chain(...)` only matters when soft-mode budget
-    is on, and the chain dies on first of `op="end"` / 5-minute
-    idle TTL / max-duration TTL.
+    A chain is a separate, opt-in construct. It is created on the
+    first gate call inside the context manager and ends on whichever
+    comes first: the context manager closing, a five-minute idle
+    window, or the configured maximum chain duration. The idle window
+    is fixed rather than configurable, so an agent doing long work
+    between calls has to send a heartbeat roughly every thirty
+    seconds or the chain lapses mid-run. Chains exist to give
+    soft-mode budget gating something to reason about — with an active
+    chain the gate can let an agent run past its budget up to an
+    overdraft cap. Nothing else depends on them, and there is no
+    background sweeper: expiry of the idle window is what reaps a
+    chain that was never closed.
 
-    The v3.56 split (ADR-011) moved the orchestrator's 10 priority
-    steps into `backend/src/proxy/http/gate/orchestrator.rs`,
-    collapsing the prior 8934-line `gate_internal` into a 3-arm
-    dispatcher via `gate_wire_adapter`. The chosen path keeps the
-    wire contract identical
-    (`GateResponse::{allow, block, require_approval}` are preserved
-    verbatim) but unifies the internal `EvaluationDecision` enum
-    across gate / preview / shadow consumers — closing the 38-arm
-    mismatch where simulation could emit `FALLBACK` while production
-    gate emitted `REQUIRE_APPROVAL`. State separation between
-    `workflows.state` (lifecycle) and `workflows.cb_state` (CB
-    runtime, ADR-027) was the
-    alternative-considered-and-rejected pattern of "single state
-    column" — that column would have tripped CHECK constraints on
-    every CB trip.
-
-    The 5-minute chain idle TTL (`CHAIN_IDLE = 300`,
-    `redis/mod.rs`) is hard-coded; there is no per-organization
-    override, so long-running agents must call `POST /heartbeat`
-    every 30 seconds (`docs/adr/INDEX.md`, streaming ADR) or the
-    chain dies mid-run. The HTTP-poll fallback window is bounded by
-    the gate's `wf_active` cache TTL (60s) — a paused workflow
-    observed only via HTTP polling sees the new state at most one
-    minute late. WebSocket reconnect after a network blip is
-    auto-negotiated, but if both WS and polling are blocked the SDK
-    learns about the kill on the next `/gate` call only — kill
-    latency in the worst case is therefore one LLM-call duration.
-    `Killed` is terminal with no documented reactivation path; a
-    "re-killed" workflow must be re-created as a new workflow.
+    A single state change fans out to several consumers — connected
+    agents, alerting, the dashboard, and policy cache invalidation —
+    so a pause takes effect consistently across enforcement and
+    reporting rather than in one of them.

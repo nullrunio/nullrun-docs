@@ -116,91 +116,34 @@ who did what to whom.
 
 !!! info "Deep dive"
 
-    Four-role matrix in `backend/src/auth/rbac.rs::Role`
-    (`Viewer < Operator < Admin < Owner`, an `Ord` enum so
-    capability checks can compare tiers). Storage-side roles live
-    in `db::OrganizationRole` — three names match (`Viewer /
-    Admin / Owner`) and one diverges: `Operator` is a
-    runtime-action tier between Admin and Viewer, while `Member`
-    is the storage tier for "regular user". The two enums are
-    NOT isomorphic; the bridge `Role::to_organization_role`
-    returns `None` for `Operator` so callers must explicitly
-    decide whether to fall back to `Member` or reject. Migrations
-    345 + 346 add `CHECK` constraints on the DB column so the
-    storage side stays the source of truth.
+    Roles are ranked rather than a flat set: viewer sits below
+    operator, operator below admin, admin below owner, and a
+    capability check compares tiers instead of matching names.
+    Operator is a tier in its own right — allowed to approve,
+    not allowed to change membership — and where a role crosses
+    into organization storage it is recorded as an ordinary
+    member rather than passed along as a tier comparison.
 
-    Owner authority is **bootstrap**: the
-    `organizations.owner_user_id` column grants it regardless of
-    plan. Admin authority is gated on
-    `plan::contract::Capability::Rbac` —
-    `team.rs::check_caller_is_admin_or_owner` calls
-    `resolve_plan_for_org_overlay_strict()` (ADR-057
-    trial-aware) and returns 503 + `Retry-After: 5` on plan
-    lookup failure (fail-CLOSED per `CLAUDE.md §4`). The check
-    honours DB ownership first, then `members.role` — a
-    `role="admin"` row on a plan without `Capability::Rbac` is
-    treated as no admin authority (INV-4 / Sprint N+1 fix).
+    Owner authority is granted when the organization is created
+    and does not depend on the plan, so a downgrade leaves the
+    owner in place. Admin authority does depend on the plan. If
+    the plan cannot be resolved the check refuses with a retry
+    hint rather than returning a permissive answer, and a member
+    row claiming admin on a plan that does not carry the
+    capability grants nothing.
 
-    Seat quota lives on `plan.limits.seats` (migration 137) with a
-    defensive merge to `plan.features.seats` if `limits.seats` is
-    absent. ADR-057 overlays Scale's 50-seat cap for an active
-    Lite trial; `team.rs::invite_handler` reads
-    `db.get_org_trial_state` and substitutes `"scale"` before the
-    cap lookup, with `seats_used >= seats_limit` returning `429
-    seat_limit_exceeded`. Pending invites share the quota
-    (`list_organization_members` is the only counter — invites
-    incur a real cost). Invites fan out via three side-effects:
-    `db.create_organization_invite` writes the row + token,
-    `email::send_invite_email_async` dispatches SMTP and writes
-    `email_send_log` (migration 138), and
-    `alert::dispatch_member_invited_alert` fires the
-    notification bridge so the `member.invite` toggle in the
-    dashboard surfaces.
+    Seats count active members and pending invites together, so
+    an outstanding invite shows its cost before it is accepted.
+    An invite that would cross the cap is refused with a distinct
+    error that the page renders as an upgrade prompt.
+    Self-invites, duplicate pending invites, and invitations to
+    existing members are each rejected outright rather than
+    folded into an existing row. The last owner cannot be demoted
+    or removed, and removing anyone ends their sessions for that
+    organization so a live session cannot outlive the membership.
 
-    The sole-owner invariant is structural — migrations 345/346
-    add the `CHECK` constraint and the `check_role_minimum` gate
-    refuses to demote the last owner. Seat cap is hard
-    fail-OPEN-with-rev-429 — the operator sees the cap exceeded,
-    no silent seat overage. Self-invite / duplicate pending
-    invite / existing-member all reject with explicit 400s; each
-    path is a guard, not an upsert. `remove_member_handler`
-    immediately calls
-    `SessionManager::revoke_user_org_sessions(member_uuid,
-    org_uuid)` so the removed user cannot keep their cookie alive
-    in that org. Plan resolution down is fail-CLOSED with `503` +
-    `Retry-After` — never returns "false" (no silent fail-OPEN;
-    same family as the gate-side budget cache). ADR-057 trial
-    overlay applies only to *active* trials — a trial whose
-    `expires_at <= now` falls through to the canonical Lite cap.
-
-    Bootstrap owner authority: ownership column wins regardless
-    of plan; plan downgrade does NOT reassign ownership (the DB
-    invariant is preserved by the `update_plan`-time no-op on the
-    owner column). Per-key `last_used_at` updates flow through
-    the `X-API-Key` auth-cache hit path — no separate
-    usage-tracking worker. The sole-owner sole-member gate on
-    org delete (`organization.rs::delete_org_handler`) is
-    mirrored by the team-page DELETE precondition, so the two
-    surfaces can't disagree about who owns the org. Audit emit
-    fires on every invite / resend / revoke / role change /
-    removal — all under `action = team.*` for log search.
-
-    Considered three roles (drop Operator) and chose four:
-    Operator is the "can approve but not mutate" tier that the
-    approvals desk uses; collapsing loses that distinction.
-    Considered per-org plan-gated owner authority and chose
-    bootstrap authority — a downgrade should not strand the owner
-    outside their own org. Considered pending invites not
-    counting toward the seat cap and rejected it — admins need
-    to see the real-time cost of outstanding invites, not be the
-    one who finds out at accept time.
-
-    `Operator` does not exist in `db::OrganizationRole` — every
-    boundary that crosses enums MUST go through
-    `Role::to_organization_role`, never `as_str()` against the
-    sibling enum. Pending 2FA challenges live in memory by
-    default; the Redis-backed `TwoFaStore` (GROWTH-4) keeps
-    pending challenges alive across pod restarts but is opt-in
-    via `with_redis`. Cross-org membership is not modelled —
-    every row in `organization_members` belongs to exactly one
-    org, so the invite token binds a recipient to one org only.
+    A membership belongs to exactly one organization, and an
+    invite token binds its recipient to that organization only.
+    Seat limits are carried by the plan, and an active trial is
+    measured against the trial's own cap; a trial past its term
+    resolves to the standard cap.

@@ -12,20 +12,39 @@
 //      a `nr-sidebar-hidden` body class that hides `.md-sidebar--primary`.
 //      State persisted to localStorage so the choice survives reloads.
 //
-//   3. Section numbered-title caret auto-flips on open/closed via the
-//      `nr-collapsible` class we add in JS (Material's stock behaviour
-//      is unchanged — we just rotate the caret visually).
-//
-//   4. Search dialog — Material's overlay only closes the dialog on
+//   3. Search dialog — Material's overlay only closes the dialog on
 //      a click over the overlay surface. We extend that to "any click
 //      outside `.md-search__inner`" so a click on the page body (or
 //      any non-dialog content) also closes the dialog. The menu-bar
 //      magnifier trigger is hidden in CSS; search remains openable via
 //      the `/` keyboard shortcut.
 //
+//   4. Print page body class — `/print/` gets `nr-print-page` so the
+//      CSS can hide the floating TOC and widen the content column.
+//
+//   5. Mobile sidebar drawer — backdrop, Escape-to-close, and
+//      close-on-navigate for viewports ≤76em.
+//
+//   6. Mermaid diagrams — the `mermaid` superfence (see
+//      `pymdownx.superfences.custom_fences` in mkdocs.yml) renders
+//      every diagram as `<pre class="nr-mermaid">`. The Mermaid
+//      runtime is vendored at `docs/javascripts/mermaid.min.js` and
+//      loaded lazily, only on pages that actually contain a diagram,
+//      so the other ~40 pages don't pay for it. The loader re-runs
+//      on Material's SPA navigation and re-renders on a light/dark
+//      switch.
+//
+//      The `nr-` prefix on the fence class is load-bearing: Material's
+//      own bundle watches for `.mermaid`, claims those nodes, and
+//      lazily fetches the runtime from unpkg.com — which the site CSP
+//      (`script-src 'self'`) blocks, so nothing rendered. Using a
+//      distinct class keeps this loader the only renderer. It also
+//      lets us render into the light DOM, where the site's print and
+//      theme CSS can reach the result — Material renders into a
+//      closed shadow root that neither can.
+//
 // The menu-bar title h1 is intentionally hidden — the menu-bar is just
-// an icon strip; section context lives in the left sidebar. The
-// title-sync hook from earlier revisions has been removed (dead code).
+// an icon strip; section context lives in the left sidebar.
 
 const NR_THEME_KEY = "nullrun-docs-theme";
 
@@ -35,24 +54,17 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     if (!buttons.length) return;
 
     // Map user-facing theme names to Material's expected values.
-    // Two product themes (cream / machined-black) — navy was retired
-    // 2026-08-30 (was a helix-parity hack, not part of the product
-    // design system).
+    // Two product themes: cream (light) and machined-black (dark).
     const themeMap = {
         light: { scheme: "default", primary: "black", accent: "grey", bodyClass: "" },
         dark:  { scheme: "slate",   primary: "white", accent: "grey", bodyClass: "" },
     };
-
-    function clearBodyClasses() {
-        // No-op today (navy retired); kept for future theme additions.
-    }
 
     function applyTheme(name) {
         const t = themeMap[name];
         if (!t) return;
 
         // Material reads these from <body>, not <html>.
-        clearBodyClasses();
         document.body.setAttribute("data-md-color-scheme", t.scheme);
         document.body.setAttribute("data-md-color-primary", t.primary);
         document.body.setAttribute("data-md-color-accent", t.accent);
@@ -142,8 +154,8 @@ const NR_THEME_KEY = "nullrun-docs-theme";
             document.body.classList.toggle("nr-sidebar-open", willOpen);
             document.body.classList.toggle("nr-sidebar-hidden", !willOpen);
         } else {
-            // Desktop: same logic as before the mobile work landed —
-            // collapse / expand via the `nr-sidebar-hidden` toggle.
+            // Desktop: collapse / expand via the `nr-sidebar-hidden`
+            // toggle.
             const willHide = !document.body.classList.contains("nr-sidebar-hidden");
             apply(willHide ? "hidden" : "visible");
         }
@@ -156,24 +168,12 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     });
 })();
 
-/* ── 3. Section caret toggling ─────────────────────────────────────
-   Material's `navigation.sections` already wires up section collapse
-   via the chevron on the right. We add a `nr-collapsible` class so
-   the CSS knows these are accordion sections (vs. plain links). */
-(function initSectionCaret() {
-    document.querySelectorAll(".md-nav--primary .md-nav__item--section").forEach((item) => {
-        item.classList.add("nr-collapsible");
-    });
-})();
-
-/* ── 4. Search dialog — click-outside to close ─────────────────────
+/* ── 3. Search dialog — click-outside to close ─────────────────────
    Material's overlay (`.md-search__overlay` is a `<label for="__search">`
    bound to the hidden checkbox) closes the dialog when clicked, but
    only over the overlay area. If the user focuses the search input
    and then clicks somewhere outside BOTH the dialog and the overlay
-   (e.g. on the body content), the dialog stays open. User feedback
-   2026-09-03: "когда я нажимаю на поле поиска потом клик на страницу
-   — ничего не делает, поиск не убирается". Close the dialog on any
+   (e.g. on the body content), the dialog stays open. Close the dialog on any
    click whose target isn't inside `.md-search__inner` — toggle the
    `__search` checkbox the same way Material's overlay does. We also
    reset focus off the input so the next `/` shortcut reopens cleanly. */
@@ -199,7 +199,7 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     });
 })();
 
-/* ── 5. Print page body class ─────────────────────────────────────────
+/* ── 4. Print page body class ─────────────────────────────────────────
    `/print/` is a single-page printable edition. We add a body class
    when the URL matches so CSS can:
      - hide the right-side TOC (the page is one long document; a
@@ -228,7 +228,7 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     });
 })();
 
-/* ── 6. Mobile sidebar drawer UX (2026-09-12) ────────────────────────
+/* ── 5. Mobile sidebar drawer UX ────────────────────────────────────
    On viewports ≤76em, the sidebar collapses to a drawer that slides
    in from the left when the user taps the hamburger. The matching
    CSS lives in extra.css §16 (backdrop, slide-in animation, body
@@ -317,6 +317,123 @@ const NR_THEME_KEY = "nullrun-docs-theme";
     // mobile drawer position.
     MQ.addEventListener("change", (e) => {
         if (!e.matches) document.body.classList.remove("nr-sidebar-open");
+    });
+})();
+
+/* ── 6. Mermaid diagrams ─────────────────────────────────────────────
+   `pymdownx.superfences` turns every ```mermaid fence into
+   `<pre class="nr-mermaid"><code>…</code></pre>`. Without a runtime
+   on the page that renders as a code block, so we load Mermaid on
+   demand and call `run()` over those elements.
+
+   Loading is lazy on purpose. The vendored bundle is ~2.5 MB
+   (≈800 KB over the wire, then cached by the browser); only four
+   pages carry a diagram, so injecting it from every page would tax
+   every page. `npm`-installed Material was never an option here —
+   the CSP in overrides/main.html is `default-src 'self'` with a
+   locked-down `script-src`, and the same-origin vendored copy keeps
+   that policy intact.
+
+   Before the first pass we rewrite each node's content from
+   `<code>source</code>` to plain `source`. Mermaid reads a node's
+   innerHTML, and the `<code>` wrapper that superfences emits makes it
+   try to detect the diagram type from the literal string `<code>` —
+   which fails with "No diagram type detected". Our snapshot doubles
+   as the reset path for a theme switch, since Mermaid replaces the
+   content with generated SVG and flags the node `data-processed`.
+
+   `securityLevel: "strict"` keeps label text out of raw HTML, and
+   `htmlLabels: false` avoids <foreignObject>, which does not inherit
+   our font stack reliably. */
+(function initMermaid() {
+    // Resolve the docs root from this script's own src so the loader
+    // works from any page depth under `use_directory_urls: true`
+    // (e.g. /concepts/budgets/ would otherwise resolve `../` to
+    // /concepts/ and 404).
+    const self = document.currentScript;
+    const root = self ? new URL("../", self.src).pathname : "/";
+
+    const SELECTOR = ".nr-mermaid";
+    let runtime = null;   // resolved once the script tag has executed
+    let themed = "";      // theme the current SVGs were rendered with
+    let pending = false;  // collapse overlapping async passes
+
+    function isDark() {
+        const attr = document.body.getAttribute("data-md-color-scheme");
+        if (attr) return attr === "slate" || attr === "black";
+        return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    }
+
+    function load() {
+        if (runtime) return runtime;
+        runtime = new Promise((resolve, reject) => {
+            const el = document.createElement("script");
+            el.src = root + "javascripts/mermaid.min.js";
+            el.onload = () => resolve(window.mermaid);
+            el.onerror = () => reject(new Error("mermaid.min.js failed to load"));
+            document.head.appendChild(el);
+        });
+        return runtime;
+    }
+
+    async function render() {
+        if (pending) return;
+        const nodes = Array.from(document.querySelectorAll(SELECTOR));
+        if (!nodes.length) { themed = ""; return; }
+
+        const theme = isDark() ? "dark" : "neutral";
+        if (themed === theme) return;
+
+        pending = true;
+        try {
+            const mermaid = await load();
+            mermaid.initialize({
+                startOnLoad: false,
+                securityLevel: "strict",
+                theme: theme,
+                htmlLabels: false,
+                fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+            });
+
+            for (const node of nodes) {
+                if (!node.hasAttribute("data-nr-mermaid-src")) {
+                    node.setAttribute("data-nr-mermaid-src", node.textContent);
+                }
+                node.removeAttribute("data-processed");
+                node.textContent = node.getAttribute("data-nr-mermaid-src");
+            }
+
+            await mermaid.run({ nodes: nodes });
+            // Reveal only once every diagram on the page has an SVG —
+            // `.nr-mermaid` is `visibility: hidden` until then, so the
+            // raw fence source never flashes inside the frame.
+            for (const node of nodes) {
+                if (node.querySelector("svg")) {
+                    node.setAttribute("data-nr-mermaid-rendered", "");
+                }
+            }
+            themed = theme;
+        } catch (err) {
+            // A malformed diagram shouldn't take the rest of the page
+            // with it — leave the fence as readable text instead, and
+            // clear `themed` so a later pass can retry.
+            themed = "";
+            console.warn("[nullrun-docs] mermaid render failed:", err);
+        } finally {
+            pending = false;
+        }
+    }
+
+    // Material's SPA nav swaps content in place and does not
+    // re-execute this file, so the first paint and every internal
+    // navigation both come through here.
+    render();
+    window.addEventListener("popstate", render);
+
+    // Light/dark switch: re-render the diagrams against the new theme.
+    new MutationObserver(render).observe(document.body, {
+        attributes: true,
+        attributeFilter: ["data-md-color-scheme"],
     });
 })();
 

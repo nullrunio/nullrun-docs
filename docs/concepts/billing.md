@@ -19,8 +19,8 @@ actually has.
 
 The active tab is encoded in the URL via `?tab=billing|plan` so the
 view is shareable + reload-safe. `?tab=plan` is the common inbound
-from upgrade prompts (the at-risk banner, the `TierGate`, the
-legacy `/control-center/plan` URL which now redirects). Anything
+from upgrade prompts (the at-risk banner, the `TierGate`, and the
+`/control-center/plan` URL, which redirects here). Anything
 else — and the default — is the **Billing** tab.
 
 ## The Billing tab
@@ -166,96 +166,38 @@ comparison table before being asked to pay.
 
 !!! info "Deep dive"
 
-    The billing surface lives in `backend/src/billing/`. The
-    `BillingPlan` enum (`backend/src/billing/models.rs`) is the
-    canonical plan identifier — `Lite | Starter | Growth | Scale |
-    EnterpriseUnlimited`, with `enterprise_unlimited` as the
-    canonical id for the Enterprise tier. The legacy `enterprise`
-    string was reclaimed by migration 030 to carry Scale content;
-    the real Enterprise tier lives under `enterprise_unlimited`
-    in the `plans` table. Subscription lifecycle is driven by
-    `SubscriptionStatus` (`models.rs`) — 4-state machine `Active
-    | PastDue | Cancelled | Expired`. State transitions are
-    gated by `can_transition_to`: only `Active → {PastDue,
-    Cancelled, Expired}` and `PastDue → {Active, Cancelled,
-    Expired}` are valid. `Lite` is the implicit pre-checkout
-    state (no `billing_subscriptions` row). Polar integration is
-    in `backend/src/billing/polar.rs`; webhook signature
-    verification (`verify_webhook_signature`) uses
-    `t=<ts>,v1=<hex_hmac>` HMAC-SHA256 with a 5-minute replay
-    window.
+    Plan identity and subscription state are both small state machines.
+    A subscription is always in one of four states â€” active, past due,
+    cancelled, or expired â€” and only a few moves between them are
+    valid: active may go to past due, cancelled, or expired, and past
+    due may go back to active or onwards to cancelled or expired.
+    Anything else is rejected rather than coerced, so status never
+    rewinds implicitly and a failed renewal cannot silently restore a
+    cancelled plan. A free org has no subscription row at all, and that
+    absence is what marks the free tier; a subscription sitting in
+    cancelled or expired status counts as free too.
 
-    The Polar customer portal is NOT a product surface:
-    `create_customer_session` was removed 2026-07-07
-    (`provider.rs` note, `polar.rs`); both **Manage
-    subscription** and **Update payment method** controls render
-    a `mailto:support@nullrun.io` deep-link with a pre-filled
-    subject + body. Auto-checkout on first mount is preserved
-    when `pending_checkout_plan` is set in sessionStorage. There
-    is no `Trialing` state — paid plans go straight to `Active`
-    after Polar checkout; Lite is free forever with no trial. The
-    subscription state machine is strict — invalid transitions
-    fail at `can_transition_to`; no implicit re-billing or status
-    rewind. ADR-039 wires yearly pricing: `BillingPeriod` enum
-    carries `"year"` / `"month"` end-to-end; the wire string is
-    `"year"` to match the frontend
-    `BillingData.billing_cycle: "monthly" | "year"` type.
-    ADR-039 also wires `yearly_price_cents` from the `plans`
-    table — no hard-coded literals. ADR-057 Lite Trial overlay:
-    mid-trial Lite orgs get Scale-equivalent caps
-    (`executions_limit`, `policies_limit`, etc.) without
-    changing `organizations.plan_id`.
-    `is_trial_active(started, expires, now)` is the resolver
-    invariant (`trial_bundle.rs`); `activate_subscription_atomic`
-    clears the trial in-tx (`db/mod.rs`). Deploy-day gated by
-    `NULLRUN_LITE_TRIAL_ENABLED=1`.
+    Prices and capabilities are read from the plan catalog rather than
+    embedded in the page, so the dashboard, the public pricing page,
+    and any direct query against the catalog agree by construction. The
+    catalog is readable without authentication and is cacheable, which
+    is what lets the page shell fetch it once and share the result
+    across both tabs. Yearly pricing is derived from the same monthly
+    figure by a single computation, so the discount shown in the
+    comparison table matches the public pricing page exactly.
 
-    Single source of truth = `plans` table: both `price_cents`
-    and `polar_id` are read at runtime via
-    `Database::get_plan_config(plan)` (`models.rs`); no
-    hard-coded literals in code. `GET /api/v1/plans` is
-    unauthenticated and cacheable: used by both the dashboard
-    shell and the public pricing page. The endpoint lives
-    outside `createApiClient` so the page shell fetches it once
-    and threads it through both tabs. The canonical upgrade-
-    prompt redirect is `TierGate → ?tab=plan`: TierGate on a
-    gated page, the at-risk banner on any page, and the
-    `Upgrade plan` button in a feature empty-state all deep-link
-    to `?tab=plan`. Yearly prices are computed client-side:
-    `computeYearlyPriceCents` matches the public pricing page;
-    the wire value `billing_cycle: "year"` matches the backend
-    `BillingPeriod::Yearly.as_str()`.
+    The Enterprise plan carries the wire identifier
+    `enterprise_unlimited`. Query the catalog by that identifier; the
+    shorter `enterprise` identifier does not name the Enterprise tier.
+    Paid plans have no trial state â€” checkout moves a plan straight to
+    active â€” and the free tier stays free indefinitely.
 
-    The customer portal was retired because the Polar "cancel"
-    button always lost paid users (the portal didn't surface
-    what NullRun charged or why). Removing it forces
-    payment/cancel decisions to `mailto:support@nullrun.io`,
-    where support can route around churn rather than losing the
-    relationship to a vendor UI. The merge of `/billing` and
-    `/plan` into a single URL with `?tab=` came from the
-    operator pattern of asking "should I upgrade and how do I
-    pay" — two pages meant two round-trips for the same
-    decision. The Plan tab is comparison-only; the Billing tab
-    carries the action surface. Anything that looks like a
-    payment decision deep-links to Billing. The `enterprise` id
-    reclaim by migration 030 was a deliberate choice — the
-    legacy `enterprise` id was reused rather than deprecated to
-    avoid an old `subscription` row pointing at a now-missing
-    plan id (which would block `current_period_end`
-    calculations). New rows must use `enterprise_unlimited`;
-    old rows still resolve correctly because the `plans` table
-    carries the id mapping.
-
-    No self-service cancel: cancel is a `mailto:support@nullrun.io`
-    deep-link — `Manage subscription` no longer opens a portal.
-    No customer-side invoice-management portal: invoice
-    downloads are wrapped in `URL.createObjectURL` blobs
-    because `window.open` cannot carry the bearer token. The
-    `enterprise` id on the wire carries Scale content: only
-    `enterprise_unlimited` is the canonical Enterprise id;
-    operators querying by id must use the canonical form.
-    ADR-057 trial overlay is deploy-day gated: the code is
-    shipped (`98df0e5b` local commit) but
-    `NULLRUN_LITE_TRIAL_ENABLED=1` must be flipped before the
-    overlay takes effect for new signups — pre-flip, Lite
-    signups get the canonical Lite caps.
+    There is no self-service customer portal and no self-service
+    cancellation: both subscription management and payment-method
+    updates resolve to a support contact, and an invoice is downloaded
+    through a credentialed request rather than handed to a new window.
+    Every upgrade entry point in the product â€” the prompt on a gated
+    page, the at-risk banner, and the upgrade action in a feature empty
+    state â€” deep-links to the Plan tab, so a comparison is always shown
+    before a payment is requested. The Plan tab stays
+    comparison-only; payment actions live on the Billing tab.

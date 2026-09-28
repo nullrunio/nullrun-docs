@@ -100,7 +100,7 @@ documents every field.
 | `features` | object | Plan-feature flags resolved for this org |
 | `limits` | object | Plan-limits block (workflows, seats, …) |
 | `role` | string \| null | Member role; `null` on API-key path — SDK treats `null` as "role unknown, escalate to session auth" |
-| `workflow_id` | string \| null | Workflow this API key is bound to; `null` on unbound / legacy keys |
+| `workflow_id` | string \| null | Workflow this API key is bound to; `null` on an unbound key |
 | `secret_key` | string \| null | HMAC secret the SDK uses to sign requests — distinct from the API key itself |
 | `key_version` | number \| null | Current active HMAC key version; SDK compares against its cached value to detect rotation |
 
@@ -161,7 +161,7 @@ end-to-end flow.
 | `GET` | `/api/v1/orgs/{org_id}/dashboard` | Dashboard payload |
 | `GET` | `/api/v1/orgs/{org_id}/control-center` | Single-call control-center view (workflows + recent decisions + alerts) |
 | `GET` | `/api/v1/orgs/{org_id}/usage` | Per-key usage breakdown (canonical) |
-| `GET` | `/api/v1/orgs/{org_id}/quota` | Per-key usage breakdown (legacy alias of `/usage` — same payload) |
+| `GET` | `/api/v1/orgs/{org_id}/quota` | Per-key usage breakdown — an alias of `/usage`, same payload |
 | `GET` | `/api/v1/budget/approximate` | Approximate budget view for UI display — see [Budgets → Approximate budget endpoint](../concepts/budgets.md#approximate-budget-endpoint) |
 | `GET` | `/api/v1/orgs/{org_id}/status` | Single-call dashboard status (budget + rate + plan limits + time-to-exhaustion) |
 

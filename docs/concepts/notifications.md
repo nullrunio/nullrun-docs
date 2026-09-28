@@ -133,91 +133,34 @@ alert-rules section, when split out).
 
 !!! info "Deep dive"
 
-    Notification channels live in `backend/src/alert/`. Channel
-    rows are persisted in `alert_channels`; the `ChannelType`
-    enum (`backend/src/alert/models.rs`) is two-valued — `Slack`
-    and `Webhook` — after P1-43 (2026-08-17) removed the `Email`
-    variant because the email backends silently lost deliveries.
-    Slack uses OAuth via
-    `slack_installations.encrypted_bot_token`; webhook channels
-    carry an optional HMAC secret. `AlertManager::send_alert`
-    (`backend/src/alert/managers.rs`) is the dispatch entry — it
-    loads enabled channels, then calls `persist_bridge_alert`
-    which writes the row to the `alerts` table, then rate-limits
-    per `(org_id, detector_type)`, then delivers. The persist
-    step is the ADR-037 §6 fix that closes the "fresh-install org
-    with no channels sees zero rows" gap. Alert rules are
-    evaluated by the cron worker
-    (`backend/src/cron::run_alert_rule_check`), which calls
-    `dispatch_rule_to_channels`
-    (`backend/src/alert/dispatcher.rs`).
+    Two channel types carry signals: Slack, and a generic webhook
+    that posts JSON to any HTTPS receiver. Both receive the same
+    body, so a Slack channel needs no transformation. A channel
+    marked test-only is partitioned away before delivery, so
+    synthetic test payloads never reach a production destination.
 
-    Channel delivery atomicity: `get_enabled_channels` reads
-    `enabled = true` rows and `test_mode = true` channels are
-    partitioned off (P1-26) so real detector emissions never
-    reach channels flagged as test-only. Per-detector rate
-    limit: Redis key
-    `alert:ratelimit:{org_id}:{detector_type}:{window}` enforces
-    1 alert per 15-minute window per org (one bucket per
-    detector kind). HMAC webhook integrity: outgoing webhooks
-    carry `X-NullRun-Signature`, `X-NullRun-Timestamp`,
-    `X-NullRun-Nonce`; the canonical signing string is
-    `<unix_ts>.<nonce>.<body>` and `HMAC-SHA256(secret, payload)`
-    is computed in constant time
-    (`backend/src/alert/webhook_signing.rs`). Replay defence:
-    5-minute clock-skew tolerance + 10-minute Redis nonce TTL —
-    the ledger TTL matches the timestamp-drift window so the
-    ledger can never outlive a valid timestamp. Fail-CLOSED on
-    `notification_settings` lookup: a DB transport error opts
-    the org out (silent opt-out) rather than amplifying during
-    a DB blip (`backend/src/alert/bridges.rs`); the
-    `record_alert_skipped_db_unavailable` counter surfaces the
-    degraded mode. Audit row is always written:
-    `persist_bridge_alert` runs BEFORE the empty-channels
-    early-return, so even an org with zero channels sees the
-    row on `/alerts` — this is the load-bearing placement.
+    A webhook channel with a signing secret gets three headers:
+    `X-NullRun-Signature`, `X-NullRun-Timestamp`, and
+    `X-NullRun-Nonce`. The signature is an HMAC-SHA256 over the
+    timestamp, the nonce, and the body joined in that order, and it
+    is compared in constant time. A receiver should reject a
+    timestamp that differs from its own clock by more than five
+    minutes, and should remember a nonce for ten minutes. The
+    nonce ledger expires on the same horizon as the accepted
+    timestamp window, so it can never outlive a timestamp it exists
+    to defend.
 
-    Per-org opt-out flags: `notification_settings.notify_on_workflow_killed`,
-    `notify_on_approval_required`, etc. are checked by each
-    bridge before constructing the `AlertPayload`. A NULL row
-    reads as `TRUE` (default-on); a DB error reads as `false`
-    (fail-CLOSED). Slack shape: Slack incoming webhooks accept
-    POST JSON, so no Block Kit transform is applied — the same
-    generic JSON body lands in both Slack and Webhook channels.
-    Channel test: `POST /api/alert_channels/{id}/test` posts a
-    synthetic payload; the response surfaces the backend error
-    per channel. Bridge dispatch is fire-and-forget: bridge
-    dispatchers `tokio::spawn` so the calling site stays
-    synchronous — failures are best-effort and never block the
-    producer (`backend/src/alert/bridges.rs`).
+    Delivery is throttled per organization and per detector, at one
+    alert per fifteen minutes per bucket, which means a burst of
+    different alerts sharing a detector collapses into one. Each
+    organization can also opt out of individual event classes; the
+    default is on, and a failure to read that setting is treated as
+    opt-out rather than as a reason to amplify delivery during a
+    dependency blip. A dispatch failure never blocks the producer
+    that raised the alert, and a fan-out that does not land is
+    picked up by a later pass.
 
-    The `Email` channel was removed (P1-43) because SendGrid
-    required explicit opt-in and SES/SMTP were permanent stubs
-    returning `Err`; operators saw deliveries silently lost. The
-    Postgres `alert_channels.channel_type` column kept the
-    `text` type (not ENUM) precisely so old `email` rows parse
-    to `Err("Unknown channel type")` rather than being silently
-    re-promoted to another type — surfaced as 400 on PATCH. The
-    Slack + Webhook pair was chosen because Slack's
-    incoming-webhook shape accepts JSON out of the box (no
-    Block Kit required) and webhook covers arbitrary HTTPS
-    receivers with HMAC verification for the operator who needs
-    PagerDuty / Datadog / oncall rotation. Legacy `pagerduty` /
-    `discord` aliases were removed in Y-3 because they silently
-    downgraded to Slack-shaped Block Kit JSON and never
-    triggered the upstream incident.
-
-    Two channel types only: Slack + Webhook. No native email /
-    SMS / PagerDuty / Discord; legacy aliases (`email`,
-    `pagerduty`, `discord`) surface as explicit `Err` on read.
-    Pre-existing `email` DB rows are read-only: the read path
-    returns `Err`, the write path returns 400, and an operator
-    must delete + re-create as `slack` / `webhook`. The
-    rate-limit bucket is per-detector coarse: bursts of
-    different alerts sharing a `detector_type` collapse to 1
-    per 15 minutes per org. The webhook receiver clock-skew
-    window is fixed at 5 minutes — receivers with more than
-    5-minute clock drift from the sender silently drop the
-    signature check, so the receiver MUST verify
-    `X-NullRun-Timestamp` drift before recomputing the
-    signature.
+    Every alert is recorded for the Alerts page before delivery is
+    attempted and before the channel list is consulted, so an
+    organization with no channels configured still sees the full
+    history of what fired.

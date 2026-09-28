@@ -132,7 +132,7 @@ through to the SDK contextvar).
 
 Some patterns bypass the auto-instrumentation:
 
-- Custom HTTP transport (not `httpx`) — use [`track_llm`](../reference/sdk-api.md#track_llm-manual-usage)
+- Custom HTTP transport (not `httpx`) — use [`track_llm`](../reference/sdk-api.md#runtimetrack_llm-manual-usage)
 - Streaming chunks where the SDK is constructed before the first `@protect` call — call
   `nullrun.patch()` after the late imports
 - A framework not listed above — file an issue at

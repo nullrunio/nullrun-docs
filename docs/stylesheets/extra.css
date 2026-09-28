@@ -1,5 +1,5 @@
 /* ============================================================================
-   NullRun Docs — Neo-brutalist re-skin (2026-08-30)
+   NullRun Docs — Neo-brutalist re-skin
    ----------------------------------------------------------------------------
    Mirrors the visual language of the product site (https://nullrun.io) on
    top of MkDocs Material. Product design system is documented in
@@ -280,14 +280,12 @@ html { scroll-behavior: smooth; }
    header (menu-bar) is independently constrained to the same content
    area via `margin-left: 340px; width: calc(100% - 340px)` (see §4). */
 .md-footer { display: none; }
-/* NOTE: the @media (max-width: 76em) override block that USED to live
-   here was moved into section 16 at the end of the file. The desktop
-   rules that come after this point (`.md-header { margin-left: 340px }`,
+/* NOTE: the mobile (max-width: 76em) overrides live in section 16 at
+   the end of the file, not here. The desktop rules that follow this
+   point (`.md-header { margin-left: 340px }`,
    `.md-main__inner { margin-left: 340px !important }`, etc.) carry the
    same specificity as the mobile overrides, so source order decides —
-   and the desktop rules sit AFTER the old mobile block, so they won.
-   Consolidation in section 16 puts the mobile rules at the bottom of
-   the cascade, after every desktop rule, so they actually win. */
+   and the mobile rules have to come last in the cascade to win. */
 
 /* ── Sidebar hidden via header hamburger ────────────────────────────
    The user clicks the `nr-sidebar-toggle` button (overrides/partials/
@@ -401,9 +399,9 @@ svg {
   stroke-width: 2;
 }
 
-/* Search trigger (`.md-search__icon.md-icon[for="__search"]`) is hidden
-   per user request 2026-09-03 — the menu-bar magnifier has been
-   removed from the design. Search itself stays functional: Material's
+/* The menu-bar magnifier (`.md-search__icon.md-icon[for="__search"]`)
+   is not part of the design, so the trigger is hidden. Search itself
+   stays functional: Material's
    `__search` checkbox + dialog overlay continue to render when search
    is opened, and the `/` keyboard shortcut (Material default) still
    toggles the dialog. The other `.md-search__icon.md-icon` instances
@@ -421,8 +419,7 @@ svg {
    (`data-md-color-primary="white"` + `data-md-color-scheme="slate"`),
    that variable evaluates to `hsla(0,0%,0%,0.54)` — black at 54% alpha
    — which renders as dark-on-dark and is unreadable on the search
-   dialog surface (user feedback 2026-09-03: "слово Search на темной
-   теме — черного цвета"). Force a theme-aware muted foreground on
+   dialog surface. Force a theme-aware muted foreground on
    the placeholder in both themes; in dark theme that's the same
    `--md-default-fg-color--light` we use for secondary text everywhere
    else (lifted neutral #999999). The `!important` is required to
@@ -446,9 +443,7 @@ svg {
    menu item. Without this bridge, the cursor passes through the gap
    (the popup is `position: absolute; top: calc(100% + 4px)` and
    therefore not in normal flow), leaves `.nr-theme`, and the popup
-   closes mid-flight — user feedback 2026-09-03: "как только я хочу
-   выбрать тему - список пропадает. Работает только если кликнуть на
-   иконку темы". `:focus-within` keeps the popup open after a click
+   closes mid-flight. `:focus-within` keeps the popup open after a click
    (button retains focus while the cursor moves), but plain hover is
    broken without this bridge. The pseudo-element is a descendant of
    `.nr-theme`, so hovering it keeps `.nr-theme:hover` true and the
@@ -585,12 +580,7 @@ body.nr-sidebar-hidden .md-sidebar--primary {
    pages that have TOC entries (Material's JS toggles `display` based
    on heading count).
 
-   2026-08-30 — reverted to Material stock styling (user feedback:
-   "должен быть как был раньше, без этих рамок, границ и скролов").
-   The neo-brutalist border-left spine, FLAG-accent active marker,
-   IBM Plex Mono title, and opaque background have all been removed.
-
-   2026-08-30 (later) — two overrides remain so the TOC sits flush
+   Material's stock styling, with two overrides so the TOC sits flush
    against the right viewport edge AND scrolls naturally with the
    page instead of pinning to viewport-top:
      1. `position: static !important` — keeps the TOC in normal
@@ -639,20 +629,82 @@ body.nr-sidebar-hidden .md-sidebar--primary {
   letter-spacing: 0.01em;
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
   text-transform: uppercase;
+  /* Material ships `pointer-events: none` on a section's `.md-nav__link`
+     and drives the toggle from somewhere else. Here the section title
+     *is* the toggle — a `<label for="__nav_N">` bound to the checkbox
+     that expands the chapter — so it has to take pointer events, or
+     clicking a chapter title lands on the inert `<li>` above it and
+     nothing happens. */
+  pointer-events: auto;
+  cursor: pointer;
 }
 .md-nav--primary .md-nav__item--section > .md-nav__link:hover {
   color: var(--nr-sidebar-active);
   background-color: var(--nr-sidebar-spacer);
 }
 .md-nav--primary .md-nav__item--section > .md-nav__link::after {
-  width: 0.7rem;
-  height: 0.7rem;
+  /* The chevron is drawn here rather than inherited from Material:
+     Material hides the icons it puts inside a section link, and this
+     pseudo-element would otherwise paint nothing at all. */
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
   margin-left: auto;
+  flex: none;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
   transition: transform 200ms ease;
   opacity: 0.6;
 }
-.md-nav--primary .md-nav__item--section.md-nav__item--expanded > .md-nav__link::after {
-  transform: rotate(90deg);
+.md-nav--primary .md-nav__item--section > .md-nav__link:hover::after {
+  opacity: 1;
+}
+/* Open state. Material expands the chapter off the checkbox rather than
+   a class on the item, so the rotation keys off `:checked ~` too. */
+.md-nav--primary .md-nav__item--section > .md-nav__toggle:checked ~ .md-nav__link::after {
+  transform: rotate(45deg);
+}
+
+/* Chapter collapse.
+   Material collapses a chapter only inside the off-canvas drawer. From
+   76.25em up, its own `.md-nav__item--section > .md-nav` rule forces
+   `display: block`, which outranks the `.md-nav__toggle ~ .md-nav`
+   rule that would otherwise make the chapter a 0fr grid — so on any
+   laptop or desktop the sidebar is one long list and clicking a
+   chapter title changes only the chevron.
+
+   The markup is already built for the collapse: every chapter renders
+   a hidden `<input class="md-nav__toggle">` next to its title, and
+   Material pre-checks the input of the chapter holding the active page
+   so the current page's own chapter opens by itself. All that is
+   missing is the grid collapse at the widths where the sidebar is
+   docked rather than in a drawer, so these rules are scoped to 60em —
+   below it Material's own drawer rules are left in charge. */
+@media screen and (min-width: 60em) {
+  .md-nav--primary .md-nav__item--section > .md-nav {
+    display: grid;
+    grid-template-rows: minmax(0.4rem, 0fr);
+    opacity: 0;
+    transition: grid-template-rows 0.25s cubic-bezier(0.86, 0, 0.07, 1),
+      opacity 0.25s, visibility 0s 0.25s;
+    visibility: collapse;
+  }
+
+  .md-nav--primary .md-nav__item--section > .md-nav__toggle:checked ~ .md-nav {
+    grid-template-rows: minmax(0.4rem, 1fr);
+    opacity: 1;
+    transition: grid-template-rows 0.25s cubic-bezier(0.86, 0, 0.07, 1),
+      opacity 0.15s 0.1s, visibility 0s;
+    visibility: visible;
+  }
+
+  /* The grid child has to be allowed to shrink past its content for
+     the 0fr row to have anything to collapse. */
+  .md-nav--primary .md-nav__item--section > .md-nav > .md-nav__list {
+    min-height: 0;
+    overflow: hidden;
+  }
 }
 
 .md-nav--primary .md-nav__item:not(.md-nav__item--section) .md-nav__link {
@@ -1152,9 +1204,8 @@ article.md-content__inner,
      here — Material's JS tracks scroll position via inline `top`
      (~3.2rem below the menu-bar). Setting `bottom` alongside that
      `top` stretches the button to fill the gap between them
-     (~486px tall on phone, ~942px on tablet), which is the bug the
-     user reported on 2026-09-12 ("кнопка Back to Top огромного
-     размера"). The `transform: translate(-50%)` Material uses to
+     (~486px tall on phone, ~942px on tablet). The
+     `transform: translate(-50%)` Material uses to
      centre horizontally also has to go — otherwise the button ends
      up half-off the right edge after the right:16px offset.
 
@@ -1463,7 +1514,7 @@ body.nr-print-page .md-content {
 }
 
 /* ============================================================================
-   16. MOBILE — phone / tablet overrides (2026-09-12)
+   16. MOBILE — phone / tablet overrides
    ----------------------------------------------------------------------------
    Three breakpoints sit between Material's stock 76em (1216px) and the
    phone floor at 320px. All rules use `@media screen and (max-width: …)`
@@ -1689,13 +1740,19 @@ body.nr-print-page .md-content {
   }
 }
 
-/* Mermaid — wrapper + SVG rules apply at every viewport (the diagrams
+/* Mermaid — the selector is `.nr-mermaid`, not Material's `.mermaid`.
+   See the `pymdownx.superfences` block in mkdocs.yml: Material's
+   bundle claims `.mermaid` nodes and pulls the runtime from a CDN,
+   which the site CSP blocks. The `nr-` class keeps our loader in
+   extra.js (§6) the only renderer.
+
+   Wrapper + SVG rules apply at every viewport (the diagrams
    themselves don't need a separate mobile-only override; the wrapper
    rule does the heavy lifting regardless of breakpoint). The wrapper
    gets the same neo-brutalist frame as code blocks / screenshots —
    2px ink border + 4px offset shadow + cream surface — so diagrams
    feel native to the docs chrome rather than looking like an embed. */
-.mermaid {
+.nr-mermaid {
   display: block;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -1705,8 +1762,17 @@ body.nr-print-page .md-content {
   box-shadow: 4px 4px 0 0 var(--nr-shadow);
   padding: 16px;
   margin: 1em 0;
+  /* Until the runtime swaps in the SVG, the fence is still holding
+     the diagram source. Hide it so no unstyled text flashes in the
+     frame; extra.js sets this back to visible once render() lands. */
+  visibility: hidden;
+  min-height: 80px;
 }
-.mermaid svg {
+.nr-mermaid[data-nr-mermaid-rendered] {
+  visibility: visible;
+  min-height: 0;
+}
+.nr-mermaid svg {
   max-width: 100%;
   height: auto;
   display: block;
@@ -1714,7 +1780,7 @@ body.nr-print-page .md-content {
 @media screen and (max-width: 30em) {
   /* Phone: drop shadow offset to 2px so the 4px shadow doesn't eat
      into the 288px content area; tighter padding. */
-  .mermaid {
+  .nr-mermaid {
     padding: 10px;
     box-shadow: 2px 2px 0 0 var(--nr-shadow);
   }

@@ -28,9 +28,9 @@ down the live state:
 
 Zero-count tiers collapse out of the subtitle so a clean org
 shows just `0 active · 0 resolved` with no visual noise. The
-counts come from the unified `AlertListMeta` payload (per
-ADR-037) and always include the **info** tier alongside
-critical and warning — all three severities surface to operators.
+counts cover every severity tier, so the **info** tier is
+counted alongside critical and warning — all three severities
+surface to operators.
 
 The header action is **Dismiss all (N)** when at least one active
 alert exists; clicking it opens a confirmation Dialog
@@ -140,76 +140,30 @@ API directly even if the page itself doesn't render.
 
 !!! info "Deep dive"
 
-    The Alerts page is served by the alerts HTTP handler.
-    `GET /api/v1/orgs/:org_id/alerts` returns
-    `{ data: AlertResponse[], meta: AlertListMeta }`. The wire
-    shape `AlertListMeta` carries `total`, `critical_count`,
-    `warning_count`, and `info_count` — all three severities
-    surface per ADR-037. The `Alert` domain model defines
-    `AlertSeverity = {Critical, Warning, Info}`, `AlertCategory`
-    = `{Prevented, System}`. Alerts flow in from three producer
-    groups: the `mirror_incident_to_alert` SQL trigger mirroring
-    `prevented_incidents` (Prevented kind), System producers
-    (spend thresholds 80/95/100; `api_key_revoked` classified
-    as Warning), and bridge-mirrored System events.
+    Severity and category answer different questions, and the two
+    dimensions are orthogonal. Severity is urgency: three tiers exist,
+    critical, warning, and info, with nothing in between, so the colour
+    ladder is the only in-band signal available. Category is ownership:
+    a prevented incident can be critical, and a system event can be
+    purely informational. Spend-threshold alerts follow a fixed ladder
+    where 80% and 95% of the cap are warnings and 100% is critical;
+    key revocation is a warning. System-scope alerts are never bound to
+    a workflow, and that invariant is enforced before the record is
+    written rather than checked at read time.
 
-    Severity classification is server-side: `api_key_revoked`
-    is classified as Warning; the severity ladder (80/95
-    Warning, 100 Critical) reserves Critical for hard-block
-    signals. The plan-tier gate is server-side: `Feature::Alerts`
-    is enforced on LIST, dismiss, snooze, and dismiss-all
-    handlers; a Lite user cannot enumerate alerts by API bypass
-    even though the dashboard link is hidden. Header counts
-    match listed rows: `critical_count` / `warning_count` /
-    `info_count` are scoped to the same `?category=` filter
-    so the operator never sees a count that disagrees with
-    what's on screen. Category invariant: System alerts MUST
-    have `workflow_id = None` and `workflow_name = None`; the
-    writer enforces before insert. Dismiss is idempotent:
-    dismissing an already-dismissed alert is a no-op; every
-    dismissal writes one audit row per ADR-009 four-table
-    separation.
+    The header counts and the listed rows are produced by the same
+    query under the same category filter, so a count can never disagree
+    with what is on screen. An alert counts as active when it is not
+    dismissed and either carries no snooze or its snooze has expired;
+    that one predicate drives both the list and every per-severity
+    count. A category filter value that is not recognised is rejected
+    with a 400 that names the supported set instead of being ignored.
 
-    The three-tier active set is
-    `dismissed = false AND (snoozed_until IS NULL OR snoozed_until < now())`
-    — the same predicate is reused by the three
-    `count_active_by_severity` calls, so the `info_count` field
-    reuses the active-set query. `?category=` rejects unknown
-    values: the handler returns 400 with the supported set. The
-    spend-threshold chip ladder is 80% Warning (`blue` tone
-    chip), 95% Warning (`yellow` tone chip), 100% Critical
-    (`red` tone chip) per ADR-037 §5; the wire shape is the
-    same, only the frontend `AlertChip["tone"]` ladder.
-    Severity × category are orthogonal: `prevented × critical`
-    (budget_block) and `system × info` (member_invited) are
-    both real combinations — severity is urgency, category
-    is ownership (ADR-037 §2).
-
-    ADR-037 codifies the `AlertIncidentKind` discriminated
-    union on the frontend mirroring the whitelisted
-    `incident_type` values from `prevented_incidents`, System
-    titles (spend thresholds, `api_key_revoked`), and bridge-
-    mirrored titles (`approval_required`, `workflow_state_change`,
-    `loop_detected`, `policy_violation`, `member_invited`,
-    `api_key_created`) plus catch-alls (`unrecognized`, `other`).
-    The unified `ALERT_DESCRIPTORS` lookup table maps each
-    kind to icon/label/chips/CTA. The taxonomy is enforced in
-    three places that MUST stay aligned: the backend producer
-    sites (the spend-threshold dispatcher, the API-key
-    revocation site, the bridge dispatchers, the cron-rule
-    dispatcher), the SQL mirror trigger
-    (`prevented_incidents` → `alerts`), and the frontend
-    `classifyAlert` classifier.
-
-    Coarse severity enum (3 tiers): no "Investigate" or "Watch"
-    tier between Warning and Info — the chroma ladder (`blue` /
-    `yellow` / `red`) is the only in-band signal between them.
-    Bridge rate-limit bucket of 1/15min/org per detector_type: a
-    burst of bridge alerts sharing a `detector_type` collapses;
-    rapid emissions are silently dropped at the channel layer.
-    Dismiss-all is org-wide: no per-workflow dismissal path —
-    the operator who wants workflow-scoped cleanup must dismiss
-    row-by-row. The snooze trail is column-only: who-snoozed-
-    when is in `alerts.snoozed_until` but the per-row snooze
-    actor is not surfaced on the alerts view — only in the
-    dedicated audit log.
+    Dismissal is idempotent: dismissing an already-dismissed alert
+    changes nothing, and every dismissal writes exactly one audit row.
+    Dismiss-all is organization-wide, and there is no per-workflow bulk
+    path, so an operator cleaning up a single workflow dismisses row by
+    row. A burst of system events of the same kind collapses rather
+    than flooding the feed, so rapid repeated emissions are dropped at
+    the channel layer. The per-row snooze actor is not surfaced on the
+    alerts view; who snoozed and when is recorded in the audit log.

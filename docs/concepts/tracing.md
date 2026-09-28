@@ -200,94 +200,40 @@ the standard OpenAI / Anthropic / Gemini / Cohere clients.
 
 !!! info "Deep dive"
 
-    The trace ingest path is `trace_middleware`. On every inbound
-    request the middleware reads the `traceparent` header (W3C
-    Trace Context format: `version-trace_id-span_id-flags`),
-    parses it via `TraceContext::from_traceparent`, and stashes it
-    in request extensions so handlers can read
-    `get_trace_id(request)` or `get_trace_context(request)`. The
-    parsed context is forwarded into the trace ingest at
-    `process_span_events_batch` (ADR-014) where
-    `traces.w3c_trace_id` and `spans.w3c_parent_span_id` get
-    populated as sibling columns — the SDK-minted UUID remains
-    the primary key (`TraceRow.w3c_trace_id` is nullable). The
-    read path is the traces handler — the org-scoped list
-    endpoint fetches trace summaries plus per-trace span batches
-    (capped by `MAX_SPANS_PER_TRACE`, default
-    `DEFAULT_SPANS_PER_TRACE = 10`) and redacts PII via
-    `proxy::redaction::Redactor` before serialization. The
-    single-trace endpoint
-    (`GET /api/v1/orgs/:org_id/traces/:trace_id`) reconstructs
-    the waterfall tree from `spans.parent_span_id` (DB schema
-    migration 141).
+    Every inbound request is inspected for a W3C `traceparent` header
+    in the usual
+    `version-trace_id-span_id-flags` shape. Extraction is best-effort:
+    a missing or malformed header never blocks ingest, it simply
+    leaves the trace without an external identifier. The
+    SDK-minted identifier remains the canonical identity of a trace
+    and of its audit chain in every case, so a client that does not
+    propagate W3C context is fully supported and still queryable by
+    the id the SDK reports.
 
-    W3C header extraction is best-effort — a missing or malformed
-    `traceparent` MUST NOT block ingest (ADR-014 §"Compliance").
-    When the header is absent, `w3c_trace_id` is `NULL` and the
-    trace remains queryable by its SDK-minted UUID. The audit
-    chain retains the SDK-minted UUID as the canonical identity
-    even when `w3c_trace_id` is populated, so no JOIN / index /
-    FK is re-typed. A sparse partial index
-    `idx_traces_w3c_trace_id_partial` keeps the
-    secondary-identifier index bounded (ADR-014 §"Cons").
-    Per-plan retention is enforced by
-    `decision_history_retention` which reads
-    `plans.features.history_days` live from the DB; the canonical
-    values are 3 (Lite), 7 (Starter), 30 (Growth), 90 (Scale),
-    -1 unlimited (Enterprise) — pinned by migration 002 and the
-    inline `plans` table seeding. Span rows carry a typed
-    `verdict` column (`'allow'` / `'flag'` / `'block'` /
-    `'chain'`); the DB CHECK constraint enforces the four-value
-    domain.
+    Spans arrive in batches rather than one request at a time. A trace
+    is read as a summary plus a span batch, and a per-trace span cap
+    applies; when a trace exceeds it the response marks the trace as
+    truncated so the dashboard can show that more spans exist. The
+    same cap means a run that emits a very large number of spans
+    displays only the leading part of the tree. Because ingest is
+    buffered, back-pressure during heavy traffic can drop spans
+    rather than slow ingest down, and spans still in flight when a
+    process dies without a clean shutdown are lost.
 
-    The auto-instrumentation emits one span per LLM call and one
-    per `@protect` invocation; `with workflow()` / `with chain()`
-    / `with span()` context managers emit a parent span that the
-    per-call spans nest under. Sub-agent orchestration propagates
-    the W3C `traceparent` so a supervisor's child spans appear
-    under the supervisor's trace_id in the waterfall. Per-trace
-    PII redaction is applied at the read boundary (Redactor
-    usage) — the allowlist inside the config keeps well-known
-    identifier fields (`span_id`, `trace_id`, `w3c_trace_id`,
-    `w3c_parent_span_id`) intact, but everything else in
-    `metadata` / `name` / `error` / `root_span_name` runs through
-    the deny-list redactor before serialization. The `decision`
-    field on a span is `verdict` — never `metadata.policy_decision`.
-    When the SDK process crashes before the buffer flush,
-    in-flight spans are lost — `init()` auto-registers
-    `nullrun.shutdown(flush=True)` via `atexit`, so a clean
-    process exit always flushes.
+    Span context nests structurally. The context managers emit the
+    parent span and each protected call emits a child under it, so a
+    supervisor that calls sub-agents shows one tree rather than
+    several. Redaction is applied at the read boundary, before
+    anything is returned: identifier fields needed to reconstruct the
+    tree pass through intact, while names, metadata and error text are
+    filtered. Each span carries a single typed decision drawn from
+    `allow`, `flag`, `block` and `chain`, and that value is what the
+    dashboard and the audit log both display.
 
-    Per ADR-014, the trace ingest carries sibling
-    `w3c_trace_id` / `w3c_parent_span_id` columns: existing SDKs
-    that don't extract `traceparent` continue to write `NULL`
-    (backward-compat), JOINs and audit-chain references are
-    unchanged (no FK changes), a future rename to W3C hex
-    becomes a key-swap rather than a re-typing (forward-compat),
-    and a future `nullrun-otlp-exporter` can read `w3c_trace_id`
-    and emit it as the OTLP trace ID (OTLP-friendly). The typed
-    `verdict` column (migration 274) keeps the audit log and
-    dashboard labels aligned on the same decision. Span retention
-    is per-plan, not global — Scale and Enterprise customers
-    have materially different cost-to-store trade-offs.
-
-    Retention is independent of the trace *generation* caps —
-    Lite throttles at 10 000 tokens/hour and 75 000
-    executions/month (`db` features payload), so traces stop
-    accumulating well before the 3-day window applies. After the
-    retention window expires, the trace is removed from the
-    dashboard; the aggregated cost information is summarized per
-    workflow per period and survives. The W3C header extraction
-    is best-effort on both ends — only SDKs that call the W3C
-    propagation helper populate `w3c_trace_id` (others leave it
-    `NULL`). The partial index on `w3c_trace_id` keeps lookup
-    bounded but means a full UUID join remains the path for SDKs
-    that do not populate the W3C context. The frontend's
-    `SpanRow.tsx` reads the backend's typed `verdict` column
-    directly. The trace ingest batches via
-    `process_span_events_batch` — there is no synchronous
-    per-span INSERT path; back-pressure on the batch buffer
-    shows up as dropped spans during high traffic. Per-trace
-    span count is capped (`MAX_SPANS_PER_TRACE`) and the response
-    marks truncated rows via `truncated_trace_ids` so the
-    dashboard can show a "show more" indicator.
+    Retention is per plan and independent of the caps that limit how
+    much traffic a plan may generate — a workflow that is throttled
+    stops producing traces well before its retention window elapses.
+    When a trace does expire, the aggregated cost figures survive,
+    summarised per workflow per period, so spend stays reportable after
+    the detail is gone. Exporting before expiry produces JSON in the
+    same shape as the wire format.

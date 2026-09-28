@@ -30,16 +30,17 @@ home: true
   </div>
 </section>
 
-<section class="nr-section md-grid md-typeset">
-  <h2 class="nr-section__title">How it fits together</h2>
+<section class="nr-section md-grid md-typeset" markdown="1">
+## How it fits together
+
 ```mermaid
 flowchart LR
-  Agent["Your agent<br/>(Python SDK)"] -->|"@protect"| Gate
-  Gate -->|"budget pre-flight<br/>policy fetch"| Gateway["NullRun gateway"]
-  Gateway -->|"plan limit<br/>rate limit<br/>ToolBlock check"| Decision{"allow?"}
+  Agent["Your agent<br/>(Python SDK)"] -->|"@protect"| Gateway["NullRun gateway"]
+  Gateway -->|"budget pre-flight<br/>policy fetch"| Decision{"allow?"}
   Decision -->|"yes"| Body["wrapped function runs"]
   Decision -->|"no"| Block["raise NullRunBlockedException"]
-  Gateway -.->|"control plane<br/>(WebSocket)"| Kill["kill / pause<br/>from dashboard"]
+  Operator["operator"] -.->|"kill / pause"| Gateway
+  Gateway -.->|"control plane<br/>(WebSocket)"| Agent
 ```
 </section>
 
@@ -149,44 +150,42 @@ flowchart LR
   </div>
 </section>
 
-<section class="nr-section md-grid md-typeset">
-  <h2 class="nr-section__title">Wire it up in 30 lines</h2>
+<section class="nr-section md-grid md-typeset" markdown="1">
+## What one protected call looks like
+
 ```mermaid
 sequenceDiagram
-  participant U as Your code
-  participant SDK as nullrun SDK
+  participant A as Your code
+  participant S as NullRun SDK
   participant G as NullRun gateway
-  participant DB as Dashboard
+  participant O as Operator
 
-  U->>SDK: from nullrun import init, protect
-  U->>SDK: init(api_key="nr_live_...")
-  Note over SDK: fetches HMAC secret via /api/v1/auth/verify
-
-  U->>SDK: with workflow("user-123"):<br/>  @protect<br/>  def step(): ...
-
-  loop every @protect call
-    U->>SDK: step()
-    SDK->>G: POST /api/v1/gate (with projected cost)
-    G-->>SDK: {decision: "allow"}
-    SDK->>SDK: run wrapped function
-    SDK->>G: POST /api/v1/track (actual cost)
-  end
-
-  DB->>G: operator clicks Kill
-  G-->>SDK: WS push: StateChange(killed)
-  SDK->>U: raise WorkflowKilledInterrupt
+  A->>S: run a protected call
+  S->>G: gate check (tool name, projected cost)
+  G-->>S: allow
+  S->>A: run the wrapped function
+  S->>G: track the actual cost
+  O->>G: kill or pause the workflow
+  G-->>S: state change over the control plane
+  S-->>A: raise WorkflowKilledInterrupt
 ```
-<figcaption>End-to-end: SDK wiring, gate evaluation, kill signal path.</figcaption>
+
+*End-to-end: the gate evaluation, cost accounting, and the kill path.*
 </section>
 
 <section class="nr-section md-grid md-typeset">
-  <h2 class="nr-section__title">Managed runtime, not a self-hosted deployment</h2>
+  <h2 class="nr-section__title">How the runtime fits together</h2>
   <p>
-    NullRun runs as a managed control plane at <a href="https://nullrun.io">nullrun.io</a>.
-    There is no self-hosted deployment option today. The Python
-    SDK runs inside your process and talks to the hosted gateway
-    over HTTPS; the dashboard at <code>nullrun.io</code> hosts the
-    control plane. See
+    The Python SDK runs inside your own process and talks to the
+    NullRun gateway over HTTPS. Every gate decision, budget
+    reservation, and cost event travels over that connection — the
+    SDK adds a network round-trip and nothing else to your
+    deployment.
+  </p>
+  <p>
+    Policies, workflows, approvals, and the operator controls live in
+    the NullRun dashboard, which is where your team configures what
+    the gate enforces. See
     <a href="https://docs.nullrun.io/">the docs</a> for the SDK
     surface and <a href="https://nullrun.io/about">/about</a> for
     the runtime contract.

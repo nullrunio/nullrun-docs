@@ -179,72 +179,42 @@ unavailable", never as `≈ $0 spent`.
 
 !!! info "Deep dive"
 
-    The authoritative counter is `org:{id}:bp:{period_start_ts}:cost_cents`
-    in Redis (mirrored by `:cost_millicents` for sub-cent precision per
-    DEF-07-02), with `period_start_ts` computed server-side by
-    `compute_calendar_month_period` and passed to `reserve_v3.lua` as
-    `ARGV[21]` / `ARGV[22]` (ADR-026 / v3.64) — the script reads
-    `redis.call('TIME')` for `now` but trusts the backend-computed
-    period so no `2629800` approximation runs in the production path.
-    `/track` flows through `consume_v3.lua`, which parses the
-    `cjson.encode`d reservation record from `budget:reserved:{org}:{exec}`
-    to recover `authorized_cents` and compares `actual` against
-    `authorized + epsilon_cents` (fixed cents, default 1¢ — ADR-005); on
-    `actual > authorized + ε` the script INCRBYs the period counter on
-    actual spend, DELs the envelope, stamps
-    `consumed_at = "overage_unreconciled"` + `status = "overage"`, and
-    returns `CONSUME_OVERBUDGET` (HTTP 422). The 4-table audit separation
-    (ADR-009) keeps the period counter in Redis for fast enforcement
-    while `cost_events` flows through the Postgres outbox for durable
-    history; the `ApproximateBudget` endpoint at
-    `backend/src/proxy/http/budget.rs` walks Redis → Postgres outbox →
-    last-known cache and returns 503 `BUDGET_DATA_UNAVAILABLE` (5s
-    `Retry-After`) when all three miss.
+    Spend is counted per organization per billing period. The period
+    start is computed once, server-side, and bound into every
+    reservation made for an execution, so the gate decision and the
+    later commit for the same call always land in the same period even
+    when a rollover happens in between. Spend within a period is
+    monotonic: it returns to zero only when the period ends.
 
-    The reserve / consume pair is atomic in Lua: `reserve_v3.lua` HSETs
-    `reserved_cents` on the binding before the period INCRBY so a retry
-    between Lua return and Rust outbox commit sees `status='reserved'`
-    and returns `{prior_cents, "OK", "REPLAY"}` instead of double-INCRBY
-    (AUDIT P0-05), and `/track` idempotency keys on the binding's
-    `status` field (`consumed` → `IDEMPOTENT_REPLAY`; `overage` →
-    `CONSUME_OVERBUDGET` with the same 5-tuple the first call produced).
-    The aggregator at `backend/src/proxy/policy_cache.rs::aggregate_policies_with_mode`
-    runs `min()` over `budget_cents` across both scopes but stores the
-    wf-only and org-only minima independently (`wf_budget_cents`,
-    `policy_org_ceiling_cents`); Lua §6a enforces the always-strict
-    org ceiling first, §5.5 pre-computes the wf ceiling state, and §6
-    enforces it (Hard mode) or inside the soft-pass branch (Soft mode,
-    gated on `enforcement_mode=Soft` + active `chain_id` + projected
-    within `max_overdraft_cents` AND `max_overdraft_percent`). N
-    concurrent chains share one org overdraft counter — they do NOT
-    multiply the cap.
+    Enforcement uses the lower of the organization ceiling and the
+    workflow budget, and the organization ceiling is always strict. In
+    soft mode an active chain may overdraw by the lower of the
+    configured cent and percentage allowances, and concurrent chains
+    share that one allowance rather than each earning their own. The
+    gate reserves the projected cost before the model runs; the actual
+    cost is reported afterwards and must fit inside the reserved amount
+    plus a fixed tolerance, one cent by default and configurable per
+    policy. A cost above that tolerance is never silently re-reserved:
+    the commit is rejected with `CONSUME_OVERBUDGET` while the period
+    counter still reflects the real spend. The tolerance is a fixed
+    number of cents rather than a percentage, so the drift a bad
+    projection can absorb does not grow with the size of the budget.
 
-    The period-start is bound from the `org.billing.period_start`
-    column at reservation time (ADR-026), so `/gate` and `/track` for
-    the same execution always land on the same period bucket. The
-    `ApproximateBudget` three-tier fallback (Redis → Postgres →
-    last-known) was chosen over a single source because Redis can be
-    unavailable during a period rollover and Postgres outbox lag is
-    sub-second to ~2s — three confidence bands (`High` / `Medium` /
-    `Low`) let the UI render the value with the right caveat.
-    Percentage ε was considered and rejected (ADR-005 §"Why fixed
-    cents") because the abuse surface is unbounded — fixed 1¢ caps
-    the drift to a single cent regardless of reserve size, with a
-    per-policy override wired via `policies.consume_epsilon_cents` for
-    the rare operator that needs it.
+    Reservation and commit are both idempotent. A retry that arrives
+    between a successful reservation and the recording of its result
+    finds the reservation already in place and is told so, rather than
+    reserving twice. A repeated commit for the same reservation either
+    replays the original outcome or repeats the same rejection. The
+    authorized amount is sealed when the gate decides, so a commit
+    cannot re-check it against a cap tightened afterwards; the new cap
+    governs the next call, not the one already in flight.
 
-    The `ApproximateBudget` endpoint is advisory only — never feed a
-    gate, rate-limit, or agent-side decision off it; an outage of all
-    three sources returns 503, NOT `≈ $0 spent`. The reservation
-    envelope TTL is 300s (or operator-configured); a `/track` arriving
-    after TTL expiry returns `RESERVATION_NOT_FOUND` and the operator
-    must retry with a fresh `/gate`. `consume_v3.lua`'s
-    orphan-tolerance invariant (`pkey TTL'd → RESERVATION_NOT_FOUND`)
-    treats a malformed reservation record as missing by design, since
-    the cap check is reserved for the gate-bypass case only. Consume
-    time can never revalidate the reserve's commitment against a new
-    operator-tightened cap: the cap is fresh at `/track` (re-fetched
-    in Rust) but the `authorized_cents` ceiling is sealed at `/gate`
-    time. `ε > 5¢` produces a warning at startup (ADR-005) —
-    operators that need wider tolerance should re-evaluate the reserve
-    projection rather than raise ε.
+    The approximate-spend endpoint resolves its answer from the
+    fast-path counter, the durable record, and the last known value, in
+    that order, and reports a confidence level so the caller can
+    qualify the number. It is advisory. When every source is
+    unavailable it returns 503 rather than zero, because a missing
+    figure and an empty one are different claims. A reservation that is
+    never committed expires after a bounded window; a commit arriving
+    after that is reported as a missing reservation, and the caller
+    must gate again to obtain a fresh one.

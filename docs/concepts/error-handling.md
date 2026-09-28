@@ -325,76 +325,41 @@ arm above.
 
 !!! info "Deep dive"
 
-    Wire codes are minted by a single `GateErrorCode` enum. The
-    `#[serde(rename_all = "SCREAMING_SNAKE_CASE")]` derive guarantees
-    the on-the-wire string matches the variant name verbatim (e.g.
-    `BudgetHardBlocked` → `"BUDGET_HARD_BLOCKED"`), and the
-    `as_str()` match arm is the authoritative source of truth —
-    adding a variant is a minor-bump protocol change, renaming is a
-    major bump. HTTP status is per-code: money-math (402),
-    security / ownership (403), lineage lookup miss (404),
-    rate-limit (429), semantic validation (422). The wire envelope
-    shape is `{error_code, error_message, details, retry_after_ms}`;
-    `/gate` and `/execute` route through the same response helper
-    so block decisions carry their canonical HTTP 4xx status on
-    every endpoint. The kill path publishes a
-    `WorkflowEventPayload::StateChanged` to the EventBus, the WS
-    control plane pushes `WsMessage::StateChange` with
-    `WsWorkflowState::Killed`, and the SDK raises
-    `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`).
+    Error codes come from a single catalog, and the wire string is a
+    stable contract: the SDK branches on the code, so adding a code
+    is a minor change while renaming one breaks clients. HTTP status
+    is assigned per code — money-math answers 402, ownership and
+    security answer 403, a lookup miss is 404, a rate limit is 429,
+    and semantic validation is 422. The response envelope carries
+    the code, a human-readable message, details, and the retry delay
+    in milliseconds. The gate is a pre-flight probe that returns a
+    normal status with the decision in the body, while the execute
+    endpoint returns the same block body with a 4xx status, so a
+    client that branches on status first still sees the block.
 
-    Every gate rejection is fail-CLOSED. The orchestrator runs the
-    steps in priority order (`Block > RequireApproval > Allow`) and
-    short-circuits on the first non-Allow, so the SDK sees a 4xx
-    block before any budget envelope is minted. The Lua
-    `RESERVE_SCRIPT` returns typed 5-tuple diagnostics
-    (`{spent, budget, projected}`) so operators can reconstruct the
-    rejection from logs alone. The Redis and Postgres
-    circuit-breakers wrap every gate hot-path site, so a partition
-    short-circuits sub-100ms (`FailClosed` / `Buffered` / `Degraded`
-    modes) instead of hanging on `pool.acquire()`. The kill signal
-    inherits from `NullRunError`, so `except Exception:` catches it
-    alongside every other SDK error; `with nullrun.guard():`
-    re-raises the kill signal (control-plane action, not an SDK
-    failure) while catching every other `NullRunError` and printing
-    the structured four-line developer report.
+    Codes group into three families: decisions, which describe an
+    `allow`, `block`, or `require_approval` outcome; infrastructure,
+    which reports a dependency being unreachable; and transport,
+    which reports a malformed request. The `error_code` field is the
+    stable machine-readable identifier, and the `retryable` flag and
+    retry delay drive the SDK's backoff loop. Approval-flow codes
+    share the 403 and 404 buckets with other ownership and
+    authentication failures, so match on the code rather than the
+    status when you need to tell them apart.
 
-    Wire codes fall into three buckets: **decision** (block / allow /
-    require_approval), **infrastructure** (Redis-down, Postgres-down,
-    `BUDGET_REDIS_UNAVAILABLE`, `IDEMPOTENCY_REDIS_UNAVAILABLE`), and
-    **transport** (`INVALID_JSON` / `INVALID_FIELD` from JSON
-    rejection). The SDK's `exc.error_code` is the stable
-    machine-readable identifier; `exc.retryable` and
-    `exc.retry_after` drive the SDK's retry/backoff loop.
-    Approval-flow codes (`APPROVAL_NOT_FOUND`, `APPROVAL_DENIED`,
-    `APPROVAL_EXPIRED`, `APPROVAL_DIGEST_MISMATCH`,
-    `APPROVAL_TOOL_DIGEST_MISMATCH`, `APPROVAL_REPLAY_REJECTED`,
-    `APPROVAL_NOT_YET_APPROVED`) all share the 403 / 404 buckets
-    with other ownership / auth-family codes. The kill signal flows
-    through the WebSocket envelope as `WsWorkflowState::Killed` →
-    `WsApprovalOutcome::Denied` (or `Expired`) → SDK raises
-    `WorkflowKilledInterrupt`, and the `@nullrun.on_error` hook
-    fires once per `NullRunError`, **including the kill signal** —
-    filter on `error_code` (`"NR-W002"`) to skip it.
+    Every gate rejection is fail-closed. Checks short-circuit on the
+    first non-allow decision, so a blocked call never mints a budget
+    envelope, and a storage partition surfaces as a fast rejection
+    rather than a hang. Idempotency is handled on the gate and
+    tracking endpoints: a network retry returns the stored response
+    instead of a fresh reservation. When budget data is
+    unavailable, the API says so rather than reporting a zero
+    spend — a zero would be a false statement about money the agent
+    may already have spent.
 
-    Wire codes are wire-shape-strict — renaming a `GateErrorCode`
-    variant is a major-bump protocol change because SDK switch
-    statements branch on the string. The HTTP status mapping is
-    per-code; HTTP 200 + block body is intentional for `/gate` (the
-    gate is a pre-flight probe, SDK branches on the body) but
-    `/execute` returns the same 4xx block body so SDKs that branch
-    on HTTP status first (`httpx.raise_for_status`) see the block.
-    The kill signal cannot be silently dropped —
-    `WorkflowKilledInterrupt` inherits from `NullRunError` and
-    `except Exception:` catches it; an SDK that catches only
-    `NullRunBlockedException` and swallows everything else will leak
-    the kill. The `on_error` hook fires for every `NullRunError`
-    including kill — operators who wire Sentry capture on the hook
-    will see kill events; filter on `error_code` (`"NR-W002"`) to
-    skip them. The `is_approximate: true` flag on
-    `ApproximateBudgetResponse` is mandatory — never render a 0¢
-    spend on the 503 path (`BUDGET_DATA_UNAVAILABLE`), only a "data
-    unavailable" CTA. Idempotency on `/gate` and `/track` routes
-    through `IdempotencyStore` (atomic SETNX + atomic Lua mutate)
-    so SDK network retries return the stored response instead of
-    minting a fresh `reservation_id`.
+    The kill signal inherits from `NullRunError`, so a bare
+    `except Exception:` arm catches it, and `guard()` re-raises it
+    so kill always reaches the top of the agent loop. The
+    `@nullrun.on_error` hook fires for every `NullRunError`,
+    including kill; filter on the kill error code if you would
+    rather not see it in your error tracker.

@@ -183,80 +183,42 @@ a call you think should be allowed:
 
 !!! info "Deep dive"
 
-    ToolBlock policies flow through `check_tool_block`, which
-    resolves the canonical tool list as
-    `effective_tools = req.tools ++ req.tool` (TB-1/TB-2/TB-3/TB-4
-    fail-CLOSED trajectory) — singular `tool` is treated as the
-    primary tool when `tools` is absent or empty. The helper
-    looks up the per-key `KeyPolicy.tool_patterns` (set by the
-    aggregator at `aggregate_policies` walking the canonical
-    `tool_pattern` / `blocked_tools` / `tools` keys) and runs
-    `glob_match` for every entry. `glob_match_single` handles
-    single-`*` patterns; `glob_match_multi` splits on every `*`
-    and requires each non-empty literal segment to appear in
-    order. On match, the orchestrator returns
-    `Block { TOOL_BLOCKED }` with `details.matched_pattern` so
-    the audit log records exactly which pattern fired; the bridge
-    at `dispatch_policy_violation_alert` spawns a detached task
-    so a missing db handle never blocks the gate response. The
-    tool name validation at `validate_tool_name` rejects control /
-    newline bytes on BOTH the singular `tool` and every entry of
-    `tools[]` BEFORE the policy check runs.
+    A ToolBlock check operates on the canonical tool name and nothing
+    else. The gate resolves the effective tool list from the request
+    before evaluating anything, so a call carrying one tool and a call
+    carrying a list are treated alike. Patterns are collected from the
+    `tool_pattern`, `blocked_tools` and `tools` keys, trimmed and
+    de-duplicated, so `"bash"` and `"bash "` collapse into one entry.
+    Matching runs case-insensitively against the canonical name, and
+    control characters in either the incoming tool name or a pattern
+    are rejected before the check runs.
 
-    ToolBlock is ALWAYS Hard, regardless of `enforcement_mode`
-    (CLAUDE.md §8). The orchestrator's Step 3 runs before the budget
-    reserve, so a blocked tool never gets a budget envelope minted
-    — the agent never runs an unverified sensitive operation.
-    Pattern length is capped at **4096 bytes per entry**
-    (`MAX_POLICY_PATTERN_BYTES`, `validation`); the cap exists
-    because the matcher scans every pattern on every gate call.
-    The validator rejects four fail-OPEN traps at policy creation:
-    `tool_pattern: ""`, `tool_pattern: []`, `config: {}`, and the
-    PLURAL `tool_patterns` key. The canonical key set is exactly
-    `{tool_pattern, blocked_tools, tools}` — any other key (typo
-    like `block_tools`, `tools_block`, `blocked_tool`) is rejected
-    with a `BadFormat` error, and the matcher is case-insensitive
-    against the canonical tool name (CLAUDE.md §8).
+    The pattern language is small. `*` is the only metacharacter: it
+    matches any run of characters, so `send_*` matches anything
+    starting with `send_` and `bash.*` matches the bare name `bash`
+    as well as dotted continuations like `bash.foo` and `bash.foo.bar`.
+    A pattern with several stars, such as `*.drop_*`, matches when
+    every literal segment appears in order, which is why `*.drop_*`
+    matches `s3.drop_table` but not `s3.execute_drop`. `|` collapses
+    several alternatives into a single entry. Neither `?` nor `**`
+    is supported — both are matched as ordinary characters — and a
+    bare literal matches only itself, never a substring. Each entry is
+    capped at 4096 bytes, bounding the work the matcher does on every
+    gate call.
 
-    Glob variants: `*` alone matches everything; `bash.*`
-    smart-matches `bash` AND `bash.foo` / `bash.foo.bar` (templates
-    ship this shape); `send_*` matches anything starting with
-    `send_`; `*.drop_*` matches `s3.drop_table` because the
-    multi-`*` matcher takes literal segments in order. Alternation
-    via `|` (`bash|sh|shell` collapses three patterns into one
-    entry); no `**`, no `?`, no character classes — those are
-    rejected as literals. The aggregator HashSet-dedups
-    trimmed entries so `"bash"` and `"bash "` (trailing space)
-    collapse to one. `check_tool_block` runs inside
-    `run_gate_orchestrator` Step 3, BEFORE Step 5 rate-limit and
-    Step 9 budget reserve; a blocked tool never reaches the Lua
-    `RESERVE` call.
+    ToolBlock is always hard, independent of a budget's enforcement
+    mode, and it is evaluated ahead of rate-limit and budget
+    accounting, so a blocked call never receives a budget envelope. If
+    the check cannot be evaluated at all, the gate fails closed. A
+    block reports the pattern that fired, which is what the audit log
+    records, so an unexpected block can always be traced to one entry.
 
-    On the absent-`tools` path: when an SDK omits the `tools`
-    field and the key has active `tool_patterns`, the gate fails
-    CLOSED (`check_tool_block` runs). The matcher operates on the
-    canonical tool name only
-    (`glob_match_does_not_look_at_tool_arguments`); operators do
-    NOT write JSONPath rules over tool payloads (CLAUDE.md §"What
-    is NOT stored"). A ToolBlock policy never produces
-    `require_approval` because the two rule types (ToolBlock and
-    approval rule) have distinct config shapes. The 4096-byte
-    cap sits at the longest real-world pattern observed in
-    templates + operator overrides — a 10 MB pattern would burn
-    CPU on every gate call.
-
-    `ToolBlock` policies are gated to **Growth+** plans (Lite /
-    Starter cannot create them; the dashboard greys out creation
-    with an "Upgrade" link), and approval rules are a SEPARATE
-    feature gated by `approvals` (Growth: 20, Scale / Enterprise:
-    unlimited); the gate enforces `approval_rules = 0` server-side
-    on Lite / Starter. The matcher ignores whitespace inside
-    patterns (the LLM-facing tool name is stripped by the SDK before
-    `/check`), so operators who need to match a tool with whitespace
-    in its name must use a wildcard pattern instead of a literal.
-    The `*` pattern alone blocks EVERYTHING — narrowing is the
-    operator's responsibility; the "Effective policy" tab surfaces
-    the merged set so a misconfigured `*` is visible before it
-    ships. The validator's 4096-byte cap is per entry, so operators
-    that need longer patterns must split across multiple entries
-    (HashSet-dedup guarantees no duplicate enforcement).
+    Validation at creation time rejects the configurations that would
+    otherwise mean "block nothing": an empty string, an empty array,
+    an empty config object, and the plural `tool_patterns` key. A typo
+    such as `block_tools` or `blocked_tool` is an error rather than a
+    silently ignored rule. Because `*` on its own blocks everything,
+    narrowing a policy is the operator's responsibility, and the
+    merged effective set is what the dashboard shows before a change
+    ships. Matching never inspects tool arguments: a rule is about
+    which tool runs, not what it is called with.

@@ -14,3 +14,4 @@ docs/.claude-flow/data/pending-insights.jsonl
 .verify-venv/
 Paragraph.md
 .claude/
+infra/

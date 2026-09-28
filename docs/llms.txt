@@ -5,10 +5,8 @@
 > returns `allow`, `block`, or `require_approval`; the SDK or calling
 > application must honor that decision.
 
-NullRun is **managed runtime**, not a self-hosted deployment. The
-gateway and dashboard live in a private repo (access on request
-through `support@nullrun.io`). The Python SDK is the only runtime
-SDK — TypeScript / JavaScript / Go have no equivalent.
+The Python SDK is the only runtime SDK — TypeScript, JavaScript and Go
+have no equivalent.
 
 ## Getting started
 
@@ -31,10 +29,19 @@ SDK — TypeScript / JavaScript / Go have no equivalent.
 - [Tool policies](https://docs.nullrun.io/concepts/tool-policies/): glob match, 4 KB cap, union across scopes
 - [Human approval](https://docs.nullrun.io/concepts/human-approval/): BusinessImpact predicates + action_digest
 - [Error handling](https://docs.nullrun.io/concepts/error-handling/): exception hierarchy, kill signal, multi-layer fail-CLOSED
+- [Approvals (UI surface)](https://docs.nullrun.io/concepts/approvals/): the terminal approvals feed — pending rows, decision buttons, the detail dialog, and the history tab
+- [MCP servers (Action sources)](https://docs.nullrun.io/concepts/mcp-servers/): what an Action Source is, and how to read verified servers, observed ones, and catalog drift
+- [Notifications](https://docs.nullrun.io/concepts/notifications/): alert channels, threshold rules, and the per-event subscription matrix
+- [Alerts](https://docs.nullrun.io/concepts/alerts/): severity-tiered alerts, the KPI tiles, filters, snooze and dismiss
+- [Team](https://docs.nullrun.io/concepts/team/): members, invites, and the owner / admin / operator / viewer role matrix
+- [Billing & Plan](https://docs.nullrun.io/concepts/billing/): subscription, payment and invoices, alongside quota and plan comparison
+- [Organization](https://docs.nullrun.io/concepts/organization/): org identity, DPA acceptance, and the delete-organization flow
+- [Profile settings](https://docs.nullrun.io/concepts/profile/): personal details, two-factor auth, sessions, and account deletion
 
 ## How-to
 
 - [Protect a LangGraph agent](https://docs.nullrun.io/how-to/langgraph/): auto-instrumentation + manual wrapper
+- [Use CrewAI](https://docs.nullrun.io/how-to/crewai/): gate every crew tool and task before it runs
 - [Use with OpenAI Agents](https://docs.nullrun.io/how-to/openai-agents/): install nullrun alongside the OpenAI Agents SDK
 - [Use with FastAPI](https://docs.nullrun.io/how-to/fastapi/): request-scoped `workflow()`, error mapping
 - [LLM frameworks](https://docs.nullrun.io/how-to/llm-frameworks/): coverage matrix for OpenAI, Anthropic, Mistral, Gemini, Cohere, Bedrock, LangChain, LlamaIndex, CrewAI, AutoGen, raw openai SDK
@@ -58,14 +65,19 @@ SDK — TypeScript / JavaScript / Go have no equivalent.
 - [Compliance overview](https://docs.nullrun.io/compliance/): geo-block and sanctions-screening posture
 - [Geographic restrictions](https://docs.nullrun.io/compliance/geo-restrictions/): IP-level blocklists, sanctioned jurisdictions
 - [Sanctions screening](https://docs.nullrun.io/compliance/sanctions-screening/): OFAC SDN signup screening, degraded fallback
+- [Data handling & vendor review](https://docs.nullrun.io/compliance/data-handling/): what data is transmitted and stored, who can access it, and how it is deleted
 
 ## Troubleshooting
 
 - [Troubleshooting](https://docs.nullrun.io/troubleshooting/): common "why is my agent blocked?" questions
 
+## Operations
+
+- [Performance & limits](https://docs.nullrun.io/operations/performance/): latency budgets, failure-mode behaviour, integration limits, timeout handling
+- [Framework & ecosystem positioning](https://docs.nullrun.io/operations/framework-positioning/): how NullRun overlaps with framework-native human-in-the-loop patterns
+
 ## Optional
 
-- [Compliance index](https://docs.nullrun.io/compliance/): geo-block and sanctions-screening posture
 - [Examples repository](https://github.com/nullrunio/nullrun-examples): runnable code (LangGraph, CrewAI, FastAPI)
 - [Python SDK on PyPI](https://pypi.org/project/nullrun/): `pip install nullrun`
 

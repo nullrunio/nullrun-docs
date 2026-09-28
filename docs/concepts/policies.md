@@ -189,86 +189,41 @@ see the exact request that triggered the decision.
 
 !!! info "Deep dive"
 
-    `aggregate_policies` is the single source of truth for the
-    gate's merged view. It iterates the
-    `policies` table once and applies per-type reduction:
-    `BudgetLimit` → `min()` on `config.budget_cents` (split by
-    scope into `budget_cents` / `wf_budget_cents` /
-    `org_budget_cents`); `RateLimit` → `min()` on
-    `max_calls_per_minute`; `ToolBlock` → union across
-    `tool_pattern` / `blocked_tools` / `tools` arrays
-    (HashSet-backed dedup, O(M+N) amortized). The result lands on
-    a `KeyPolicy` per `(org_id, api_key_id)` and is read on
-    every gate call. ADR-011 §"Decision priority" orders the
-    orchestrator at `run_gate_orchestrator` as
-    `Block > RequireApproval > Allow`: workflow_active →
-    parent_ownership → cycle_depth_check (ADR-036) → tool_block
-    (TB-1/TB-4 fail-CLOSED) → business_impact_validate →
-    rate_limit → budget_reserve, with the first non-`Allow`
-    short-circuiting the rest. Soft mode is folded into
-    BudgetLimit via three preconditions (`enforcement_mode=Soft`,
-    active chain, projected within `max_overdraft_cents` AND
-    `max_overdraft_percent`); when any precondition is missing
-    the gate behaves as Hard.
+    The merged view is computed once per policy refresh and is
+    the same value the gate reads on every call, so the set an
+    operator sees on a workflow's effective-policy view is not a
+    second, independent computation that can drift from the one
+    actually enforced. Numeric caps reduce to the smallest value
+    found across every applicable policy, and tool patterns
+    reduce to the union of every applicable list. A tool blocked
+    at one scope cannot be unblocked at another: the merge has no
+    allow arm for a block to lose.
 
-    There is no "allow rule that overrides a block" — the system
-    is conservative on purpose (CLAUDE.md §"There is no allow
-    rule that overrides a block"). ToolBlock is always Hard
-    regardless of `enforcement_mode`: the orchestrator's Step 3
-    runs before the budget reserve, so a blocked tool never gets
-    a budget envelope minted. Approval rules are a SEPARATE rule
-    object — they do NOT share the ToolBlock config schema and
-    have no `action = require_approval` field on a ToolBlock
-    policy. Aggregator ordering is deterministic
-    (`aggregate_policies` runs synchronously on policy refresh
-    and writes into the cache before the gate sees the new
-    state). Per-org aggregate rate limit (ADR-029 §2) is Hard /
-    FailClosed; per-key is FailOpen with the budget gate as the
-    authoritative backstop. ADR-049 (policy aggregator
-    enforcement mode) restricts `enforcement_mode` aggregation to
-    BudgetLimit only — ToolBlock and RateLimit do not carry
-    `enforcement_mode`, so they cannot accidentally flip a Soft
-    BudgetLimit to Hard.
+    Decisions resolve in a fixed order, and the first outcome
+    other than allow short-circuits the rest. Tool blocking is
+    evaluated ahead of any budget reservation, so a call refused
+    for its tool name never has a budget envelope minted for it.
+    A tool block is unconditional: whatever `enforcement_mode` a
+    budget policy carries, a matching pattern blocks. Rate
+    limiting at the organization level is authoritative and
+    refuses the call when it cannot be evaluated; the per-key
+    rate limit is a secondary signal that defers to the budget
+    gate rather than refusing a call on its own.
 
-    Both scopes apply at the same time (no "overrides"). The
-    dashboard's **Effective policy** tab calls
-    `workflows::aggregate_policies` which delegates to the same
-    `policy_cache::aggregate_policies` — single source of truth,
-    so the operator-visible merged set can never drift from the
-    gate's view. Per-key cap `KeyPolicy.max_budget_cents`
-    defaults to 0 (= no per-key budget → fall through to the org
-    plan cap), and `wf_budget_cents: Option<u64>` preserves the
-    `None`/`Some(0)`/`Some(n)` semantics: `None` means "no
-    policy applies, skip wf check"; `Some(0)` is a hard zero
-    ceiling that rejects every call; `Some(n)` enforces the cap.
-    The Rust `execute_with_degraded()` helper on
-    `RedisCircuitBreaker` / `PostgresCircuitBreaker` (ADR-055)
-    wraps every gate hot-path site so an infra partition
-    short-circuits sub-100ms instead of hanging 5–10s on
-    `pool.acquire()`.
+    A per-workflow budget cap is tri-state. No applicable policy
+    means the per-workflow check is skipped entirely, which is a
+    different thing from a cap of zero, which rejects every call.
+    Collapsing the two would let an organization that meant to
+    forbid spending fall through to the organization-wide cap
+    instead.
 
-    The gate pipeline is the direct `check_tool_block → budget
-    check → Lua reservation` flow. Approval rules live in their
-    own table — a ToolBlock config has no typed `BusinessImpact`
-    predicate, so they cannot share a schema. Per ADR-029 §2,
-    per-key rate-limit is FailOpen (not FailClosed) because the
-    budget gate is the authoritative backstop and per-key rate-
-    limit is a secondary signal. The fixed-cents cap (default
-    1¢) for `max_overdraft_percent` is applied after the
-    percentage is multiplied by `max_budget_cents` and the two
-    are min'd (CLAUDE.md §"max_overdraft").
-
-    The aggregator cannot unblock a tool the org blocks — by
-    design; there is no "allow rule" precedence, only unions.
-    `ToolBlock` policies are gated to **Growth+** plans (Lite /
-    Starter cannot create them), and the gate enforces
-    `approval_rules = 0` server-side on Lite / Starter (even if a
-    key was minted on a higher tier and downgraded, rules are
-    retained for audit but no new rule can be created). The
-    aggregator's split-budget tracking (`wf_budget_cents` /
-    `org_budget_cents` / `policy_org_ceiling_cents`) carries
-    Option semantics end-to-end — `wf_budget = 0` is a hard zero
-    ceiling that rejects every call, not "no policy" (ADR-016
-    §2.10). The cache's `entry_version` field guards against
-    split-brain: a write with a stale `policy_version` is
-    rejected as cache miss (CLAUDE.md §31).
+    Soft enforcement belongs to budgets alone and needs three
+    things at once: the policy set to soft, an active chain, and
+    a projected cost inside both the cent and the percentage
+    overdraft limits. If any is missing the budget behaves as
+    hard. Concurrent chains on one organization share a single
+    overdraft counter, so parallelism does not multiply the
+    allowance. Tool-block policies and approval rules are gated
+    to Growth and above; on plans without the feature the server
+    refuses the mutation, and rules inherited from a higher tier
+    are retained for audit while no new one can be created.

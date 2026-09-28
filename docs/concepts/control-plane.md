@@ -165,100 +165,45 @@ and on every reconnect.
 
 !!! info "Deep dive"
 
-    The control plane is a WebSocket at
-    `GET /ws/control/:organization_id` (`ws_control_handler`).
-    Auth is the same `X-API-Key` / `Authorization: Bearer` used on
-    `/gate` / `/track`; SEC-7 explicitly rejects API keys in query
-    strings because query params are routinely captured by
-    reverse-proxy access logs and HTTP referer headers. The upgrade
-    calls `ws.on_upgrade` and lands in `ws_control_socket`; the
-    socket subscribes to `EventBus` for the organization's channel
-    and converts every `WorkflowEventEnvelope` via
-    `convert_envelope_to_ws_message`. State changes are emitted as
-    `WsMessage::StateChange { state: WsWorkflowState, message_id:
-    Option<String> }` — `Paused` and `Killed` carry a `message_id`
-    so the SDK can ACK them. Approvals surface as
-    `WsMessage::ApprovalResolved { outcome: WsApprovalOutcome, note,
-    decided_by, organization_id, ... }`. Frames are HMAC-signed
-    per-org via `SignedWsMessage::new` using the canonical-serialize
-    (RFC 8785 JCS subset) bytes for the signing input. The
-    HTTP-poll fallback lives at
-    `GET /api/v1/status/:workflow_id` (`status_handler`) — it
-    emits `state` as PascalCase (`State::as_pascal_case`) so the
-    SDK's `check_control_plane` matches without casing drift.
+    The control plane is a WebSocket connection authenticated with
+    the same credentials the SDK uses for gate and tracking calls.
+    API keys are never accepted in the query string, because query
+    parameters are routinely captured in access logs and referrer
+    headers. The connection subscribes to the organization's event
+    channel, and every frame is signed per organization. A frame
+    older than the maximum accepted age is rejected, so a receiver
+    whose clock drifts by more than that window will drop
+    otherwise-valid signals. Frames sent before the handshake
+    completes, along with keepalive replies, are unsigned by design.
 
-    State transitions are validated at the source via
-    `State::validate_transition`: `Killed → *` is terminal — no
-    transitions out, ever. The WS frame carries a `version` field
-    per `EventMetadata.sequence` so a re-syncing SDK can detect
-    missed events; the SDK calls `WsMessage::ResyncRequired` to
-    ask for a full re-fetch. Cross-org envelope leakage is blocked
-    at the converter: the `expected_org_id` parameter must match
-    the payload's `organization_id` for the four variants that
-    carry it (`StateChanged` / `PolicyInvalidated` / `KeyRotated` /
-    `ApprovalResolved`); a mismatch drops the event with a
-    `tracing::warn!` and never reaches the wire. WS frames are
-    HMAC-signed with a 5-minute max-age window
-    (`WS_HMAC_MAX_AGE_SECONDS = 300`); pre-auth error frames and
-    keepalive pongs are intentionally unsigned. The status-poll
-    endpoint re-emits state on every call so a disconnected SDK
-    picks up the most recent kill on reconnect, with the original
-    timestamp preserved in the audit log via
-    `record_audit_event_simple` on the kill handler.
+    Each frame carries a sequence number, which lets a reconnecting
+    SDK notice that it missed events and ask for a full resync.
+    State-change frames for pause and kill also carry a message
+    identifier the SDK can acknowledge, so a lost kill frame is not
+    silently lost. Every envelope is checked against the connecting
+    organization before it is converted for the wire; an envelope
+    naming a different organization is dropped rather than
+    delivered.
 
-    The push flow on a kill: `kill_workflow_handler` →
-    `service.kill_workflow` (DB lifecycle UPDATE) →
-    `record_audit_event_simple("workflow.killed")` (audit
-    breadcrumb) → `EventBus::publish(StateChanged { new_state:
-    "killed" })` → `ws_control_socket` subscriber →
-    `convert_envelope_to_ws_message` →
-    `WsMessage::StateChange { state: WsWorkflowState::Killed,
-    message_id }` → SDK raises `WorkflowKilledInterrupt` on the
-    next yield. The same path applies to pause / resume, with
-    `WsWorkflowState::Paused` / `WsWorkflowState::Normal`
-    respectively. Approval resolution takes a parallel path:
-    `approve_handler` → `publish_approval_resolved` → in-process
-    broadcast + Redis pub/sub on `event_bus:approval_resolved`
-    (ADR-023 P0-3) → `WsMessage::ApprovalResolved { outcome:
-    "approved" }` → SDK's `_wait_for_approval_resolution`
-    `threading.Event` wakes up. The SDK's transport
-    auto-negotiates between WS push and HTTP polling; on a
-    persistent disconnect the SDK falls back to polling once per
-    second until the WS comes back.
+    State transitions are validated at the source, and the killed
+    state is terminal — no transition leads out of it, and a killed
+    workflow cannot be reactivated. Kill and pause follow the same
+    route: the transition is recorded, the state change is
+    published, the push channel carries it, and the SDK raises the
+    matching exception at its next yield point. The polling
+    fallback re-reports the current state on every call, so a
+    reconnecting SDK picks up a kill that happened while it was
+    disconnected, with the original timestamp preserved in the audit
+    log.
 
-    WS push moves kill latency from the next polling tick to
-    frame delivery (sub-100ms in production). The HTTP-poll
-    fallback keeps the operator able to kill an agent through a
-    transient network blip instead of failing closed on WS
-    disconnect. The `message_id` ACK pattern means the gate's
-    StateChange events that trigger SDK exception raises are
-    reliably delivered — a lost kill frame would not silently
-    fail to kill an agent. Cross-org envelope validation at the
-    converter (`expected_org_id` check) is the in-process
-    defense-in-depth beyond the channel narrowing. The PascalCase
-    wire encoding (`State::as_pascal_case`) is the canonical
-    form (over the DB UPPERCASE variant) so the SDK's
-    `check_control_plane` comparison matches without casing
-    drift.
-
-    The HTTP-poll fallback is bounded by the gate's `wf_active`
-    cache TTL (60s) — a paused workflow observed only via polling
-    sees the new state at most one minute late. The WS reconnect
-    window after a persistent disconnect depends on the SDK's
-    auto-negotiation; if both WS and polling are blocked, the SDK
-    learns about the kill on the next `/gate` call only — kill
-    latency in the worst case is one LLM-call duration. The WS
-    HMAC `max_age_seconds = 300` is shared with the HTTP HMAC
-    config (`hmac_config.max_age_seconds`); a clock-skew >5min
-    between SDK and backend will reject otherwise-valid frames.
-    Keys with `secret_key = None` skip HMAC signing; for those
-    the server sends raw `WsMessage` (`send_signed_or_raw`
-    fallback) and increments `ws_unsigned_messages_total` so the
-    on-call sees the rotation signal. The
-    `WsMessage::ApprovalResolved` push is opt-in via
-    `?wait_for_approval=true` on the upgrade. Cross-replica
-    fan-out for approval events is best-effort Redis pub/sub — a
-    publish failure logs and is recovered by the next
-    `/approval-state/reconcile` (P1-4) tick. The `Killed`
-    terminal state means a re-killed workflow must be re-created
-    as a new workflow — there is no reactivation path.
+    Push delivery is the fast path, in the sub-100ms range, while
+    the fallback polls once per second. A workflow observed only by
+    polling can reflect a new state as much as a minute late,
+    because the poll reads through a cached workflow-activity
+    value. If both transports are blocked, the SDK learns of a kill
+    on the next gate call, so the worst case is one LLM-call
+    duration. Approval resolution rides the same channel and is
+    requested by the SDK when an agent parks on `require_approval`;
+    fan-out of that event to other replicas is best-effort, and a
+    publish that does not land is recovered by the next
+    reconciliation pass.

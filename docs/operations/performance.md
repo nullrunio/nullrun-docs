@@ -7,10 +7,9 @@ description: Latency budgets, failure-mode behaviour, integration limits, and ti
 # Performance & limits
 
 A consolidated reference for technical buyers evaluating NULLRUN's
-operational characteristics. Every value below is anchored to backend
-code with `file:line` citations; rows marked **Not measured** are honest
-gaps — we surface what we don't know rather than quote a number we
-haven't earned.
+operational characteristics. Every value below reflects the deployed
+product; rows marked **Not measured** are honest gaps — we surface what
+we don't know rather than quote a number we haven't earned.
 
 This page is the load-bearing complement to the
 [Circuit breaker](../concepts/circuit-breaker.md) and
@@ -20,55 +19,60 @@ those explain the *what* and *why*, this page enumerates the
 
 ## Hot-path latency
 
-The gate hot path is **`/api/v1/gate`** → Redis Lua (reserve_v3) →
-Postgres audit outbox. Wall-clock budgets are layered; the inner cap
-is the binding one.
+The gate hot path is **`/api/v1/gate`** → an atomic budget reservation
+against the budget store → an audit outbox write to the state store.
+Wall-clock budgets are layered; the inner cap is the binding one.
 
-| Stage | Bound | Source |
-|---|---|---|
-| Outer HTTP request (`/api/v1/*`) | **30 s** (env `REQUEST_TIMEOUT_SECS`, default 30) | `backend/src/proxy/server.rs` — tower-http `TimeoutLayer` |
-| `/api/v1/gate` inner hard timeout | **5 s** (`GATE_HANDLER_HARD_TIMEOUT`) | `backend/src/proxy/http/gate/gate.rs` — on expiry returns 402 `BUDGET_REDIS_UNAVAILABLE` |
-| Gate orchestrator inner hard timeout | **3 s** (`ORCHESTRATOR_HARD_TIMEOUT`) | `backend/src/proxy/http/gate/internal.rs` — on expiry returns 402 + `redis_unavailable_inc("gate_timeout")` |
-| `/api/v1/execute` inner timeout | **None** — relies on outer 30 s + Redis breaker fail-fast (<100 ms once tripped) | `backend/src/proxy/http/gate/execute.rs` |
-| `/api/v1/track` inner timeout | **None** — relies on outer 30 s | `backend/src/proxy/handlers.rs` |
-| `reserve_v3.lua` SCAN loop cap | **256 iterations** (`MAX_SCAN_ITERATIONS`, raised from 16 by NR-073) | `backend/src/redis/scripts/reserve_v3.lua` |
-| `reserve_v3.lua` SCAN `COUNT` per iter | **1 000** (256 k slot visits worst case) | `reserve_v3.lua` |
-| `RESERVED_SCANNED_PARTIAL` return | typed `{-1, "RESERVED_SCANNED_PARTIAL", reserved, projected}` — fail-CLOSED 402, never silent truncation | `reserve_v3.lua` |
-| Redis pool `wait_timeout` | **5 000 ms** (env `REDIS_POOL_TIMEOUT_MS`) | `backend/src/redis/pool.rs` |
-| Redis pool `create_timeout` | **10 s** (env `REDIS_ACQUIRE_TIMEOUT`, clamp 1–60 s) | `backend/src/redis/pool.rs` |
-| Redis pool `max_size` | **32** (env `REDIS_POOL_MAX_SIZE`) | `backend/src/redis/pool.rs` |
-| Postgres pool `acquire_timeout` | **10 s** | `backend/src/db/mod.rs` |
-| Postgres `statement_timeout` (per-connection) | **30 000 ms** (env `NULLRUN_DB_STATEMENT_TIMEOUT_MS`) | `backend/src/db/mod.rs` GUC setup |
+| Stage | Bound |
+| --- | --- |
+| Outer HTTP request (`/api/v1/*`) | **30 s** (env `REQUEST_TIMEOUT_SECS`, default 30) |
+| `/api/v1/gate` inner hard timeout | **5 s** (`GATE_HANDLER_HARD_TIMEOUT`) |
+| Gate orchestrator inner hard timeout | **3 s** (`ORCHESTRATOR_HARD_TIMEOUT`) |
+| `/api/v1/execute` inner timeout | **None** — relies on outer 30 s + budget-store breaker fail-fast (<100 ms once tripped) |
+| `/api/v1/track` inner timeout | **None** — relies on outer 30 s |
+| Reservation scan loop cap | **256 iterations** |
+| Reservation scan page size | **1 000** keys per iteration (256 k slot visits worst case) |
+| Partial-scan reservation result | typed result carrying the reserved and projected amounts — fail-CLOSED 402, never silent truncation |
+
+Both stores sit behind bounded connection pools, and those bounds are
+part of the observed latency envelope. Against the budget store the pool
+holds at most **32** connections; a caller waiting for a connection to
+become free gives up after **5 s**, and a caller that cannot open a new
+connection at all gives up after **10 s** (clamped to the 1–60 s range).
+The state-store pool gives up waiting for a connection after **10 s** and
+caps each individual statement at **30 s** per connection.
 
 ### Healthy-path budget
 
-When Redis is healthy and no `/check` style fan-out is required:
+When the budget store is healthy and no `/check` style fan-out is
+required:
 
-1. Network RTT to Redis: sub-millisecond within a region.
-2. `reserve_v3.lua` single atomic step: <5 ms typical, <50 ms at p99.
+1. Network RTT to the budget store: sub-millisecond within a region.
+2. The single atomic reservation step: <5 ms typical, <50 ms at p99.
 3. Orchestrator evaluation: <2 ms typical.
 4. Total `/api/v1/gate` server-side: **<10 ms typical, <60 ms p99**.
 
 The 3 s orchestrator cap is the binding inner budget; the 5 s gate
-handler cap is a one-above safety net. The 30 s outer `TimeoutLayer`
-should never fire on a healthy Redis.
+handler cap is a one-above safety net. The 30 s outer request timeout
+should never fire against a healthy budget store.
 
 ### First-burst (breaker not yet tripped)
 
-If Redis is reachable but slow, the worst case before the breaker
-trips is:
+If the budget store is reachable but slow, the worst case before the
+breaker trips is:
 
-- 1 acquire × 10 s + 1 wait × 5 s + 1 SCAN cap × ~50 ms ≈ **up to 15 s**
+- 1 connection open × 10 s + 1 pool wait × 5 s + 1 scan cap × ~50 ms ≈ **up to 15 s**
 - On the 5th consecutive failure, the breaker trips and subsequent
-  calls short-circuit **sub-100 ms** returning
-  `BUDGET_REDIS_UNAVAILABLE` (see [Redis failure](#redis-failure) below).
+  calls short-circuit **sub-100 ms** returning the budget-store
+  unavailable response (see [Budget store failure](#budget-store-failure) below).
 
 ### Not measured
 
-- Real Redis p99 RTT at production scale for the worst-case
-  `reserve_v3.lua` path (256 SCAN + 256 MGET ≈ 512 commands).
-- Worst-case first-request latency on a Redis partition before the
-  breaker trips.
+- Real p99 RTT to the budget store at production scale for the
+  worst-case reservation path (256 scan iterations + 256 bulk reads
+  ≈ 512 operations).
+- Worst-case first-request latency on a budget-store partition before
+  the breaker trips.
 
 ## Behaviour when a service is unavailable
 
@@ -76,81 +80,73 @@ Every enforcement-path failure mode below is **fail-CLOSED** unless
 explicitly noted. The default posture is "do not let the agent proceed
 when an enforcement signal is missing".
 
-### Redis failure
+### Budget store failure
 
-The Redis circuit breaker has three profiles, picked by call-site:
+The budget-store circuit breaker has three profiles, picked by
+call-site:
 
-| Profile | `failure_threshold` | `recovery_timeout_ms` | `half_open_max_probes` | Used for |
+| Profile | Consecutive failures | Recovery window | Half-open probes | Used for |
 |---|---|---|---|---|
-| **default** | 5 | 30 000 (30 s) | 1 | Generic Redis paths |
-| **`critical()`** | 3 | 60 000 (60 s) | 1 | Budget enforcement on the gate hot path (FailClosed) |
-| **`high_traffic()`** | 20 | 10 000 (10 s) | 3 | Buffered / StaleCache / analytics paths |
+| **default** | 5 | 30 000 (30 s) | 1 | Generic budget-store paths |
+| **critical** | 3 | 60 000 (60 s) | 1 | Budget enforcement on the gate hot path (fail-CLOSED) |
+| **high-traffic** | 20 | 10 000 (10 s) | 3 | Buffered / stale-cache / analytics paths |
 
-Source: `backend/src/redis/breaker/config.rs`.
+The breaker short-circuits in **sub-100 ms** once open.
 
-The breaker short-circuits in **sub-100 ms** once OPEN (`execute_with_degraded`
-returns `CircuitOpen` for `FailClosed`/`Buffered` profiles).
+| Failure point | HTTP | Behaviour |
+| --- | --- | --- |
+| Atomic reservation failure on the gate path | **402** | fail-CLOSED — the call is blocked, never the client |
+| Per-org aggregate rate-limit bucket unavailable | **503** | fail-CLOSED |
+| Idempotency store unavailable | **503** | fail-CLOSED |
+| Sub-workflow depth cycle-walk lookup fails | **503** | fail-CLOSED |
+| Invoke-persist step fails | **503** | fail-CLOSED |
+| Inline pre-check on `/track` idempotency | varied | fails through to the generic error envelope |
 
-| Wire `error_code` | HTTP | Triggered by | Source |
-|---|---|---|---|
-| `BUDGET_REDIS_UNAVAILABLE` | **402** | reserve_v3 Lua failure / inline Redis fail on gate path | `error_codes.rs`; `gate.rs`; `internal.rs` |
-| `RATE_LIMIT_REDIS_UNAVAILABLE` | **503** | per-org aggregate bucket Redis fail (fail-CLOSED) | `error_codes.rs`; `orchestrator.rs` |
-| `IDEMPOTENCY_REDIS_UNAVAILABLE` | **503** | `IdempotencyStore` Redis fail (fail-CLOSED) | `error_codes.rs`; `gate.rs` |
-| `WORKFLOW_DEPTH_LOOKUP_FAILED` | **503** | ADR-036 cycle-walk Redis fail | `error_codes.rs` |
-| `INVOKE_PERSIST_FAILED` | **503** | ADR-036 invoke persist fail | `error_codes.rs` |
-| `REDIS_UNAVAILABLE` (inline) | varied | inline pre-check on `/track` idempotency | `handlers.rs`; `orchestrator.rs` |
-
-**Retry behaviour:** no automatic Redis retry in
+**Retry behaviour:** no automatic retry in the
 reservation/consume/idempotency handlers — failures surface directly to
 the breaker. The breaker is the retry mechanism.
 
-**Lua return-code → HTTP mapping (exhaustive):**
+Every reservation outcome maps to a fixed HTTP status. A hard budget
+block, an org ceiling, a workflow budget, an overdraft cap, an anti-DoS
+reserved cap, and a partial reservation scan all return **402**; the
+first two carry the public wire codes `BUDGET_HARD_BLOCKED` and
+`BUDGET_ORG_CEILING_BLOCKED`. A consume-side budget overrun returns
+**429** with `Retry-After: 1`, and a consume overshoot — actual cost
+above the reservation — returns **422** with the public code
+`CONSUME_OVERBUDGET`. A reservation whose TTL has expired or that is
+otherwise orphaned returns **503**, and a broken invariant on an
+unconfigured policy returns **500**.
 
-| Lua return | Outcome | `error_code` | HTTP |
-|---|---|---|---|
-| `HARD_BUDGET_EXCEEDED` | Hard block | `BUDGET_HARD_BLOCKED` | 402 |
-| `ORG_BUDGET_EXCEEDED` | Org ceiling | `BUDGET_ORG_CEILING_BLOCKED` | 402 |
-| `WORKFLOW_BUDGET_EXCEEDED` | Workflow | `BUDGET_WORKFLOW_BLOCKED` | 402 |
-| `SOFT_OVERDRAFT_CAP` | Overdraft cap hit | `BUDGET_OVERDRAFT_EXCEEDED` | 402 |
-| `RESERVED_CAP_EXCEEDED` | Anti-DoS reserved | `BUDGET_ANTI_DOS_RESERVED_CAP` | 402 |
-| `RESERVED_SCANNED_PARTIAL` | NR-015 partial scan | `RESERVED_SCANNED_PARTIAL` | 402 |
-| `BUDGET_EXCEEDED` (consume-side) | Consume-side | `BUDGET_EXCEEDED` | **429 + `Retry-After: 1`** |
-| `CONSUME_OVERBUDGET` | Consume overshoot | `CONSUME_OVERBUDGET` | **422** |
-| `RESERVATION_NOT_FOUND` | TTL expired / orphan | `RESERVATION_NOT_FOUND` | 503 |
-| `POLICY_UNCONFIGURED` | Invariant break | `POLICY_UNCONFIGURED` | 500 |
+### State store failure
 
-### Postgres failure
+The state-store connection pool is sized at `min(cores, 12) × 2 + 10`
+connections — roughly 25–34 on a 12-core host. Idle connections are
+released after **600 s** and retired after **1 800 s** (which protects
+against DNS and connection-pooler rollover). A session that is idle
+inside an open transaction is terminated after **60 s**, and an
+individual statement is capped at **30 s** per connection. The state
+store has its own circuit breaker that mirrors the default profile
+(5 consecutive failures, 30 s recovery), and it short-circuits in
+**<100 ms** once open.
 
-| Setting | Value | Source |
-|---|---|---|
-| Pool `max_connections` | `(num_cpus::get().min(12) * 2 + 10)` (≈25–34 on 12-core); env `DATABASE_MAX_CONNECTIONS` | `backend/src/db/mod.rs` |
-| Pool `idle_timeout` | **600 s** | same |
-| Pool `max_lifetime` | **1 800 s** (DNS / PgBouncer rollover protection) | same |
-| `idle_in_transaction_session_timeout` | **60 000 ms** | same |
-| DB circuit breaker profile | mirrors Redis default (5 / 30 s) | `backend/src/db_breaker.rs` |
-| Breaker short-circuit on OPEN | **<100 ms** returns `CircuitError::CircuitOpen` | same |
+#### `/track` outbox path (the only enforcement-side state-store write)
 
-#### `/track` outbox path (the only enforcement-side PG write)
+The audit-row insert is **best-effort and off the request path**:
 
-The audit-row INSERT is **best-effort and off the request path**:
-
-- Wrapper: `PostgresCircuitBreaker::global()` with `FailureMode::Degraded`
-  (`backend/src/proxy/http/gate/internal.rs`).
-- On INSERT error: `tracing::warn!` + `postgres_metrics.record_connection_error()`
-  + **continue** — the gate response is unchanged. The audit row is
-  not on the critical path.
-- Drain location: `backend/src/outbox/audit_drain.rs`, spawned via fast
-  ticker at `main.rs`.
-- Drain tick interval: **5 s** default (env `OUTBOX_AUDIT_DRAIN_INTERVAL_SECONDS`,
-  clamp 2–300).
+- The write runs through the state-store circuit breaker in
+  degraded mode.
+- On insert error: a warning is logged, the connection error is
+  recorded as a metric, and the request **continues** — the gate
+  response is unchanged. The audit row is not on the critical path.
+- A background drain worker picks the rows up on a fast ticker.
+- Drain tick interval: **5 s** default, clamped to the 2–300 s range.
 - Per-tick batch size: **100**.
 - Per-tick timeout: **30 s**.
-- Per-row backoff: **1 / 2 / 4 / 8 / 16 s** exponential (CLAUDE.md §15).
-- `MAX_CONSECUTIVE_ERRORS` per tick: **5** (tick break on persistent DB errors).
-- DLQ at `retry_count >= 5`: hard ceiling.
-- `mark_immediate_dead_letter` for permanent failures: v3.76 P0-3.
-- Retention once DLQ'd: **30 days** (`OUTBOX_DLQ_RETENTION_DAYS`,
-  `backend/src/retention.rs`).
+- Per-row backoff: **1 / 2 / 4 / 8 / 16 s** exponential.
+- Consecutive-error cap per tick: **5** (tick break on persistent errors).
+- Dead-letter at `retry_count >= 5`: hard ceiling.
+- Permanent failures are dead-lettered immediately rather than retried.
+- Retention once dead-lettered: **30 days**.
 
 #### Other outbox partitions
 
@@ -162,36 +158,35 @@ The audit-row INSERT is **best-effort and off the request path**:
 
 ### Upstream LLM / provider failure
 
-The provider module is sparse — only `OpenAIProvider` is registered
-(`backend/src/proxy/provider/mod.rs`; Anthropic / Google / Azure
-types are documented but commented out, and `/api/v1/proxy*` is not
-wired into `routes.rs`).
+The provider module is sparse — only the OpenAI provider is
+registered; Anthropic / Google / Azure types exist but are not
+registered, and `/api/v1/proxy*` is not wired into the live router.
 
-| Thing | Value | Source |
-|---|---|---|
-| OpenAI `reqwest::Client` timeout | **Not configured** — no `.timeout()`, `.connect_timeout()`, `.read_timeout()`, `.pool_max_idle_per_host`, `.tcp_keepalive` | `backend/src/proxy/provider/openai.rs` |
-| Provider retry | **None** — one `.send()` per call, immediate return | `backend/src/proxy/provider/openai.rs` |
-| HTTP status on provider failure | bare `502 BAD_GATEWAY` — no `error_code`, no `Retry-After`, no JSON envelope | `backend/src/proxy/http/proxy.rs` |
-| OpenAI `429` parse | `ProviderError::RateLimited(60)` — the **60 s hint is dropped on the floor** (never emitted as `Retry-After`) | `backend/src/proxy/provider/openai.rs` |
-| Streaming failure shape | `governance_events` carries `control_decision: e.to_string()` but HTTP status stays 200 | `backend/src/proxy/http/proxy.rs` |
+| Thing | Value |
+| --- | --- |
+| OpenAI HTTP client timeout | **Not configured** — no connect, read, idle-pool, or TCP-keepalive setting |
+| Provider retry | **None** — one outbound call per invocation, immediate return |
+| HTTP status on provider failure | bare `502 BAD_GATEWAY` — no `error_code`, no `Retry-After`, no JSON envelope |
+| OpenAI `429` parse | rate-limit hint is **dropped on the floor** — the **60 s value is never emitted as `Retry-After`** |
+| Streaming failure shape | the governance event carries the error text, but the HTTP status stays 200 |
 
 This is the area with the **largest gap** between SDK promise and
 backend reality. Practical implication: a hung OpenAI socket stalls
-until the outer 30 s `TimeoutLayer` fires; there is no per-call
+until the outer 30 s request timeout fires; there is no per-call
 connect timeout, no retry, and no machine-readable error envelope.
 
 ### Geo / sanctions failure
 
-| Setting | Value | Source |
-|---|---|---|
-| `SANCTIONED` jurisdictions | RU, IR, KP, SY, CU, BY, VE, MM, AF | `backend/src/proxy/middleware/geo_block.rs` |
-| `HIGH_RISK_NO_SERVICE` jurisdictions | EU-27 + EEA + UK + CH + CN + IN | `geo_block.rs` |
-| `BlockSanctioned` arm | 403 + `{error:"service_unavailable_in_jurisdiction", message, fortress_reason:"sanctions"}` + headers `X-Fortress-Block-Country` + `X-Fortress-Block-Reason: sanctions` | `geo_block.rs` |
-| `BlockHighRisk` arm | 403 (or **503** if GeoIP DB unavailable) + same shape | `geo_block.rs` |
-| GeoIP DB missing / unreadable | **All ingress rejected (503)** — fail-CLOSED by design | `geo_block.rs` |
-| Operator env-level kill-switch (geo-block) | fail-OPEN escape (logs WARN); never set in production | `geo_block.rs` |
-| Sanctions SDN CSV missing | 6-entry hand-curated fallback (fail-OPEN with WARN) | `backend/src/proxy/middleware/sanctions.rs` |
-| Operator env-level kill-switch (sanctions screening) | fail-OPEN kill-switch; never set in production | `sanctions.rs` |
+| Setting | Value |
+| --- | --- |
+| `SANCTIONED` jurisdictions | RU, IR, KP, SY, CU, BY, VE, MM, AF |
+| `HIGH_RISK_NO_SERVICE` jurisdictions | EU-27 + EEA + UK + CH + CN + IN |
+| Sanctions arm | 403 + `{error:"service_unavailable_in_jurisdiction", message, fortress_reason:"sanctions"}` + headers `X-Fortress-Block-Country` + `X-Fortress-Block-Reason: sanctions` |
+| High-risk arm | 403 (or **503** if the GeoIP database is unavailable) + same shape |
+| GeoIP DB missing / unreadable | **All ingress rejected (503)** — fail-CLOSED by design |
+| Operator env-level kill-switch (geo-block) | fail-OPEN escape (logs WARN); never set in production |
+| Sanctions SDN CSV missing | 6-entry hand-curated fallback (fail-OPEN with WARN) |
+| Operator env-level kill-switch (sanctions screening) | fail-OPEN kill-switch; never set in production |
 
 See [Geo restrictions](../compliance/geo-restrictions.md) and
 [Sanctions screening](../compliance/sanctions-screening.md) for the
@@ -201,130 +196,130 @@ full compliance contract.
 
 ### HTTP / WebSocket / SSE
 
-| Surface | Setting | Value | Source |
-|---|---|---|---|
-| `/api/v1/*` outer request | tower-http `TimeoutLayer` | **30 s** | `proxy/server.rs` |
-| HMAC re-read cap (`MAX_BODY_SIZE`) | body cap before HMAC verify | **10 MiB** | `proxy/middleware/hmac_verify.rs` |
-| WebSocket server ping interval | `Message::Ping(vec![])` | **30 s** | `proxy/http/ws_control.rs` |
-| WebSocket HMAC replay window | `WS_HMAC_MAX_AGE_SECONDS` | **300 s** | `ws_control.rs` |
-| WebSocket idle disconnect | **None** — closed only on Close frame / stream error / send failure | — | `ws_control.rs` |
-| WebSocket per-org connection cap | **None** (SSE has `MAX_SSE_PER_ORG=5`) | — | — |
-| WebSocket max frame / message size | **None configured** — axum defaults apply | — | — |
-| SSE max connection duration | hard cap | **24 h** | `proxy/http/stream.rs` |
-| SSE JSON heartbeat cadence | informational heartbeat | **30 s** | `stream.rs` |
-| SSE protocol-level keepalive (axum `KeepAlive`) | text `"ping"` | **15 s** | `stream.rs` |
-| SSE per-org concurrent cap | `MAX_SSE_PER_ORG` | **5** | `proxy/http/sse_limiter.rs` |
-| EventBus default capacity | bounded queue | **4 096 events** (overflow at **3 072 / 75%**) | `proxy/http/event_bus.rs` |
-| Slow-consumer signal | server emits `WsMessage::ResyncRequired` to force SDK reconnect | — | `ws_control.rs` |
+| Surface | Setting | Value |
+| --- | --- | --- |
+| `/api/v1/*` outer request | request-level timeout | **30 s** |
+| HMAC re-read cap (`MAX_BODY_SIZE`) | body cap before HMAC verify | **10 MiB** |
+| WebSocket server ping interval | `Message::Ping(vec![])` | **30 s** |
+| WebSocket HMAC replay window | `WS_HMAC_MAX_AGE_SECONDS` | **300 s** |
+| WebSocket idle disconnect | **None** — closed only on Close frame / stream error / send failure | — |
+| WebSocket per-org connection cap | **None** (SSE has `MAX_SSE_PER_ORG=5`) | — |
+| WebSocket max frame / message size | **None configured** — axum defaults apply | — |
+| SSE max connection duration | hard cap | **24 h** |
+| SSE JSON heartbeat cadence | informational heartbeat | **30 s** |
+| SSE protocol-level keepalive (axum `KeepAlive`) | text `"ping"` | **15 s** |
+| SSE per-org concurrent cap | `MAX_SSE_PER_ORG` | **5** |
+| EventBus default capacity | bounded queue | **4 096 events** (overflow at **3 072 / 75%**) |
+| Slow-consumer signal | server emits `WsMessage::ResyncRequired` to force SDK reconnect | — |
 
 ### OAuth / webhook clients (cold path)
 
-| Client | Timeout | Source |
-|---|---|---|
-| GitHub OAuth | `.timeout(10s).connect_timeout(5s)` | `auth/github.rs` |
-| Google OAuth | `.timeout(10s).connect_timeout(5s)` | `auth/google.rs` |
-| SSO | `.timeout(10s).connect_timeout(5s)` | `auth/sso.rs` |
-| Cron egress (litellm pricing) | `.timeout(10s).connect_timeout(5s)` | `cron.rs` |
-| Slack `chat.postMessage` | `.timeout(10s)` (no separate connect timeout) | `main.rs` |
+| Client | Total timeout | Connect timeout |
+| --- | --- | --- |
+| GitHub OAuth | **10 s** | **5 s** |
+| Google OAuth | **10 s** | **5 s** |
+| SSO | **10 s** | **5 s** |
+| Cron egress (litellm pricing) | **10 s** | **5 s** |
+| Slack `chat.postMessage` | **10 s** | none (covered by the total timeout) |
 
 ### HMAC policy
 
-| Setting | Value | Source |
-|---|---|---|
-| `NULLRUN_HMAC_REQUIRED` default | `false` (warns at runtime) | `config.rs` |
-| `NULLRUN_HMAC_MAX_AGE_SECS` default | **300 s** | `config.rs` |
-| `NULLRUN_CONSUME_RACE_WINDOW_SECONDS` default | **2 s**, clamped `[0..30]` | `config.rs` |
-| HMAC-verified SDK paths | `["/api/v1/check", "/api/v1/execute", "/api/v1/gate", "/api/v1/track", "/api/v1/track/batch"]` | `proxy/middleware/hmac_verify.rs` |
-| Gateway signing key min length | **32 bytes** (env `NULLRUN_GATEWAY_SIGNING_KEY`) | `config.rs` |
+| Setting | Value |
+| --- | --- |
+| `NULLRUN_HMAC_REQUIRED` default | `false` (warns at runtime) |
+| `NULLRUN_HMAC_MAX_AGE_SECS` default | **300 s** |
+| `NULLRUN_CONSUME_RACE_WINDOW_SECONDS` default | **2 s**, clamped `[0..30]` |
+| HMAC-verified SDK paths | `["/api/v1/check", "/api/v1/execute", "/api/v1/gate", "/api/v1/track", "/api/v1/track/batch"]` |
+| Gateway signing key min length | **32 bytes** (env `NULLRUN_GATEWAY_SIGNING_KEY`) |
 
 ### Webhook signature replay windows
 
-| Webhook | Algorithm | Replay window | Source |
-|---|---|---|---|
-| Slack Events | HMAC-SHA256 over `v0:{ts}:{raw_body}`, header `X-Slack-Signature: v0=<hex>` | **300 s** | `slack_oauth.rs`; replay `:1319` |
-| Slack OAuth state | TTL | **600 s** | `slack_oauth.rs` `STATE_TTL_SECS` |
-| Slack install ticket | TTL | **300 s** | `slack_oauth.rs` `INSTALL_TICKET_TTL_SECS` |
-| Polar | Stripe-shaped `t=<unix>,v1=<hex>` over `timestamp.payload`, HMAC-SHA256, raw bytes | **300 s** | `billing/polar.rs` `WEBHOOK_SIGNATURE_MAX_AGE_SECS` |
-| Polar sandbox mode | dev-only — verification bypassed (production requires signed webhooks) | — | `billing/polar.rs` |
-| Stripe | **Not in code** — Polar is the sole payment provider | — | — |
+| Webhook | Algorithm | Replay window |
+| --- | --- | --- |
+| Slack Events | HMAC-SHA256 over `v0:{ts}:{raw_body}`, header `X-Slack-Signature: v0=<hex>` | **300 s** |
+| Slack OAuth state | TTL | **600 s** |
+| Slack install ticket | TTL | **300 s** |
+| Polar | Stripe-shaped `t=<unix>,v1=<hex>` over `timestamp.payload`, HMAC-SHA256, raw bytes | **300 s** |
+| Polar sandbox mode | dev-only — verification bypassed (production requires signed webhooks) | — |
+| Stripe | **Not supported** — Polar is the sole payment provider | — |
 
 ## Hard limits and caps
 
 ### Body / payload caps
 
-| Cap | Value | Source |
-|---|---|---|
-| HTTP request body cap | **10 MiB** (`10 * 1024 * 1024`) | `proxy/server.rs` `RequestBodyLimitLayer::new(...)` |
-| MCP discovery SSE chunk | **65 536 bytes** (64 KiB) | `proxy/http/mcp/discovery_probe.rs` |
+| Cap | Value |
+| --- | --- |
+| HTTP request body cap | **10 MiB** (`10 * 1024 * 1024`) |
+| MCP discovery SSE chunk | **65 536 bytes** (64 KiB) |
 
-### Validation caps (`validation_constants.toml` — single source of truth, generated by `build.rs`)
+### Validation caps
 
-| Constant | Value | Source |
-|---|---|---|
-| `MAX_WORKFLOW_NAME` | **80** | `validation_constants.toml` |
-| `MAX_POLICY_NAME` | **80** | `:18` |
-| `MAX_API_KEY_NAME` | **80** | `:19` |
-| `MAX_ORG_NAME` | **100** | `:20` |
-| `MAX_ALERT_RULE_NAME` | **80** | `:21` |
-| `MAX_KILL_REASON` | **500** | `:24` |
-| `MAX_SUPPORT_MESSAGE` | **5 000** | `:25` |
-| `MAX_DESCRIPTION` | **2 000** | `:26` |
-| `MAX_JUSTIFICATION` | **500** | `:27` |
-| `MAX_EMAIL_LEN` | **254** (RFC 5321) | `:30` |
-| `MIN_PASSWORD` / `MAX_PASSWORD` | **12 / 256** (NIST 800-63B) | `:31-32` |
-| `MIN_TWO_FACTOR_CODE` / `MAX_TWO_FACTOR_CODE` | **6 / 6** | `:33-34` |
-| `MIN_ORG_SLUG_LEN` / `MAX_ORG_SLUG_LEN` | **2 / 32** | `:37-38` |
-| `MAX_WEBHOOK_URL_LEN` | **2 048** | `:39` |
-| `MAX_CALLBACK_URL_LEN` | **2 048** | `:40` |
-| `MAX_FILTER_INPUT` | **100** | `:43` |
-| **`MAX_POLICY_PATTERN_BYTES`** (ToolBlock pattern) | **4 096** (4 KiB) | `:46` |
-| **`MAX_WORKFLOW_DEPTH`** (sub-workflow chain, ADR-036) | **8** | `:57`; gate at `orchestrator.rs` → 422 `WORKFLOW_DEPTH_EXCEEDED` |
-| `MAX_DISPLAY_NAME` (XSS-guard) | **255** | `validation.rs` |
-| `DEFAULT_MAX_RATE_LIMIT_RPM` (per-policy ceiling) | **1 000 000** (env `NULLRUN_POLICY_MAX_RATE_LIMIT_RPM`) | `validation.rs` |
+| Constant | Value |
+| --- | --- |
+| `MAX_WORKFLOW_NAME` | **80** |
+| `MAX_POLICY_NAME` | **80** |
+| `MAX_API_KEY_NAME` | **80** |
+| `MAX_ORG_NAME` | **100** |
+| `MAX_ALERT_RULE_NAME` | **80** |
+| `MAX_KILL_REASON` | **500** |
+| `MAX_SUPPORT_MESSAGE` | **5 000** |
+| `MAX_DESCRIPTION` | **2 000** |
+| `MAX_JUSTIFICATION` | **500** |
+| `MAX_EMAIL_LEN` | **254** (RFC 5321) |
+| `MIN_PASSWORD` / `MAX_PASSWORD` | **12 / 256** (NIST 800-63B) |
+| `MIN_TWO_FACTOR_CODE` / `MAX_TWO_FACTOR_CODE` | **6 / 6** |
+| `MIN_ORG_SLUG_LEN` / `MAX_ORG_SLUG_LEN` | **2 / 32** |
+| `MAX_WEBHOOK_URL_LEN` | **2 048** |
+| `MAX_CALLBACK_URL_LEN` | **2 048** |
+| `MAX_FILTER_INPUT` | **100** |
+| **`MAX_POLICY_PATTERN_BYTES`** (ToolBlock pattern) | **4 096** (4 KiB) |
+| **`MAX_WORKFLOW_DEPTH`** (sub-workflow chain depth) | **8** — the gate returns 422 beyond it |
+| `MAX_DISPLAY_NAME` (XSS-guard) | **255** |
+| `DEFAULT_MAX_RATE_LIMIT_RPM` (per-policy ceiling) | **1 000 000** (env `NULLRUN_POLICY_MAX_RATE_LIMIT_RPM`) |
 
 ### Approval-rule limits
 
-| Setting | Value | Source |
-|---|---|---|
-| `expires_in_seconds` default (DB) | **300 s** | `db/mod.rs` |
-| Service clamp `[min..max]` | **30..=3 600** (1 min – 1 h) | `approval_rule_service.rs` |
-| `priority` bounds | `[0..=1 000]` (i16) | `approval_rule_service.rs` |
-| `action_label` max length | **200** | `:60` |
-| `VALID_RISK_LEVELS` | `["LOW","MEDIUM","HIGH"]` | `:68` |
-| `DEFAULT_RISK_LEVEL` | `"MEDIUM"` | `:73` |
-| **Per-org pending approvals cap** | **50** (env `NULLRUN_MAX_PENDING_APPROVALS_PER_ORG`, range 1–1 000) | `redis/mod.rs` `MAX_PENDING_APPROVALS_PER_ORG`; 429 `TOO_MANY_PENDING_APPROVALS` on overflow |
-| Envelope TTL floor / ceiling | **60 s** / **86 400 s** (24 h) | `redis/mod.rs` |
-| `APPROVAL_ENVELOPE_GRACE_SECONDS` | **30** | `redis/mod.rs` |
-| `APPROVAL_CLOCK_SKEW_MARGIN_SECONDS` | **5** | `redis/mod.rs` |
-| Approval-rule predicate JSON byte cap | **Not in code** — only typed schema validates shape | — |
+| Setting | Value |
+| --- | --- |
+| `expires_in_seconds` default (DB) | **300 s** |
+| Service clamp `[min..max]` | **30..=3 600** (1 min – 1 h) |
+| `priority` bounds | `[0..=1 000]` (i16) |
+| `action_label` max length | **200** |
+| `VALID_RISK_LEVELS` | `["LOW","MEDIUM","HIGH"]` |
+| `DEFAULT_RISK_LEVEL` | `"MEDIUM"` |
+| **Per-org pending approvals cap** | **50** (env `NULLRUN_MAX_PENDING_APPROVALS_PER_ORG`, range 1–1 000) |
+| Envelope TTL floor / ceiling | **60 s** / **86 400 s** (24 h) |
+| `APPROVAL_ENVELOPE_GRACE_SECONDS` | **30** |
+| `APPROVAL_CLOCK_SKEW_MARGIN_SECONDS` | **5** |
+| Approval-rule predicate JSON byte cap | **Not supported** — only the typed schema validates shape |
 
 ### Reservation / chain TTLs
 
-| Constant | Value | Source |
-|---|---|---|
-| `DEFAULT_RESERVATION_TTL_SECONDS` | **300 s** (5 min) | `cost/reservation.rs`; `cost/registry.rs` `RESERVATION_TTL_SECONDS = 300` |
-| `CHAIN_IDLE` | **300 s** | `redis/mod.rs`; `consume_v3.lua` |
-| `CHAIN_REGISTERED` | **300 s** | `redis/mod.rs` |
-| `max_chain_duration_seconds` default | **3 600 s** (1 h) | `enforcement/unified_evaluator.rs`; DB `MAX_CHAIN_DURATION_SECONDS INTEGER NOT NULL DEFAULT 3600` (`db/mod.rs`) |
-| `period_ttl_seconds` default | 3 600 × 24 × 30 = **30 days** | `enforcement/unified_evaluator.rs` |
-| `EXECUTION_BINDING` TTL | **24 × 3 600 s** (24 h) | `redis/mod.rs` |
-| Heartbeat dedup marker | **35 s** | `redis/mod.rs` |
-| `in_flight` counter | **300 s** | `redis/mod.rs` |
+| Constant | Value |
+| --- | --- |
+| `DEFAULT_RESERVATION_TTL_SECONDS` | **300 s** (5 min) |
+| `CHAIN_IDLE` | **300 s** |
+| `CHAIN_REGISTERED` | **300 s** |
+| `max_chain_duration_seconds` default | **3 600 s** (1 h) |
+| `period_ttl_seconds` default | 3 600 × 24 × 30 = **30 days** |
+| `EXECUTION_BINDING` TTL | **24 × 3 600 s** (24 h) |
+| Heartbeat dedup marker | **35 s** |
+| In-flight execution counter | **300 s** |
 
-### Retention (`backend/src/retention.rs` — single source of truth)
+### Retention
 
-| Constant | Value | Source |
-|---|---|---|
-| `OUTBOX_DLQ_RETENTION_DAYS` | **30** | `retention.rs` (CLAUDE.md §15) |
-| `DECISION_HISTORY_FALLBACK_DAYS` | **3** | `retention.rs` |
-| `METERING_IDEMPOTENCY_WINDOW_DAYS` / `_SECONDS` | **30** / **2 592 000** | `retention.rs` |
-| `METERING_EVENT_LOG_TTL_DAYS` / `_SECONDS` | **90** / **7 776 000** | `retention.rs` |
-| `INGESTION_DLQ_RESOLVED_RETENTION_DAYS` | **7** | `retention.rs` |
-| `INGESTION_DLQ_MAX_REPLAY_ATTEMPTS` | **5** | `retention.rs` |
-| `INGESTION_DLQ_EXHAUSTED_RETENTION_DAYS` | **30** | `retention.rs` |
-| `BILLING_DEAD_LETTER_RETENTION_DAYS` | **30** | `retention.rs` |
+| Constant | Value |
+| --- | --- |
+| `OUTBOX_DLQ_RETENTION_DAYS` | **30** |
+| `DECISION_HISTORY_FALLBACK_DAYS` | **3** |
+| `METERING_IDEMPOTENCY_WINDOW_DAYS` / `_SECONDS` | **30** / **2 592 000** |
+| `METERING_EVENT_LOG_TTL_DAYS` / `_SECONDS` | **90** / **7 776 000** |
+| `INGESTION_DLQ_RESOLVED_RETENTION_DAYS` | **7** |
+| `INGESTION_DLQ_MAX_REPLAY_ATTEMPTS` | **5** |
+| `INGESTION_DLQ_EXHAUSTED_RETENTION_DAYS` | **30** |
+| `BILLING_DEAD_LETTER_RETENTION_DAYS` | **30** |
 
-Per-tier retention (`decision_history_retention.rs`):
+Per-tier decision-history retention:
 
 | Plan | Decision history retention | Audit log |
 |---|---|---|
@@ -338,36 +333,35 @@ Per-tier retention (`decision_history_retention.rs`):
 
 ### Edge / per-IP
 
-| Layer | Default | Algorithm | Source |
-|---|---|---|---|
-| Per-IP edge | **60 RPM** token bucket (env `NULLRUN_IP_RATE_LIMIT_RPM`) | Token bucket; refill = max_rpm/60 | `proxy/middleware/ip_rate_limit.rs` |
-| Per-IP edge bypass | operator-configurable kill-switch (fail-OPEN in dev only); bypass paths `/health`, `/metrics`, `/internal/*` | — | same |
-| Per-IP edge multi-pod | Redis-backed (fail-CLOSED on Redis error) | — | same |
-| Per-IP edge response | 429 + `Retry-After` + `X-RateLimit-Limit/Remaining` | — | same |
-| Waitlist (high-risk jurisdictions) | **5 submissions/hour/IP** (env `NULLRUN_WAITLIST_PER_HOUR`); window 3 600 s | Counter | `ip_rate_limit.rs`; 429 `WAITLIST_RATE_LIMITED` |
-| Auth endpoints | **5 req/min/IP** (`IpAuthRateLimiter::default`) | Token bucket (IP) + per-email counter | `proxy/middleware/auth_rate_limit.rs` |
-| Email lockout | **5 failures → 300 s** lockout | — | same |
+| Layer | Default | Algorithm |
+| --- | --- | --- |
+| Per-IP edge | **60 RPM** token bucket (env `NULLRUN_IP_RATE_LIMIT_RPM`) | Token bucket; refill = max_rpm/60 |
+| Per-IP edge bypass | operator-configurable kill-switch (fail-OPEN in dev only); bypass paths `/health`, `/metrics`, `/internal/*` | — |
+| Per-IP edge multi-pod | shared counter store (fail-CLOSED on store error) | — |
+| Per-IP edge response | 429 + `Retry-After` + `X-RateLimit-Limit/Remaining` | — |
+| Waitlist (high-risk jurisdictions) | **5 submissions/hour/IP** (env `NULLRUN_WAITLIST_PER_HOUR`); window 3 600 s | Counter |
+| Auth endpoints | **5 req/min/IP** (`IpAuthRateLimiter::default`) | Token bucket (IP) + per-email counter |
+| Email lockout | **5 failures → 300 s** lockout | — |
 
 ### Per-org / per-key
 
-| Layer | Default | Algorithm | Source |
-|---|---|---|---|
-| Per-org aggregate | plan-driven `max_rpm` from `plans.limits.max_rps × 60`; global fixed capacity **10 000 RPM**; per-workspace fallback **1 000 RPM**; refill 100 tok/s | Token bucket (`PlanAwareRateLimiter`) | `proxy/middleware/rate_limit.rs` |
-| Per-org fallback (unknown org) | **5 RPM** — bug-class hazard, surfaces in tests | — | `rate_limit.rs` |
-| Per-`(org, api_key)` Redis | per-policy `limit`/`ttl_secs` (default `max_calls_per_minute × 60`); key shape `ratelimit:org:{org_id}:key:{key_id}` | **Fixed-window counter** (atomic GET→INCR→EXPIRE in Lua; NOT sliding) | `redis/scripts/check_rate_limit_v1.lua` |
-| Per-key fail-OPEN on Redis error | warn-and-fall-through, no wire code | — | `proxy/http/gate/orchestrator.rs` (per-key branch) |
-| Per-org aggregate fail-CLOSED on Redis error | **503** `RATE_LIMIT_REDIS_UNAVAILABLE`, `retry_after_seconds: 60` | — | `orchestrator.rs` |
+| Layer | Default | Algorithm |
+| --- | --- | --- |
+| Per-org aggregate | plan-driven per-org ceiling; global fixed capacity **10 000 RPM**; per-workspace fallback **1 000 RPM**; refill 100 tok/s | Token bucket (`PlanAwareRateLimiter`) |
+| Per-org fallback (unknown org) | **5 RPM** — known hazard when the org cannot be resolved | — |
+| Per-`(org, api_key)` | per-policy `limit`/`ttl_secs` (default `max_calls_per_minute × 60`) | **Fixed-window counter** (one atomic increment-and-expire step; NOT sliding) |
+| Per-key fail-OPEN on store error | warn-and-fall-through, no wire code | — |
+| Per-org aggregate fail-CLOSED on store error | **503**, `retry_after_seconds: 60` (surfaced to the SDK as `NR-R002`) | — |
 
-The per-org aggregate rate limit is fail-CLOSED on Redis error (returns
-503), the per-key is fail-OPEN. This asymmetry is intentional: a
-per-key miss only affects one key, but a per-org miss would mask
-abuse.
+The per-org aggregate rate limit is fail-CLOSED when the counter store
+errors (returns 503), the per-key is fail-OPEN. This asymmetry is
+intentional: a per-key miss only affects one key, but a per-org miss
+would mask abuse.
 
 ## Per-plan limits
 
-Seeded in `002_plans.sql`; unified budget
-(`admission/limit_checks.rs`) shares `policies +
-approval_rules` slots (drift-pinned by migration 332).
+The unified budget check shares its `policies` and `approval_rules`
+slots.
 
 | Plan | workflows | tokens/hr | exec/mo | RPS | parallel | api_keys | seats | policies |
 |---|---|---|---|---|---|---|---|---|
@@ -380,11 +374,11 @@ approval_rules` slots (drift-pinned by migration 332).
 ## Wire-contract essentials
 
 The gate emits `GateResponse` over HTTP 200/402/422/429/503. Key
-fields (`backend/src/proxy/http/gate/internal.rs`):
+fields:
 
 - `execution_id` — server-minted **UUIDv7**. Client-supplied IDs are
-  never honoured (ADR-003 — ownership-ambiguous billing + replay
-  attack surface).
+  never honoured, so billing ownership is unambiguous and the
+  identifier cannot be replayed.
 - `projected_cost_cents` — **informational only**. The only
   enforcement-readable field is `remaining_budget_cents`.
 - `cost_cents` on `/track` — server marks cost as `provisional` until
@@ -395,154 +389,135 @@ fields (`backend/src/proxy/http/gate/internal.rs`):
   and idempotency-unavailable responses.
 
 **No `Retry-After` HTTP header on the gate path.** Body-only retry
-hints. The header is emitted only by `ip_rate_limit` middleware and
+hints. The header is emitted only by the per-IP edge middleware and
 by `ApiError` on non-gate paths (429 → 30 s, 503 → explicit
 `retry_after_seconds`).
 
 **`X-NULLRUN-PROTOCOL`** is required on
 `/api/v1/{gate,execute,track,track/batch,heartbeat,cancel,approvals/:id/consume}`.
-Current=4, MIN=2, MAX=4 (`protocol.rs`); rejected at middleware
-`protocol_version_middleware` (`protocol.rs`).
+Current=4, MIN=2, MAX=4; rejected at the protocol-version
+middleware.
 
 ### Idempotency surfaces
 
 | Endpoint | Mechanism | TTL | Outcome discriminator |
 |---|---|---|---|
-| `/api/v1/gate` | `IdempotencyStore` (atomic SETNX + Lua mutate); body field `operation_id` (NOT `Idempotency-Key` header) | **24 h** (`GATE_TTL_SECONDS`, `gate.rs`) | hit+match+Completed → 200 + `idempotent_replay:true`; hit+match+Pending → 409 `IDEMPOTENCY_REDIS_UNAVAILABLE`; hit+mismatch → 409 `IDEMPOTENCY_KEY_MISMATCH`; Redis down → 503 fail-CLOSED |
-| `/api/v1/track` | `IdempotencyStore` reused; body field `idempotency_key` | — | mismatch → 409 `IDEMPOTENCY_KEY_MISMATCH`; Completed → 200 + `idempotent_replay:true`; Pending → 409 `IDEMPOTENCY_IN_FLIGHT` + `retry_after_ms:500`; Failed → wipe via `delete` + fall through; Redis down → 503 |
-| `/api/v1/cancel` | `SETNX cancel:{execution_id}` | 24 h | replay → 200 `{already_canceled:true}` |
-| `/api/v1/heartbeat` | `SETNX` | 30 s | dedup |
-| `/api/v1/approvals/:id/consume` | SQL-layer atomic UPDATE flipping APPROVED→CONSUMED (ADR-047) | — | 200 with `status: consumed\|already_consumed\|not_approved` |
+| `/api/v1/gate` | atomic insert-if-absent plus a conditional mutate; body field `operation_id` (NOT an `Idempotency-Key` header) | **24 h** | hit+match+Completed → 200 + `idempotent_replay:true`; hit+match+Pending → 409; hit+mismatch → 409; store down → 503 fail-CLOSED |
+| `/api/v1/track` | same mechanism; body field `idempotency_key` | — | mismatch → 409; Completed → 200 + `idempotent_replay:true`; Pending → 409 + `retry_after_ms:500`; Failed → the record is wiped and the call falls through; store down → 503 |
+| `/api/v1/cancel` | atomic insert-if-absent keyed on the execution id | 24 h | replay → 200 `{already_canceled:true}` |
+| `/api/v1/heartbeat` | atomic insert-if-absent | 30 s | dedup |
+| `/api/v1/approvals/:id/consume` | atomic row update flipping APPROVED→CONSUMED | — | 200 with `status: consumed\|already_consumed\|not_approved` |
 
 **No use of the IETF `Idempotency-Key` header convention.** Drift from
 any IETF-style clients — the header is silently ignored.
 
 ## Retry / backoff defaults
 
-| Component | Settings | Source |
-|---|---|---|
-| Slack alert delivery | `MAX_ATTEMPTS=3, BASE_BACKOFF_MS=1_000, MAX_BACKOFF_MS=30_000` (pure exponential, **no jitter**) | `alert/providers.rs` |
-| Litellm pricing cron | `PRICING_RETRY_MAX_ATTEMPTS=3` | `cron.rs` |
-| Audit outbox | per-row 5-step exponential 1/2/4/8/16 s | `outbox/audit_drain.rs` |
-| Governance outbox | `max_attempts=3`, 30 s × 2^attempt + jitter | `outbox/partitions.rs` |
-| Notification outbox | `max_attempts=5`, 30 s × 2^attempt + jitter | same |
-| Analytics outbox | `max_attempts=1` (fire-and-forget) | same |
-| Detector retry | `retry.max_retries=5`, `retry.window_seconds=60` | `config.rs` |
+| Component | Settings |
+| --- | --- |
+| Slack alert delivery | `MAX_ATTEMPTS=3, BASE_BACKOFF_MS=1_000, MAX_BACKOFF_MS=30_000` (pure exponential, **no jitter**) |
+| Litellm pricing cron | `PRICING_RETRY_MAX_ATTEMPTS=3` |
+| Audit outbox | per-row 5-step exponential 1/2/4/8/16 s |
+| Governance outbox | `max_attempts=3`, 30 s × 2^attempt + jitter |
+| Notification outbox | `max_attempts=5`, 30 s × 2^attempt + jitter |
+| Analytics outbox | `max_attempts=1` (fire-and-forget) |
+| Detector retry | `retry.max_retries=5`, `retry.window_seconds=60` |
 
 **No jitter** in the audit-outbox or Slack-alert retry loops. This is a
 known limitation worth tracking if a thundering-herd pattern emerges.
 
 ## Gaps (honest)
 
-These are the things we either couldn't find in the code or didn't
-measure in production. We list them explicitly so technical buyers can
-ask the right questions during evaluation.
+These are the things we haven't measured in production. We list them
+explicitly so technical buyers can ask the right questions during
+evaluation.
 
-### Not in code (verified absent)
+### Verified absent
 
-1. **OpenAI `reqwest::Client` has no timeout** — no `.timeout()`,
-   `.connect_timeout()`, `.read_timeout()`, `.pool_max_idle_per_host`,
-   `.tcp_keepalive` (`backend/src/proxy/provider/openai.rs`).
-2. **Anthropic / Google / Azure providers** — only `OpenAIProvider`
-   exists on disk; registration commented out
-   (`provider/mod.rs`); `/api/v1/proxy*` not in `routes.rs`.
-3. **Provider retry** — `ProviderError::is_retryable()` returns true for
-   `RateLimited`/`Unavailable` but no caller retries; one `.send()`
-   then return.
+1. **OpenAI HTTP client has no timeout** — no connect, read,
+   idle-pool, or TCP-keepalive setting.
+2. **Anthropic / Google / Azure providers** — only the OpenAI
+   provider is registered; `/api/v1/proxy*` is not wired into the
+   live router.
+3. **Provider retry** — rate-limited and unavailable provider errors
+   are marked retryable but no caller retries; one outbound call, then
+   return.
 4. **`Retry-After` HTTP header on `/api/v1/proxy*` 502** — bare status,
-   no header, no JSON envelope (`proxy.rs`).
-5. **OpenAI `429` `RateLimited(60)` retry hint** — hardcoded 60 s is
+   no header, no JSON envelope.
+5. **OpenAI `429` retry hint** — the hardcoded 60 s value is
    **dropped on the floor**, never emitted as `Retry-After`.
-6. **No per-call Redis timeout** on `Script::invoke_async` /
-   `cmd().query_async` — only 5 s *connection* timeout at
-   `ConnectionManager::new`; no `with_timeout(...)` wrapper.
-7. **No automatic Redis retry** in gate/track handlers.
+6. **No per-call timeout** on counter-store script or command
+   execution — only a 5 s *connection* timeout; no per-call timeout
+   wrapper.
+7. **No automatic retry** in the gate/track handlers.
 8. **No jitter in any retry loop** — Slack alerts (1 s → 30 s), pricing
    cron, audit outbox, governance outbox. Pure exponential only.
 9. **No server-side tool-execution timeout on `/execute`** — SDK runs
    the tool locally; the server has no watchdog.
 10. **No client-initiated cancellation of in-flight `/gate` or
-    `/execute`** — no DELETE/HEAD routes in `routes.rs`;
+    `/execute`** — no DELETE/HEAD routes are registered;
     `/cancel` is the only de-facto abort (separate call).
 11. **No server-side deadline on `/execute` independent of `/gate`** —
-    only `RedisCircuitBreaker` fail-fast at
-    `execute.rs`.
+    only the budget-store breaker fail-fast at `/execute`.
 12. **WS idle timeout** — 30 s ping is a probe, not an
     idle-disconnect policy; a silent client stays connected.
 13. **WS per-org connection cap** — `MAX_SSE_PER_ORG=5` exists; WS has
     no equivalent cap.
 14. **WS max frame size / max message size** — no
     `max_frame_size`/`max_message_size` override; axum defaults apply.
-15. **`WS_PING_INTERVAL` / `WS_RECONNECT_MAX` env var** — grep returned
-    zero matches.
-16. **SQL-level `audit_outbox` queue depth cap** — only per-row retry
-    cap (5) then DLQ; no global cap.
-17. **Explicit semaphore / concurrency cap on `outbox/audit_drain`** —
-    only `MAX_CONSECUTIVE_ERRORS=5` per tick break.
-18. **`MAX_KEYS_SCAN` constant in Lua** — only `MAX_SCAN_ITERATIONS`
-    (256) exists; `consume_v3.lua` has no scan / time-bound.
-19. **Approval-rule predicate JSON byte cap** — `Option<serde_json::Value>`
+15. **`WS_PING_INTERVAL` / `WS_RECONNECT_MAX` env var** — not
+    configurable.
+16. **State-store audit-outbox queue depth cap** — only a per-row retry
+    cap (5) then dead-letter; no global cap.
+17. **Explicit concurrency cap on the audit-outbox drain** — only a
+    consecutive-error cap of 5 per tick break.
+18. **Key-count cap on the reservation scan script** — only the
+    256-iteration cap exists; the consume-side script has no scan /
+    time-bound.
+19. **Approval-rule predicate JSON byte cap** — a free-form JSON value
     only, no byte validator.
-20. **Stripe webhook** — no `stripe*.rs` files; Polar is the sole
-    payment provider.
+20. **Stripe webhook** — not supported; Polar is the sole payment
+    provider.
 21. **`X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset`
-    on gate path** — grep returned zero matches in
-    `proxy/http/gate/`; emitted only by `ip_rate_limit` middleware
-    (per-IP edge).
+    on gate path** — emitted only by the per-IP edge rate-limit
+    middleware.
 22. **`Retry-After` HTTP header on gate** — gate uses body
     `retry_after_ms` / `retry_after_seconds` only.
-23. **`MISSING_TOKEN` / `INVALID_KEY` / `EXPIRED_KEY` `GateErrorCode`
-    variants** — registry has only `API_KEY_REVOKED` for auth-class;
-    missing/invalid/expired flow through legacy `ApiError` envelope.
-24. **`/track` `IDEMPOTENCY_IN_FLIGHT`** is emitted inline in
-    `handlers.rs` but NOT in `GateErrorCode::all()` — typed enum
-    has 61 variants (`error_codes.rs:all()` asserts `len() == 61`),
+23. **Auth-class gate error variants** — the typed registry carries
+    only a revoked-key code; missing, invalid, and expired keys flow
+    through the generic error envelope.
+24. **The in-flight idempotency code on `/track`** is emitted inline on
+    the track path but is not one of the typed gate error variants — a
     drift from inline emission.
 
 ### Not measured (would require load test)
 
-1. Real Redis p99 RTT at production scale for `reserve_v3.lua`
-   worst-case 256 SCAN + 256 MGET.
-2. Worst-case first-request latency on Redis partition before the
-   breaker trips (5 consecutive × 10 s acquire ≈ 50 s before
-   short-circuit).
-3. OpenAI upstream hung-socket behavior in practice — outer
-   `TimeoutLayer` (30 s) is the only bound; no per-call
-   `connect_timeout`.
+1. Real p99 RTT to the budget store at production scale for the
+   reservation worst case (256 scan iterations + 256 bulk reads).
+2. Worst-case first-request latency on a budget-store partition
+   before the breaker trips (5 consecutive × 10 s acquire ≈ 50 s
+   before short-circuit).
+3. OpenAI upstream hung-socket behavior in practice — the outer 30 s
+   request timeout is the only bound; no per-call connect timeout.
 4. WS reconnect storms — no server-side cap; SDK could reconnect
    indefinitely under split-brain.
-5. Geo-block DB load latency at p99 — `mmdb` lookup is in-request hot
-   path; only the 503 fail-CLOSED branch is verified.
-6. PG pool contention under `/track` bursts — bounded ingestion queue
-   has `QUEUE_CAPACITY=10_000`, `HARD=9_000` (drop oldest above),
-   `MAX=15_000` (drop at cap), but actual Postgres write throughput is
+5. Geo-block DB load latency at p99 — the GeoIP lookup is in-request
+   hot path; only the 503 fail-CLOSED branch is verified.
+6. State-store pool contention under `/track` bursts — the bounded
+   ingestion queue holds 10 000 events, drops the oldest above 9 000,
+   and drops at a hard cap of 15 000, but actual write throughput is
    not measured.
 
-### Drift between code and documentation
+### Drift between the OpenAPI contract and the server
 
-1. **`contracts/openapi.yaml` `GateResponse`** (lines 938-1033) is
-   missing 8 wire fields present in the Rust struct
-   (`internal.rs`): `approval_id`, `approval_timeout_seconds`,
-   `approval_expires_at`, `execution_id`, `retry_after_ms`,
-   `idempotent_replay`, `operation_id`, `decision_context`, `details`.
-   `contracts/openapi.yaml` declares YAML canonical; Rust is
-   wire-true.
-2. **`/check` deprecation** — returns 410 GONE
-   (`check.rs`) but YAML may still document it as active.
-
-## How to verify
-
-Any of these numbers can drift between this page and the actual code.
-When that happens, **the code wins**. To re-derive:
-
-```bash
-# From NULLRUN repo root
-git grep -nE 'TimeoutLayer|TimeoutDuration' backend/src/proxy/server.rs
-git grep -nE 'failure_threshold|recovery_timeout_ms' backend/src/redis/breaker/config.rs
-git grep -nE 'TTL|TIMEOUT|DURATION|interval' backend/src/retention.rs
-git grep -nE 'MAX_' backend/src/redis/mod.rs
-git grep -nE 'CAP|PATTERN|MAX_' validation_constants.toml
-```
+1. **`GateResponse` in the published OpenAPI contract** is missing
+   wire fields the server actually returns: `approval_id`,
+   `approval_timeout_seconds`, `approval_expires_at`, `execution_id`,
+   `retry_after_ms`, `idempotent_replay`, `operation_id`,
+   `decision_context`, `details`. The OpenAPI contract declares
+   itself canonical; the server is wire-true.
+2. **`/check`** — returns 410 GONE, but the OpenAPI contract may
+   still document it as active.
 
 ## See also
 

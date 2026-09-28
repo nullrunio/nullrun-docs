@@ -166,93 +166,36 @@ binding, and digest-mismatch drift cases — is in
 
 !!! info "Deep dive"
 
-    Every approval decision flows through the `approve_handler`
-    and `deny_handler`. Both extract the operator identity via
-    `extract_session_user_id`, then call
-    `ApprovalService::approve_with_method` or `approve` on
-    `SqlxApprovalRepository`. On success, `approve_handler` releases
-    the Redis envelope + decrements the pending-approval counter
-    (`compensate_envelope_and_counter`), then publishes
-    `EventBus::publish_approval_resolved`. The publish fans out
-    via both in-process broadcast (subscriber on the same replica)
-    and Redis pub/sub on `event_bus:approval_resolved`
-    (cross-replica fan-out, ADR-023 P0-3). On the receiving side,
-    `convert_envelope_to_ws_message` converts the envelope to
-    `WsMessage::ApprovalResolved { outcome, note, ... }` and pushes
-    it to the parked SDK agent. The auto-consume path (ADR-047)
-    is implemented by `consume_approval_handler` — it accepts an
-    `approval_id` and `organization_id` from the body, runs the
-    atomic `consume_approved_by_id_only` SQL UPDATE, and returns
-    one of `consumed` / `already_consumed` / `not_approved` (all
-    200 OK — the SDK treats all three as success). The expiry
-    sweeper cycles PENDING rows past `expires_at` to `EXPIRED`
-    (system-decider discriminator
-    `decided_by_kind = 'system_expiry'`, ADR-043) and
-    APPROVED+stale rows to the `REVOKED` status (ADR-056).
+    The approval flow is two-phase. The gate returns
+    `require_approval`, the operator decides, and the waiting SDK is
+    resumed by a push once the decision lands. Each approval row is
+    bound to a digest of the action payload it was raised for, and the
+    post-approval execute re-check recomputes that digest and refuses
+    any call that does not match. An approved grant therefore cannot be
+    redirected at a different action before it is spent.
 
-    The approval row's `expires_at` is set at creation time from the
-    matched rule's `expires_in_seconds` (default 300s) — backend is
-    the source of truth, and the SDK reads `approval_timeout_seconds`
-    off the `/check` response. The approve handler's atomic UPDATE
-    flips status + `consumed_at` in a single SQL statement so the
-    `chk_consumed_at_status` constraint never observes a
-    half-stamped row. Cross-org IDOR is blocked at the SQL layer
-    (`service.get_approval(org_uuid, approval_uuid)`) — the repo
-    returns `None` on cross-org and the handler 404s with no
-    existence leak. Decision emission through `governance audit` is
-    best-effort fire-and-forget (`emit_approval_decision_audit`);
-    a transient DB blip never blocks the HTTP 204. The `decision`
-    field on the audit row is one of the typed `GovernanceDecision`
-    variants (`Approved` / `Denied`) — never a free-text string.
-    WS push is best-effort with the `/approval-state/reconcile`
-    fallback (P1-4) recovering missed events on the next reconcile
-    tick. Denial is terminal — the SDK raises
-    `WorkflowKilledInterrupt` (denial = kill for the originating
-    execution).
+    A decision is applied atomically: the outcome and the consumption
+    stamp move together, so no reader can observe a half-decided row.
+    Approving releases the pending reservation and decrements the
+    outstanding-approval count as part of the same operation. Rows are
+    scoped to the organization when they are read, so an identifier
+    belonging to another organization reads as absent rather than
+    forbidden, and the response gives away nothing about whether it
+    exists.
 
-    The terminal-feed UI reads from
-    `GET /api/v1/orgs/:org_id/approvals` which renders rows in
-    the `ApprovalStatusWire` enum (`Pending` / `Approved` /
-    `Denied` / `Expired` / `Consumed` / `Revoked`). The
-    `From<ApprovalStatus>` impl keeps `Consumed` distinctly from
-    `Expired`, so operators always see whether the SDK reused an
-    approved grant vs. the sweeper closed it. The friction-level
-    buttons map to `confirmation_method` values written to
-    `approvals.confirmation_method` and rendered verbatim
-    (`single_click` / `type_amount` / `type_action_amount`). The
-    SDK auto-consume endpoint closes `APPROVED` rows on the success
-    path of `mode="inline"` approvals, so inline approvals never
-    leave rows dangling past `expires_at`. The operator-cancel
-    path closes rows through the spawned cancel step.
+    Expiry runs on a sweep rather than on the reader clock. Pending
+    rows past their window become expired and are attributed to the
+    system; approved rows that are no longer usable are closed
+    separately, and closing them preserves the original decider and
+    timestamp so a later automated transition cannot overwrite an
+    explicit human decision.
 
-    The approval flow is two-phase: the gate returns
-    `require_approval`, then the operator decides, then WS push
-    resumes the SDK. `action_digest` (ADR-006) binds every
-    approval row to a SHA-256 of the `BusinessImpact` payload
-    (prefixed with `b"nullrun/v1/business_impact:"`); the
-    `/execute` re-check refuses any call whose recomputed digest
-    doesn't match. The auto-consume endpoint (ADR-047) closes
-    approved rows at the moment of truth (success path) instead
-    of after `expires_at + 60s`. The REVOKED status (ADR-056)
-    preserves the operator's `decided_by` so revocation does not
-    overwrite an explicit approve, keeping forensic convergence
-    on `audit_events`.
-
-    Approvals live behind the `approvals` plan feature (Growth+);
-    the `TierGate` prompt is rendered for plans below that. The
-    dashboard page is org-scoped via session cookie; SDK callers use
-    the org-less `/api/v1/approvals/{approval_id}/consume` path
-    because org identity is derived from the API key (no `{org_id}`
-    segment, unlike `/approve` / `/deny`). `confirmation_method` is
-    an unauthenticated audit-trail field — the server rejects
-    control characters at the handler edge
-    (`reject_control_chars_or_err`) to keep the audit-pollution
-    class closed on the approval surface. The expiry sweeper has
-    two cycles per tick (PENDING → EXPIRED and APPROVED+stale →
-    REVOKED); the §10.1 retraction guarantees `decided_by` /
-    `decided_at` are never overwritten on REVOKED. The WS push is
-    opt-in via `?wait_for_approval=true` on the upgrade. Cross-
-    replica fan-out is best-effort Redis pub/sub — a publish
-    failure logs and is recovered by the next periodic reconcile,
-    but the originating replica's in-process broadcast always
-    fires (so the local SDK agent always sees the event).
+    The push to the waiting SDK is best-effort, and a missed push is
+    recovered by a periodic reconciliation pass. Audit emission is
+    also best-effort: a transient failure there never blocks the
+    decision itself. The stored decision is a typed value rather than
+    free text, and the friction level the operator had to clear is
+    recorded alongside it. Denial is terminal, and the SDK raises
+    `WorkflowKilledInterrupt`. The auto-consume path reports consumed,
+    already-consumed, and not-approved distinctly, and the SDK treats
+    all three as success.

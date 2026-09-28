@@ -18,99 +18,43 @@ rationale. A regression on either layer is a compliance incident.
 
 !!! info "Deep dive"
 
-    Compliance posture is implemented by two cooperating
-    middleware. **Layer 1 — geo-block** lives at
-    `backend/src/proxy/middleware/geo_block.rs` and runs as Axum
-    middleware mounted in front of auth
-    (`fortress_geo_block_middleware`); blocked traffic never
-    touches the database. The middleware classifies every
-    request by source country (MaxMind GeoLite2 lookup with 24h
-    in-process DashMap cache) and routes to one of `Allow |
-    BlockSanctioned | BlockHighRisk | RedirectToWaitlist |
-    AllowPrivate`. **Layer 2 — sanctions screening** lives at
-    `backend/src/proxy/middleware/sanctions.rs` and runs at
-    signup in `auth_oauth_register_handler` (per the docstring
-    cross-reference at `sanctions.rs`); it's the secondary
-    defence that catches designated persons who travel, use a
-    VPN, or register via OAuth from a non-sanctioned-country
-    proxy. The screening table is loaded once at process start
-    into an `AHash`-keyed `HashSet<String>` of normalised
-    tokens (`sanctions.rs`); lookups are O(1) per token.
+    Screening runs in two layers. Every inbound request is
+    classified by its network origin before authentication is
+    attempted, and every signup is screened against the identity
+    data supplied by the applicant. Neither layer is sufficient
+    on its own: a network-origin check does not follow a
+    designated person across a border, and an identity check made
+    only at signup sees nothing about the traffic that later
+    arrives from an address we have already refused.
 
-    Both layers fail CLOSED. On the geo-block, missing/unreadable
-    GeoIP database returns 503 `geoip_unavailable`
-    (`geo_block.rs`); an unparseable peer / XFF returns 403
-    `client_ip_unresolvable`. Per CLAUDE.md §4, enforcement paths
-    fail-CLOSED by default. Sanctions
-    screening is ON by default: the operator-level override
-    env var set to `1` (or case-insensitive `true`) disables;
-    unset or any other value leaves it ON (`sanctions.rs`).
-    The OnceLock caches the env-var lookup at first call.
-    Match is opaque: a 403 response on SDN match does NOT
-    echo the matched display name to the client
-    (`sanctions-screening.md`); the matched name + field
-    (`name` or `email`) are logged at WARN for audit. The
-    sanctions table load is graceful — missing CSV returns a
-    hand-curated 6-name fallback with a `degraded: true` flag
-    (`sanctions.rs`); signup is still allowed but the operator
-    is alerted via WARN log + `OPERATIONAL_METRICS`. A
-    regression on either layer is a compliance incident — never
-    a "we will email you when we do" bridge for strict-liability
-    jurisdictions.
+    The network layer's blocklist has two tiers, and the tier
+    decides what the request experiences. Jurisdictions under
+    comprehensive sanctions regimes are refused outright, on
+    both the API surface and the marketing site. Jurisdictions
+    carrying a heavy privacy-regime burden are refused on the API
+    surface and redirected to a commercial waitlist from the
+    marketing site, so that interest is recorded without the
+    service being exposed.
 
-    Geo-block tiers are `SANCTIONED` (comprehensive sanctions, 9
-    codes: RU/IR/KP/SY/CU/BY/VE/MM/AF) and `HIGH_RISK_NO_SERVICE`
-    (GDPR + CCPA + PIPL + DPDPA burden, EU-27 + EEA/EFTA + CH +
-    GB + CN + IN). Both are compiled-in constants
-    (`geo_block.rs`). Sanctions tokenisation is NFKC normalise
-    (catches `ＡＢＣ` → `ABC`) → lowercase → split on
-    non-alphanumeric → drop tokens <3 chars (`sanctions.rs`).
-    A single shared given name like "Anatoly" never matches a
-    2-token SDN entry (`sanctions.rs` test). The trust-proxy
-    chain for XFF is `TRUSTED_PROXY_CIDRS`-configured: an XFF
-    from an untrusted peer is treated as attacker-controlled
-    and ignored (`geo_block.rs`). The BFF→backend hop
-    (single-entry XFF) is handled so the BFF container IP
-    doesn't cause false classification. Waitlist carve-out is
-    `WAITLIST_PATH = "/api/v1/waitlist"` — the only bypass for
-    `BlockHighRisk` (`geo_block.rs`); SANCTIONED-tier IPs are
-    NOT bypassed there. The branch runs AFTER `lookup.action()`
-    so a code refactor that changes the order would re-open the
-    bypass. Country code is PII under GDPR and is logged at WARN
-    level, never INFO; the `x-nullrun-fortress-block: sanctions`
-    and `x-nullrun-fortress-country: <ISO>` headers carry the
-    wire signal.
+    Both layers fail closed. If the geolocation data is
+    unavailable, or the screening reference data cannot be
+    loaded, the request is refused or the screening layer
+    reports itself degraded and raises an operational alert,
+    rather than admitting traffic it cannot classify. An operator
+    watching every request fail sees the problem within minutes; a
+    screening layer that has silently stopped matching produces
+    no signal at all. Refusing loudly is the cheaper failure, so
+    the service refuses rather than admitting a request it cannot
+    classify.
 
-    The two-layer model (IP + identity) was chosen because the
-    IP defence alone misses three classes of designated persons:
-    those travelling abroad, those using commercial VPNs that
-    exit in non-sanctioned jurisdictions, and those signing up
-    via OAuth where the only data is name + email. Geo-block
-    alone is necessary but not sufficient for OFAC/EU/UK/UN
-    comprehensive-sanctions regimes. Both layers are fail-CLOSED
-    rather than fail-OPEN because the cost of a 503 (operator
-    notices, fixes the misconfiguration) is lower than the cost
-    of a fail-OPEN (sanctioned traffic silently served) —
-    consistent with CLAUDE.md §4.
-
-    Cyrillic / Latin homoglyphs are NOT collapsed
-    (`sanctions.rs`): NFKC normalises full-width / ligature
-    forms but does NOT transliterate between scripts. A
-    Cyrillic `а` stays Cyrillic; only the full-width Latin /
-    ASCII cases collapse. A designated individual can circumvent
-    name-based screening by transliterating to a homoglyph
-    script — the geo-block catches the
-    non-Latin-from-sanctioned-country case. There is no
-    email-domain match (`sanctions-screening.md`): emails
-    tokenise on `@` and `.`, but the resulting tokens (`gmail`,
-    `mail`) are too common to screen — only the email local-part
-    is tokenised and matched. OAuth callback bypass is
-    provisional (`geo_block.rs`): sanctioned-jurisdiction
-    visitors can complete OAuth via the BFF until the BFF
-    carries XFF — the secondary name/email screen is the catch.
-    The OnceLock caches the override env-var at first call
-    (`sanctions.rs`): changing it at runtime does NOT take
-    effect for the running process — restart required.
-    Refresh cadence is manual: the sanctions table is loaded at
-    process start; restart is required after each CSV update
-    (`sanctions-screening.md`) — no automatic refresh worker.
+    Identity screening is deliberately blunt and deliberately
+    narrow. Names are case-folded and normalised across
+    full-width character forms, split into tokens, and screened
+    only where a token is long enough to carry signal; a single
+    shared given name is never sufficient to match. The email
+    local part is screened after the name, as a weaker signal,
+    and a match returns a generic response that never echoes the
+    matched name. Cross-script transliteration is not performed,
+    which is a real limitation. Screening applies at sign-up
+    only, and the reference data is refreshed on a published
+    cadence, with the NullRun team owning that refresh.

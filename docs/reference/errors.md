@@ -29,8 +29,7 @@ wording, see [Concepts → Error handling](../concepts/error-handling.md).
 
 The canonical catalog lives in the gateway. The `error` slug is
 the stable, machine-readable identifier; `message` is human-safe;
-`code` is a legacy SCREAMING_SNAKE_CASE alias kept for backward
-compatibility.
+`code` carries the same value in SCREAMING_SNAKE_CASE.
 
 | `error` slug | HTTP | When | SDK exception |
 | --- | --- | --- | --- |

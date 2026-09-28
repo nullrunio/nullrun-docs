@@ -75,7 +75,7 @@ def f(): ...
 ### What `@protect` does on every call
 
 A single `@protect` call runs **four pre-execution gates** in
-strict order (ADR-008 Rule 4). The wrapper is shared between the
+strict order. The wrapper is shared between the
 sync and async paths via a `_protect_body` context manager; only
 the kill/pause signal translation differs.
 
@@ -253,12 +253,11 @@ with nullrun.chain(chain_id, op="start"):
     my_long_running_agent()        # every /gate call extends the chain TTL
 ```
 
-The `chain_id` is validated client-side per CLAUDE.md §6: the
-backend's chain race guard (`HGET chain_key 'org_id'`) does **not**
-validate UUID format — non-UUID or non-v4 `chain_id`s silently
-auto-register as new ACTIVE chains, which is both a typo trap
-and a predictable-UUID risk. The SDK raises `ValueError` at
-`with chain(...)` entry on malformed input.
+The `chain_id` is validated client-side: the backend's chain race
+guard does **not** validate UUID format — non-UUID or non-v4
+`chain_id`s silently auto-register as new ACTIVE chains, which is both
+a typo trap and a predictable-UUID risk. The SDK raises `ValueError`
+at `with chain(...)` entry on malformed input.
 
 `chain` is the soft-mode companion to a Hard budget: the budget
 allows a bounded overrun only when an active chain is present.
@@ -421,9 +420,9 @@ with nullrun.chain(chain_id, op="start"):           # soft-mode budget
     `tokens` is the only valid unit on the wire.
 
 !!! warning "Don't call `set_chain_id("my-custom-id")`"
-    `chain_id` MUST be a UUID v4 string per CLAUDE.md §6. The
-    backend's race guard does not validate format — non-v4 ids
-    silently auto-register as new ACTIVE chains. Use
+    `chain_id` MUST be a UUID v4 string. The backend's race guard
+    does not validate format — non-v4 ids silently auto-register
+    as new ACTIVE chains. Use
     `with nullrun.chain(uuid.uuid4(), op="start")` to let the SDK
     validate.
 

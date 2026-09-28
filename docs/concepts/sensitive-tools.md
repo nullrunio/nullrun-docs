@@ -167,95 +167,34 @@ is bound to the exact action payload the SDK sent on `/gate`. See
 
 !!! info "Deep dive"
 
-    ToolBlock lives as Step 3 of the gate orchestrator's 10-step
-    priority list (`backend/src/proxy/http/gate/orchestrator.rs`,
-    ADR-011). The `check_tool_block` helper reads the per-key
-    `KeyPolicy.tool_patterns` cache (populated by
-    `policy_cache::aggregate_policies`), then matches each pattern
-    against the request's tool list using `glob_match` /
-    `glob_match_single` / `glob_match_multi`. The matcher encodes
-    three rules: `|` separates alternatives (`bash|sh`); a single
-    `*` pattern splits into prefix + suffix where `prefix.*`
-    matches both the bare name and any dotted continuation;
-    multi-`*` patterns split on every `*` and require each
-    non-empty literal segment to appear as a substring of `value` in
-    order (the DEF-POLFLOW-TB-06 fix). When the SDK supplies
-    `BusinessImpact` on `/check`, Step 4
-    (`business_impact_validate`, `orchestrator.rs`) validates the
-    envelope first; malformed payloads return
-    `BUSINESS_IMPACT_INVALID` before any approval-rule evaluation or
-    budget reservation.
+    A pattern is not a regular expression. Alternatives are
+    separated by a pipe, and a pattern with a single wildcard
+    matches both the bare name and any dotted continuation past
+    it, which is what lets one pattern cover a whole server's
+    namespace. A pattern with several wildcards splits on each one
+    and requires the literal segments between them to appear in
+    order. Matching sees the tool name and nothing else, so two
+    calls to the same tool are indistinguishable at this step
+    whatever their payloads.
 
-    ToolBlock is ALWAYS Hard — `orchestrator.rs` codifies this:
-    regardless of `enforcement_mode`, the orchestrator returns
-    `Block { TOOL_BLOCKED }` whenever the helper returns a
-    `ToolBlockDecision` with `decision == "block"`. The structured
-    `details` JSON is forwarded verbatim, so the SDK sees the same
-    wire shape pre- and post-v3.56. The orchestrator's
-    policy_cache_miss path returns `TOOL_BLOCKED` if the policy
-    cache has no entry for the key — fail-CLOSED, never fail-OPEN.
-    The `dispatch_policy_violation_alert` bridge fires on every
-    authoritative block (`orchestrator.rs`) so the operator's
-    configured notification channels actually see real blocks (the
-    "6 decorative toggles" audit fixed the dead bridge). The
-    tool_patterns aggregate honors the per-policy scope: ToolBlock
-    rows with `scope = "workflow"` MUST carry a non-NULL
-    `workflow_id` (ADR-047); the three-layer invariant enforces
-    this at `create_policy` validation, the `list_by_workflow` SQL
-    filter, and the `is_policy_applicable_to_workflow` predicate.
+    Patterns union across every applicable policy at both org and
+    workflow scope. The most-restrictive-wins rule applies within
+    a single policy type, not across types; across types the gate
+    takes the first outcome other than allow in its fixed order,
+    and tool blocking is evaluated ahead of budget reservation, so
+    a blocked call never receives a spending envelope.
 
-    ToolBlock patterns union across applicable policies
-    (`policy_aggregates.blocked_tools` is a flat dedup of every
-    matching pattern). The most-restrictive-wins principle only
-    applies within a single policy type; cross-policy-type the
-    orchestrator steps pick the first non-Allow in priority order.
-    `tool_class` annotations (`mcp` / `builtin` / `custom` /
-    `unknown`) propagate from the SDK's tool catalog onto the
-    `tool_policies` row in the database, so a pattern like
-    `mcp://*/delete` covers every MCP server's delete tool without
-    operators having to enumerate them. The SDK ships the
-    `kwargs` payload on `/execute` — typed predicates in approval
-    rules read values directly from there by `param_name`, no
-    SDK-side extractor required.
+    The block is unconditional. A policy's enforcement mode does
+    not soften it, and when the policy set for a key cannot be
+    read, the call is treated as blocked rather than allowed —
+    the trade-off is a refusal that has to be retried over a
+    silent pass that goes unnoticed. Enforcement also applies on
+    the cost-tracking path, so an SDK that does not declare its
+    tools in the request still has the same rules applied before
+    the call's cost is recorded.
 
-    ToolBlock is enforced server-side in both `/check` and `/track`;
-    the SDK-side enforcement (the `set_call_context(tools=[...])`
-    annotation) is opt-in for early rejection.
-
-    The chosen path is "ToolBlock is server-side, always Hard" —
-    the SDK ships zero built-in sensitive-tool list because any
-    such list would silently be wrong for tools not on it. The
-    alternative considered was a per-SDK registration API:
-    `nullrun.register_tool(name, risk=...)` — rejected because it
-    would force every framework to register against NULLRUN's
-    expectations, and a missed registration would be silently wrong.
-    The glob matcher (`glob_match` / `glob_match_multi`) was chosen
-    over a regex matcher because globs are the vocabulary operators
-    see in the dashboard; the alternative considered (allow regex
-    for power users) was rejected for ADR-008 scope — operators
-    who want narrower predicates should use the `BusinessImpact`
-    typed-predicate machinery, not a more powerful glob. The
-    pre-v3.71 Step 7 stub was a regression where the
-    `approval_rule_eval` arm was hardcoded to `let matched_rule =
-    None` — silent fail-OPEN on operator-authored approval rules,
-    fixed in v3.71 by wiring the live `evaluate_rules`
-    (`enforcement/approval_eval.rs`) into the orchestrator.
-
-    ToolBlock matches tool name only — it does not inspect tool
-    arguments beyond the `kwargs` the SDK ships on `/execute`.
-    Two calls to the same tool with different payloads are
-    indistinguishable at the glob-match step; the narrow rule
-    "block refunds over $500" requires a typed `tool_parameters`
-    predicate (DNF of up to 5 named parameters against Equals /
-    OneOf / NumericRange / Regex / Exists matchers). The
-    orchestrator's fail-CLOSED posture on policy_cache_miss means
-    that a Redis cache flush mid-traffic will surface as
-    `TOOL_BLOCKED` for every `/check` until the cache repopulates —
-    the trade-off is "no silent miss" over "no false positives".
-    Pre-flight blocking on `/gate` is opt-in via SDK
-    `set_call_context(tools=[...])`; SDKs that don't call
-    `set_call_context` skip `/gate` ToolBlock enforcement
-    entirely — `/track` cost-event ingestion still catches them
-    downstream, but only after the LLM call has fired. ToolBlock
-    patterns cannot reference `tool_class`-scoped predicates; the
-    typed-predicate layer is where class-aware rules live.
+    Rules that depend on arguments are a different mechanism. A
+    tool block cannot inspect a refund amount or a recipient;
+    that needs an approval rule with typed predicates, where the
+    grant is bound to a digest of the exact payload and a later
+    change to that payload invalidates the grant.

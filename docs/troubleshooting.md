@@ -36,8 +36,8 @@ when it isn't.
 !!! note "Endpoint naming"
     The canonical enforcement endpoint is **`POST /api/v1/gate`**
     (returns a server-minted `execution_id` on `allow` decisions).
-    The legacy **`POST /api/v1/check`** returns `410 Gone` with
-    `replacement: /api/v1/gate`. All current SDKs call `/gate`
+    **`POST /api/v1/check`** is not served: it returns `410 Gone`
+    with `replacement: /api/v1/gate`. Every SDK calls `/gate`
     directly.
 
 > Critical paths refuse to run when the gateway is unreachable;

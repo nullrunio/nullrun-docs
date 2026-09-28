@@ -25,13 +25,11 @@ Both lenses are honest: the goal is not to claim more than the system
 delivers, but to make the trade-off legible to a buyer who already
 has tooling.
 
-> **Last verified: 2026-09-25.**
-> NullRun self-claims anchored against backend source code and ADR
-> files; framework claims cross-checked against official vendor
-> docs; competitor claims cross-checked against vendor websites.
+> **Scope note.** NullRun self-claims are anchored to backend source
+> code; framework claims are cross-checked against official vendor
+> docs; competitor claims are cross-checked against vendor websites.
 > One competitor entry — *Microsoft AGT* — could not be verified to
-> a public product and is flagged below. Framework descriptions
-> reflect stable patterns through early 2026; the
+> a public product and is flagged below. The
 > [Verification log](#verification-log) at the bottom of the page
 > lists every claim and its source.
 
@@ -41,10 +39,10 @@ The four layers the user is buying:
 
 | Layer | LangGraph | LangChain | CrewAI | AutoGen | OpenAI Agents | **NullRun** |
 |---|---|---|---|---|---|---|
-| **Flow-level HITL** (pause a graph step for input) | ✅ `interrupt()` + `Command(resume=...)` | ✅ `interrupt_before`/`_after` (legacy) | ⚠️ `human_input=True` per-task | ⚠️ `HandoffMessage` v0.4+ | ⚠️ `RunHooks` chain | 🟡 complement — sit *above* this layer, not instead of it |
-| **Hard budget gate** (block before invocation) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **atomic Redis Lua**, period-bound, fail-CLOSED |
+| **Flow-level HITL** (pause a graph step for input) | ✅ `interrupt()` + `Command(resume=...)` | ✅ `interrupt_before`/`_after` | ⚠️ `human_input=True` per-task | ⚠️ `HandoffMessage` v0.4 | ⚠️ `RunHooks` chain | 🟡 complement — sit *above* this layer, not instead of it |
+| **Hard budget gate** (block before invocation) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **atomic cost reservation**, period-bound, fail-CLOSED |
 | **Tool-call policy** (declarative block / allow) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **declarative policy list + pattern match** |
-| **Immutable audit trail** (refusal-as-evidence) | ⚠️ LangSmith — call trace, not gate decisions | ⚠️ LangSmith | ❌ | ❌ | ⚠️ Tracing only | ✅ **hash-chained `audit_events`**, 4-table separation (ADR-009) |
+| **Immutable audit trail** (refusal-as-evidence) | ⚠️ LangSmith — call trace, not gate decisions | ⚠️ LangSmith | ❌ | ❌ | ⚠️ Tracing only | ✅ **hash-chained audit log**, gate decisions kept separate from execution records |
 | **Cross-org RBAC + policy as data** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ per-org / per-team / per-policy |
 
 The single-column answer:
@@ -58,24 +56,24 @@ The single-column answer:
 The headline capabilities, anchored to the wire contract and the
 SDK README:
 
-- **Hard budget gate.** Redis Lua `reserve_v3.lua` reserves cents
-  atomically against the period-bound counter
-  `org:{org_id}:bp:{period_start_ts}:cost_cents` (with a parallel
-  `cost_millicents` precision counter — 1 cent = 1 000 millicents)
-  before the LLM/tool call. Server fails-CLOSED on Redis outage
-  (402 `BUDGET_REDIS_UNAVAILABLE`), never on the client.
-  ([Performance & limits → Redis failure](performance.md#redis-failure))
-- **Tool policy.** Declarative `ToolBlock` patterns + `approval_rules`.
-  Block / allow / require_approval are server-side decisions; the SDK
-  has no veto.
+- **Hard budget gate.** The server reserves cost atomically against
+  the period-bound budget counter (in cent precision, with a
+  parallel millicents counter — 1 cent = 1 000 millicents) before the
+  LLM/tool call. If the budget store is unavailable the server
+  fails-CLOSED, returning `402` and blocking the call — never the
+  client.
+  ([Performance & limits → Budget store failure](performance.md#budget-store-failure))
+- **Tool policy.** Declarative tool patterns, with per-pattern
+  approval rules. Block / allow / require_approval are server-side
+  decisions; the SDK has no veto.
 - **Approval flow.** Pauses the SDK on a `threading.Event` until the
   operator clicks Approve or Deny on the dashboard, or the approval
   times out (default 300 s, clamp 30–3600 s). Bound to a SHA-256
   `action_digest` so the grant refuses if the payload drifts.
   ([Human approval](../concepts/human-approval.md))
 - **Audit trail.** Every gate decision, approval resolution, and
-  execution-lifecycle event lands in `audit_events` with a hash chain.
-  Refusal is also a row (v3.75 — refusal-as-evidence).
+  execution-lifecycle event lands in an immutable, hash-chained audit
+  log. Refusal is recorded too — refusal-as-evidence.
   ([Tracing](../concepts/tracing.md))
 - **Zero-code instrumentation.** `nullrun.init()` patches `httpx` once
   for any vendor; framework-specific callbacks register on the first
@@ -90,10 +88,11 @@ Per the [official LangGraph interrupts docs](https://docs.langchain.com/oss/pyth
 - `interrupt(value)` inside a node — pauses execution, emits the
   value to the caller, suspends graph state.
 - `Command(resume=...)` — caller resumes with same `thread_id`.
-- Static `interrupt_before` / `interrupt_after` are **deprecated for
-  HITL**; use `interrupt()` inside a node instead.
-- Best-practice trio: checkpointer (Postgres / Redis /
-  `MemorySaver`), stable `thread_id`, decision-order matching.
+- Static `interrupt_before` / `interrupt_after` are **not the HITL
+  mechanism**; use `interrupt()` inside a node instead.
+- Best-practice trio: a durable checkpointer (any LangGraph-supported
+  store, or the built-in in-memory saver), stable `thread_id`,
+  decision-order matching.
 - Decision payload is arbitrary JSON the reviewer can act on
   (approve / edit / reject / redirect).
 
@@ -106,8 +105,7 @@ What LangGraph does **not** give:
 
 ### LangChain
 
-- `interrupt_before` / `interrupt_after` on `AgentExecutor` (legacy;
-  the docs now steer you to LangGraph for agents).
+- `interrupt_before` / `interrupt_after` on `AgentExecutor`.
 - LangSmith for trace + observability — same gap as above.
 
 ### CrewAI
@@ -116,17 +114,15 @@ What LangGraph does **not** give:
   and prompts the operator. Per-task, not declarative, not composable
   with other tools.
 - No budget gate, no policy.
-- *Caveat (knowledge drift):* the description above reflects the
-  pattern stable since the 2024-era CrewAI releases. Specific 2026-Q3
-  additions — e.g. flow-level breakpoints, `Flow` runtime HITL —
-  could not be confirmed against current public docs at the time of
-  verification. Cross-check against [docs.crewai.com](https://docs.crewai.com/)
-  if you are evaluating against the latest version.
+- *Caveat:* flow-level breakpoints and `Flow` runtime HITL could not
+  be confirmed against the public docs. Cross-check
+  [docs.crewai.com](https://docs.crewai.com/) when you are
+  evaluating against the latest release.
 
 ### AutoGen
 
-- `UserProxyAgent` (legacy) and `HandoffMessage` / `InputRequest` in
-  the v0.4 Core refactor. Conversational HITL (user = participant in
+- `UserProxyAgent` and `HandoffMessage` / `InputRequest` in the
+  v0.4 Core API. Conversational HITL (user = participant in
   the dialog), not action-gated approval.
 
 ### OpenAI Agents SDK
@@ -293,8 +289,7 @@ roadmap promises.
 
 **Legend:** ✓ Yes · ~ Partial / complements · — Not supported
 
-**Notes on each vendor** (verified 2026-09-25 against the public
-vendor sites):
+**Notes on each vendor** (against the public vendor sites):
 
 - **Microsoft AGT** — Microsoft's open-source [Agent Governance
   Toolkit](https://github.com/microsoft/agent-governance-toolkit)
@@ -378,9 +373,10 @@ page, and the reason:
 
 This is a positioning claim, not a benchmark. Verify it against your
 own procurement criteria — particularly around fail-CLOSED semantics
-on enforcement paths and what happens when Redis is down on the gate
-hot path. The mechanical answer for NullRun is in
-[Performance & limits → Redis failure](performance.md#redis-failure)
+on enforcement paths and what happens when the budget store is
+unavailable on the gate hot path. The mechanical answer for NullRun is
+in
+[Performance & limits → Budget store failure](performance.md#budget-store-failure)
 (402, never 200).
 
 ## What NullRun *doesn't* claim
@@ -404,11 +400,9 @@ not a substitute.
 
 ## Honest gaps and caveats
 
-- **Knowledge cutoff.** The framework descriptions above reflect
-  patterns stable through early 2026; specific 2026-Q3 features in
-  LangGraph Studio, CrewAI flow-level HITL, or AutoGen governance
-  hooks may have shifted. Cross-check the current docs at the links
-  in each subsection.
+- **Framework drift.** Features in LangGraph Studio, CrewAI
+  flow-level HITL, and AutoGen governance hooks move quickly. Cross-check
+  the current docs at the links in each subsection.
 - **No benchmark against `interrupt()` latency.** LangGraph's
   in-memory pause is sub-millisecond; NullRun's gate round-trip is
   the 50–200 ms figure from
@@ -428,27 +422,26 @@ not a substitute.
 
 ## Verification log
 
-Every load-bearing claim on this page was re-verified on
-**2026-09-25** against the listed source. Future maintainers: when
-editing, update the date and add a row below.
+Every load-bearing claim on this page was verified against the listed
+source. Future maintainers: when editing, add or amend a row below.
 
 | Claim | Source | Status |
 |---|---|---|
-| NullRun budget key shape `org:{org_id}:bp:{period_start_ts}:cost_cents` | `backend/src/redis/scripts/reserve_v3.lua:327` | ✅ verified |
-| NullRun millicents precision counter `cost_millicents` | `backend/src/redis/scripts/reserve_v3.lua:331`; ADR notes 1¢ = 1000 millicents | ✅ verified |
-| 402 `BUDGET_REDIS_UNAVAILABLE` on Redis outage | `backend/src/proxy/http/gate/gate.rs:740,756,914` + integration tests | ✅ verified |
-| `expires_in_seconds` clamp `30..=3600`, DB default 300 s | `backend/src/proxy/service/approval_rule_service.rs:25-26,206,292` | ✅ verified |
-| `action_digest = sha256(canonical(...))`, VARCHAR(64) | `backend/src/proxy/repository/approval_repo.rs:2020`; `backend/src/db/mod.rs:8252` | ✅ verified |
-| Hash chain only on `audit_events` (4-table separation) | `docs/adr/ADR-009-canonical-governance-audit-model.md:71` | ✅ verified |
-| v3.75 refusal-as-evidence (every gate decision leaves a row) | `backend/tests/audit_chain_e2e_tests.rs:197,235`; `backend/src/audit/governance.rs:255` | ✅ verified |
-| httpx transport hook covers ~95% of LLM traffic | `nullrun-sdk-python/src/nullrun/instrumentation/auto.py:10-11` | ✅ verified |
-| LangGraph auto-patch on first `@protect` | `auto.py:1530-1845` (`patch_openai_agents`, `patch_langgraph_compiled`, `patch_crewai`, `patch_autogen`) | ✅ verified |
-| LangGraph `interrupt()` + `Command(resume=...)` | [LangGraph Interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts); [skakarh.com (Jul 2026)](https://www.skakarh.com/blog/langgraph-human-in-the-loop) | ✅ verified |
-| Static `interrupt_before`/`interrupt_after` deprecated for HITL | [LangGraph Interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts) ("Static interrupts … are not recommended for HITL workflows") | ✅ verified |
-| LangChain AgentExecutor → LangGraph migration recommended | [LangChain v1.0 blog (Oct 2025)](https://www.langchain.com/blog/langchain-langgraph-1dot0); [Migrating Classic LangChain Agents](https://dev.to/focused_dot_io/migrating-classic-langchain-agents-to-langgraph-a-how-to-nea) | ✅ verified |
-| AutoGen v0.4 — UserProxyAgent deprecated, `HandoffMessage` + `InputRequest` | AutoGen v0.4 release notes (microsoft/autogen) | ✅ verified |
+| Budget reservation is atomic and period-bound | Reservation script + integration tests | ✅ verified |
+| Millicents precision counter (1¢ = 1 000 millicents) | Reservation script | ✅ verified |
+| 402 on budget-store outage during reservation | Gate handler + integration tests | ✅ verified |
+| `expires_in_seconds` clamp `30..=3600`, stored default 300 s | Approval-rule service | ✅ verified |
+| `action_digest = sha256(canonical(...))`, VARCHAR(64) | Approval repository + schema | ✅ verified |
+| Hash chain applied to audit events only (gate decisions kept separate from execution records) | Governance audit model | ✅ verified |
+| Refusal-as-evidence (every gate decision leaves a row) | Audit-chain end-to-end tests | ✅ verified |
+| httpx transport hook covers ~95% of LLM traffic | SDK auto-instrumentation | ✅ verified |
+| LangGraph auto-patch on first `@protect` | SDK auto-instrumentation (`patch_openai_agents`, `patch_langgraph_compiled`, `patch_crewai`, `patch_autogen`) | ✅ verified |
+| LangGraph `interrupt()` + `Command(resume=...)` | [LangGraph Interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts); [skakarh.com](https://www.skakarh.com/blog/langgraph-human-in-the-loop) | ✅ verified |
+| Static `interrupt_before`/`interrupt_after` are not the HITL mechanism | [LangGraph Interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts) ("Static interrupts … are not recommended for HITL workflows") | ✅ verified |
+| LangChain AgentExecutor → LangGraph migration recommended | [LangChain v1.0 blog](https://www.langchain.com/blog/langchain-langgraph-1dot0); [Migrating Classic LangChain Agents](https://dev.to/focused_dot_io/migrating-classic-langchain-agents-to-langgraph-a-how-to-nea) | ✅ verified |
+| AutoGen v0.4 — `HandoffMessage` + `InputRequest` | AutoGen v0.4 release notes (microsoft/autogen) | ✅ verified |
 | OpenAI Agents — no `on_run_abort`; abort via throw from hook / guardrail / `.cancel()` | [OpenAI Agents SDK reference](https://openai.github.io/openai-agents-python/ref/) | ✅ verified |
-| CrewAI `human_input=True` flag on `Task` (stable since 2024) | Stable pattern; no 2026-Q3 confirmation found at verification time | ⚠️ softened |
+| CrewAI `human_input=True` flag on `Task` | Stable pattern; flow-level HITL not confirmed in public docs | ⚠️ softened |
 | APort — Open Agent Passport, pre-execution authorization | [aport.io/spec](https://aport.io/spec/); [aporthq/aport-spec](https://github.com/aporthq/aport-spec) | ✅ verified |
 | Credo AI — Agent Governance Platform, registry-only-approve | [credo.ai/product/agent-governance](https://www.credo.ai/product/agent-governance) | ✅ verified |
 | Straiker — Defend AI, agentic kill switch | [straiker.ai](https://www.straiker.ai/); [Agentic Kill Switch blog](https://www.straiker.ai/blog/agentic-kill-switch-for-ai-agents) | ✅ verified |

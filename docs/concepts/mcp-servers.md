@@ -189,120 +189,37 @@ probe scheduler on it.
 
 !!! info "Deep dive"
 
-    The page is one row per Action Source (`mcp://<server_name>`),
-    not two parallel surfaces — the operator thinks in Action
-    Sources, not in two underlying tables. Per ADR-007, each row
-    has a `verification` block (operator-registered
-    `mcp_discovery_configs`) and an `observation` block
-    (SDK-driven `mcp_observed_tools`).
+    Each row on the page is one action source with two independent
+    halves: a verification half for a source the operator registered
+    with a probe URL, and an observation half for what the SDK has
+    actually called in the last 30 days. The two halves are always
+    evaluated separately, so a source can be verified and unused, or
+    observed and never successfully probed.
 
-    The list endpoint is
-    `GET /api/v1/orgs/:org_id/action-sources` (ADR-007), wired
-    to `list_active_action_sources_handler`. The SQL is one
-    INNER + LEFT JOIN with a 30-day `window_days` filter;
-    orphans (observed but not registered) surface in a separate
-    "Discovered but not registered" panel via
-    `list_discovered_only_per_org`. A new row only appears once
-    the operator registers or enrolls — the runtime does not
-    silently materialise registered entries (page mirrors the
-    operator's world, not the SDK's).
+    Probing is a synchronous JSON-RPC exchange over the MCP
+    Streamable HTTP transport: an initialize request followed by a
+    tool listing, with a 10-second wall-clock budget. A sweep runs
+    every 60 seconds and re-probes any source whose own interval has
+    elapsed. The interval stored per source governs that source's
+    cadence; the sweep interval governs only how often sources are
+    considered. Only `http://` and `https://` probe URLs are
+    accepted. When upstream is slow the probe gives up rather than
+    blocking, so a slow server surfaces as a probe timeout instead
+    of a stalled request. Observation recording is fire-and-forget
+    and adds no latency to a gate call.
 
-    Discovery probe is a synchronous JSON-RPC handshake against
-    the MCP Streamable HTTP transport: `POST initialize` (`Accept:
-    application/json, text/event-stream`, JSON-only) then
-    `POST tools/list`, with a 10s wall-clock timeout
-    (`PROBE_TIMEOUT`). No async job queue is spawned here. The
-    `ProbeScheduler` wakes every 60s
-    (`DEFAULT_SWEEP_INTERVAL_SECONDS`), skips the first tick
-    on boot, and re-probes any server whose
-    `poll_interval_seconds` has elapsed. The per-row cadence
-    lives on the column; the constant governs how often the
-    table is consulted.
+    Drift is computed from hashes. The schema hash covers the shape
+    of an action's argument bag — keys sorted, with type tags but
+    not values — so an argument typed as an integer and the same
+    argument typed as a string are different schemas, while two
+    argument bags that differ only in key order collapse to the same
+    digest. The description hash is a literal hash of the text, so
+    whitespace matters and a trailing space counts as drift. That
+    asymmetry is deliberate: a value that flips while the shape holds
+    is not a contract change, but a key that appears or disappears
+    is.
 
-    The observation helper (`record_observation`) is
-    fire-and-forget from the gate: `tokio::spawn`'d so /check
-    latency is untouched. UPSERT is
-    `ON CONFLICT (organization_id, server_name, tool_name) DO UPDATE`
-    that bumps `call_count` and `last_seen_at = NOW()`, with
-    `COALESCE(EXCLUDED.api_key_id, …)` preserving the
-    FIRST-seen audit-bound key.
-
-    Signature hashes — `compute_schema_hash` is SHA-256 of
-    the canonicalised argument-bag SHAPE (keys sorted
-    lexicographically, type tags only, NOT values). So
-    `{"x": 1}` and `{"x": "1"}` are different schemas (integer
-    vs string), but `{"a": 1, "b": 2}` and `{"b": 2, "a": 1}`
-    collapse to the same digest.
-    `compute_description_hash` is literal SHA-256 of the
-    description text — whitespace matters; a trailing space is
-    drift. The drift detector (`find_drifts`) returns `(org,
-    server, tool)` triples whose distinct `(schema_hash,
-    description_hash)` count is `>1` within the window. Opt-in
-    via `NULLRUN_MCP_SIGNATURE_DRIFT=1` — default OFF: the
-    system still records every signature row, the cron that
-    emits the alert just doesn't run.
-
-    Probe timeout 10s — fits inside the typical 30-60s upstream
-    keep-alive window so a slow server surfaces as
-    `ProbeError::Timeout`, not a 504 dragging out. Probe is
-    fail-CLOSED inside the keep-alive window — refuses to block
-    on a slow upstream. Schema hash is shape-only — value
-    changes don't trip drift; key add/remove does. Crucial for
-    cheap-model tokens where the value shifts but the contract
-    is stable. Description hash is whitespace-sensitive — even a
-    single trailing-space flip trips drift. The
-    canonicalisation layer (lowercasing, stripping) is
-    intentionally out of scope; better to flag
-    potentially-benign whitespace changes than miss real drift.
-    Probe transport is allow-listed — `http://` and `https://`
-    only; `stdio://`, `file://`, anything else returns
-    `ProbeError::UnsupportedTransport` at the wire boundary
-    (`validate_transport_url`).
-    `disappeared` with no prior SDK activity is NOT drift —
-    there is no baseline to compare against; it renders as
-    `N verification pending — not drift`, and the `Unverified`
-    filter is the right view.
-
-    Three drift states are surfaced on the Drift card:
-    `unannounced` (SDK called tools not in last probe catalog),
-    `disappeared` (probe succeeded at least once AND SDK has
-    called this source before, no calls in 30d), and
-    `schema_drift` (input schema keys/types changed within
-    window). The "Discovered but
-    not registered" panel renders orphans with an Enroll CTA that
-    pre-fills the source URL the SDK last used. The per-action
-    `Create approval rule` deep link routes to
-    `/control-center/policies/approval-rules?prefill_source=…&prefill_action=…`
-    so operators can write a typed-predicate rule for one
-    specific action without typing the path. The `Origin` badge
-    on each catalog row reads `Probe` / `Observed` /
-    `Probe + observed` — distinguishing "what the upstream
-    catalog says" from "what the SDK actually called".
-
-    The SSE parser for the streaming MCP transport is out of
-    scope — the JSON-only transport keeps the parser maintenance
-    burden low. Shape-only canonicalisation keeps "value
-    flipped" from being treated as drift. The canonicaliser is
-    intentionally NOT RFC 8785 JSON canonicalisation — the
-    drift detector wants "shape changed", not "bytes differ".
-    Sync probe + 60s sweep handles the current scale without an
-    async worker probe queue. ADR-007 collapses registry +
-    observation into one Action Source row with two parallel
-    sub-blocks rather than two parallel surfaces.
-
-    `schema_hash` is shape-only — value-level drift (e.g. a
-    `--force` flag flipping `true → false`) is NOT detected.
-    The contract is the argument shape; behavioural changes are
-    out of scope. `description_hash` is whitespace-sensitive —
-    single trailing-space changes are surfaced as drift even
-    when functionally benign. The probe scheduler reads the
-    whole per-org footprint without LIMIT/OFFSET
-    (`find_drifts` paginates per-org via the caller's cron);
-    for multi-tenant operators with thousands of orgs, the
-    per-org footprint stays bounded but the total cron work is
-    linear in org count. The 30-day observation window is
-    hardcoded in the handler as `let window_days: i32 = 30;` —
-    change requires a separate runbook per `CLAUDE.md §17`
-    (wire-stable window). A `disappeared` + no prior SDK
-    activity source is intentionally NOT classified as drift
-    — verification-pending is the right bucket.
+    The 30-day observation window is fixed, and the drift check
+    reads every source belonging to the organization rather than one
+    page of them, so a large tenant pays proportionally more sweep
+    work while its own footprint stays bounded.

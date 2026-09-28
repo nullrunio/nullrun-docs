@@ -206,86 +206,42 @@ approval for sends to non-`@internal` addresses"), use the typed
 
 !!! info "Deep dive"
 
-    The catalog is a docs reference; the enforcement lives in
-    `backend/src/proxy/http/gate/orchestrator.rs::check_tool_block`.
-    The `glob_match` helper implements the pattern language: `*`
-    for wildcards (multi-`*` patterns split on every `*` and
-    require each non-empty literal segment to appear in order via
-    `glob_match_multi`), `|` for alternation, bare literals match
-    exactly (no substring), `?` is treated as literal. Pattern
-    validation is in
-    `backend/src/proxy/http/tool_canonical.rs::validate_tool_pattern`;
-    `MAX_POLICY_PATTERN_BYTES = 4096`. Tool names are
-    canonicalised via `classify_tool` (`tool_canonical.rs`) —
-    Builtin (lowercase ASCII ≤64 chars), `mcp://{server}/{tool}`
-    for MCP, `custom:{name}` for custom; invalid format is
-    rejected at gate validation as `VALIDATION_FAILED`.
+    Enforcement does not live in the catalog. The catalog is a
+    starting point for rating tools; a tool is actually stopped by a
+    `ToolBlock` policy evaluated on the server against the canonical
+    tool name the agent requested. Keeping the decision server-side
+    means a pattern can be tightened or relaxed without an SDK
+    rollout. Because the gate classifies the name it receives and
+    that classification is authoritative, treat the names here as
+    documentation of what agents commonly call — the drift between
+    this page and the names a particular agent actually sends is a
+    real possibility, and the gate's view wins when they disagree.
 
-    `ToolBlock` is always Hard: per CLAUDE.md §8, soft mode does
-    not soften tool blocks. `tool_blocked()` in
-    `backend/src/proxy/http/gate/internal.rs` is a defensive
-    backstop that also runs on `/track`, so an SDK that bypasses
-    `/check` (or omits `tools` from `/check`) cannot skip
-    tool_pattern enforcement on the wire. The gate fails CLOSED
-    on a missing `tools` field: if the per-key policy has
-    `tool_patterns` and the SDK omits `tools`, the gate blocks
-    with `TB-1` reason code (`orchestrator.rs`); the singular
-    `tool` field is also resolved into `effective_tools` so
-    legacy SDKs cannot bypass by sending the pre-T4 wire shape.
-    All Builtin names are lowercase ASCII — the gate's
-    classification is the single source of truth. Glob match is
-    case-SENSITIVE on the function level
-    (`gate/internal.rs` test `glob_match_case_sensitive`); Builtin
-    names are lowercased at classification so
-    `Stripe.Charge` → `stripe.charge` before the match — this is
-    what the docs mean by "case-insensitively" for the
-    operator's experience. Glob match does NOT inspect tool
-    arguments — that's sandbox responsibility
-    (`tool_canonical.rs`); a pattern like `bash.*` blocks any
-    bash call regardless of the shell command.
+    The pattern language is deliberately narrow. `*` is the only
+    metacharacter and matches any run of characters, including
+    nothing at all, so `send_*` matches anything with that prefix and
+    `bash.*` matches the bare `bash` as well as `bash.foo` and
+    `bash.foo.bar`. A pattern with more than one star, such as
+    `*.drop_*`, matches when its literal segments appear in order,
+    which is why it catches `s3.drop_table` and `db.drop_user` but not
+    `s3.execute_drop`. `|` separates alternatives inside one entry, and
+    a bare literal matches exactly — never a substring. `?` and `**`
+    are not supported and are matched as ordinary characters, so a
+    pattern written as a regex habit matches less than intended. Each
+    entry is capped at 4096 bytes, which is a bound on matcher work
+    per gate call rather than a limit on how many patterns a policy
+    may carry.
 
-    `@protect` ships `tool_name + args + kwargs` on every call.
-    ToolParameters approval rules read argument values directly
-    from `kwargs` by `param_name`; no SDK-side extractor is
-    required. The dotted-prefix smart match is `bash.*` matches
-    `bash`, `bash.foo`, `bash.foo.bar` — bare `bash` AND dotted
-    continuations (`orchestrator.rs`). Templates seed
-    `bash.*`, `shell.*`, `code.*` patterns; operators expect
-    them to catch the bare name. Multi-`*` drop-patterns:
-    `*.drop_*` matches `s3.drop_table`, `db.drop_user`, but NOT
-    `s3.execute_drop` — the trailing `_` is load-bearing per
-    `glob_match_multi_star_drop_pattern_unanchored_ends` test.
-    For command-level rules (e.g. "block refunds over $500"),
-    use the typed `tool_parameters` predicate in the approval
-    rule editor rather than glob patterns.
-
-    The catalog covers three sources: LangChain built-in
-    toolkits (search/SQL/Gmail/Slack/GitHub), Anthropic/OpenAI
-    hosted tools (code interpreter, e2b sandbox, Riza JS exec),
-    and MCP servers. The `ToolBlock` policy was chosen over a
-    built-in SDK list because policies live on the server and
-    can be updated without an SDK rollout; per-tool risk rating
-    is a starting point, not a hard rule. The recommended
-    starter JSON is opinionated: blanket patterns
-    (`python_repl.*`, `bash.*`) instead of enumeration, because
-    enumeration of every framework's exec tool regresses when a
-    new MCP server ships. The 4KB pattern-length cap
-    (`MAX_POLICY_PATTERN_BYTES`) keeps a single operator from
-    pasting a 100MB regex blob.
-
-    Glob match is name-only — arguments are NOT inspected. For
-    command-level rules you need the typed `tool_parameters`
-    predicate (referenced by `param_name` in the dashboard rule
-    editor); glob patterns cannot express "this argument only".
-    `**` is treated literally per `glob_match_no_double_star_support`
-    (`gate/internal.rs`). `?` is literal — regex-style
-    single-char wildcards are not supported; an operator who
-    writes `ba?h` matches the literal 4-char string, not `bash`
-    / `ball`. The catalog is docs-only — drift between this
-    catalog and the actual tool names the agent calls is a real
-    risk; `classify_tool` in `tool_canonical.rs` is the source
-    of truth for canonical form, not the catalog. TB-1
-    fail-CLOSED on empty `tools`: SDKs that omit `tools` while
-    the per-key policy has patterns are blocked (defensive
-    against bypass) — a missing `tools` field would otherwise
-    let the SDK slip past `tool_pattern` enforcement entirely.
+    Matching is name-only. A pattern never inspects arguments, so
+    `bash.*` blocks every bash call regardless of the command inside
+    it, and a glob cannot express a condition on one argument. For
+    command-level rules, the typed `tool_parameters` predicate reads
+    an argument by `param_name` in the approval rule editor. Tool
+    block is always hard, soft enforcement mode does not soften it,
+    and a request that reaches the gate without a tool name while
+    patterns are active is blocked rather than passed, so omitting the
+    field is not a way around a policy. Blanket patterns such as
+    `python_repl.*` and `bash.*` are the durable choice for execution
+    tools: enumerating every framework's code runner goes stale as
+    soon as a new server appears, while a prefix pattern keeps
+    working.
