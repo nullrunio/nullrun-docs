@@ -1701,7 +1701,14 @@ body[data-md-color-scheme="slate"] .md-typeset table:not([class]) {
 .nr-hero {
   padding: 48px 0 32px;
   display: grid;
-  grid-template-columns: 1fr;
+  /* `minmax(0, 1fr)`, not a bare `1fr`. A grid item's default
+     `min-width: auto` is its min-content size, so the long unbroken
+     tokens in the hero (the install line, the code block's filename
+     title) refuse to shrink and push the single column past the
+     viewport — the whole document then scrolls sideways on a phone.
+     The explicit 0 minimum lets the column stay at the content width
+     and the code block scroll inside itself instead. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
 }
 /* The hero headline is 44px, not 66px. At the old clamp the title ran
@@ -1879,14 +1886,12 @@ body[data-md-color-scheme="slate"] .md-typeset table:not([class]) {
   padding: 32px 0;
   border-top: 2px solid var(--nr-sidebar-spacer);
 }
-.nr-section__title {
-  font-family: var(--font-display);
-  font-size: 1.65rem;
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  margin: 0 0 20px;
-  color: var(--md-default-fg-color);
-}
+/* Section titles are plain Markdown `##` headings inside the section,
+   so they pick up `.md-typeset h2` (display face + rule underneath).
+   There is deliberately no `.nr-section__title` hook: `attr_list`
+   only binds attributes written on the *same line* as an ATX heading,
+   so a `{.nr-section__title}` line on its own after the `##` renders
+   as a literal paragraph of text under the heading. */
 
 .nr-features {
   display: grid;

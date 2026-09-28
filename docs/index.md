@@ -90,7 +90,6 @@ flowchart LR
 
 <section class="nr-section md-grid md-typeset" markdown="1">
 ## What you get out of the box
-{.nr-section__title}
 
   <div class="nr-features">
     <div class="nr-feature">

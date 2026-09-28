@@ -476,6 +476,22 @@ const NR_THEME_KEY = "nullrun-docs-theme";
                 theme: theme,
                 htmlLabels: false,
                 fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+                // Mermaid's default label wrap is ~180px, which is
+                // narrower than the 702px frame. With `htmlLabels:
+                // false` a long identifier that does not fit gets
+                // hard-broken mid-token — "NullRunBlockedException"
+                // rendered as "NullRunBlockedExcept ion", and
+                // "BUDGET_ORG_CEILING_B_LOCKED" across three lines.
+                // Widening the wrap budget lets a whole token sit on
+                // one line; the `.nr-mermaid` wrapper is already
+                // `overflow-x: auto`, so a genuinely wide diagram
+                // scrolls instead of reflowing into nonsense.
+                flowchart: { wrappingWidth: 320 },
+                // Diagram is laid out at natural size and allowed to
+                // scroll horizontally rather than being scaled down
+                // to the frame, which is what made the small
+                // sequence diagram's labels illegible.
+                useMaxWidth: false,
             });
 
             for (const node of nodes) {
