@@ -1119,6 +1119,46 @@ body.nr-sidebar-hidden .md-sidebar--primary {
 
 .md-sidebar--primary .md-sidebar__title { display: none; }
 
+/* ── Repository strip — the `md-source` block Material injects between
+   the logo and the nav list.
+
+   It is a duplicate of the menu-bar's GitHub button (§4), and its
+   stock type is 0.64rem — 10.4px, which is below the 11px floor for
+   anything a reader is meant to read. Both problems are fixed by
+   restyling it in the sidebar's own terms: it becomes a 12px mono
+   strip that matches the rest of the drawer, and it stays a single
+   compact row rather than growing into a second navigation surface.
+   `display: none` on the icon keeps the row to just the repo name —
+   the GitHub glyph is already in the menu-bar, and two identical
+   marks two inches apart is noise. */
+.md-sidebar--primary .md-nav__source {
+  padding: 8px 0;
+  border-bottom: 2px solid var(--nr-sidebar-spacer);
+}
+.md-sidebar--primary .md-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--nr-sidebar-fg);
+  text-decoration: none;
+  min-height: 44px;
+}
+.md-sidebar--primary .md-source:hover {
+  background-color: var(--nr-sidebar-spacer);
+  color: var(--nr-sidebar-active);
+}
+.md-sidebar--primary .md-source:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.md-sidebar--primary .md-source__icon { display: none; }
+.md-sidebar--primary .md-source__repository { font-size: inherit; }
+
 /* ── Sidebar header — logo + "NULLRUN Docs" ────────────────────────────
    Sticky to top of scrollwrap. 2px ink border-bottom, cream paper bg.
    Logo lockup mirrors product auth page .auth-logo__mark — yellow
@@ -1586,6 +1626,109 @@ article.md-content__inner,
   border: none;
 }
 
+/* ── Code-block copy button + the toast it fires ─────────────────────────
+   Both are Material's own components and neither was touched by the rest
+   of this file, which left each of them broken against the brutalist
+   plate. Measured in Chromium against the built site, before:
+
+     default  idle  glyph rgb(196,191,176) on plate rgb(26,26,26)
+     default  hover glyph rgb(26,26,26)   on plate rgb(26,26,26)  ← gone
+     slate    hover glyph rgb(235,235,235) on plate rgb(26,26,26)
+
+   THE BUTTON. Material's hover state is
+   `.md-code__button:hover { color: var(--md-accent-fg-color) }`, and §1
+   pins `--md-accent-fg-color` to ink so links don't go blue. The code
+   plate is ink in BOTH schemes — `--md-code-bg-color` is a fixed value and
+   never flips, which is the whole point of the terminal aesthetic — so
+   hovering painted an ink glyph on an ink plate and the control vanished
+   at the exact moment the reader aimed at it. It is now a FLAG plate with
+   a FLAG border, legible at rest in either theme, because FLAG is a fixed
+   accent rather than a themed one. `currentcolor` feeds the icon's mask
+   (`.md-code__button:after { background-color: currentcolor }`), so the
+   `color` declarations are what move the glyph.
+
+   The focus ring is restated for the same reason: Material points its
+   outline at `--md-accent-fg-color`, i.e. ink, on the ink plate. It uses
+   the file's own `--focus-ring` idiom (3px, 2px offset), as everywhere
+   else.
+
+   The button is only in the content column — it is scoped under
+   `.md-typeset` so the search dialog's own code blocks are untouched.
+   It is dropped in print (§15) and below the 76em / 1216px breakpoint
+   (§16), both pre-existing decisions this rule only inherits. */
+.md-typeset .md-code__button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--accent-flag);
+  border-radius: 0;
+  background-color: transparent;
+  color: var(--accent-flag);
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.md-typeset .md-code__button:hover {
+  background-color: var(--accent-flag);
+  border-color: var(--accent-flag);
+  /* Ink as a literal, and not a token. Three candidates all fail: the two
+     neutrals swap meaning between schemes (§1 vs §1b — bg is cream in
+     light, ink in dark), and `--accent-flag-ink` is re-tinted in dark
+     (#6B4F0A → #F5D67A, §1b) because it exists to keep FLAG legible
+     *against* the page, not text legible *on* a FLAG fill. Measured on
+     the dark scheme that put #F5D67A on FLAG at 1.7:1. globals.css
+     `--ink` is #1A1A1A in both themes and is the one value that means
+     "text on FLAG" unconditionally — 8.6:1 either way. */
+  color: #1A1A1A;
+}
+.md-typeset .md-code__button:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+  color: var(--accent-flag);
+}
+
+/* THE TOAST. It is not an element of its own: Material reuses the
+   per-page dialog and writes the message into it —
+
+     <div class="md-dialog" data-md-component="dialog">
+       <div class="md-dialog__inner md-typeset"></div>
+     </div>
+
+   — so the node that receives "Copied to clipboard" carries BOTH classes.
+   Material inverts it on purpose (wrapper `background: var(--md-default-
+   fg-color)` + `.md-dialog__inner { color: var(--md-default-bg-color) }`),
+   and the bare `.md-typeset { color: var(--md-default-fg-color) }` above
+   ties it on specificity (0,1,0) and beats it on order, deleting the
+   inversion: text took the same value as the wrapper behind it, so the
+   toast was invisible in light (rgb(26,26,26) on rgb(26,26,26)) and in
+   dark (rgb(235,235,235) on rgb(235,235,235)). The compound selector
+   outranks both sides at (0,2,0), so no `!important` is needed.
+
+   Restyled to the banner's plate (§12) so a confirmation reads as part of
+   the site: FLAG fill, 2px ink border, 4px offset shadow, mono caps. The
+   text is the same literal ink as the button above, for the same reason —
+   no token in this file survives the theme flip to mean "text on FLAG".
+   Material's 0.7rem (11.2px) is below the 11px floor this file holds
+   everything else to. */
+.md-dialog {
+  background-color: var(--accent-flag);
+  border: 2px solid var(--md-default-fg-color);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 0 var(--nr-shadow);
+  padding: 8px 14px;
+  min-width: 0;
+}
+.md-dialog__inner.md-typeset {
+  color: #1A1A1A;
+  font-family: var(--md-code-font);
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 /* Tables — ink plate header in light, recessed plate in dark.
 
    The header was `background: var(--md-default-fg-color)`, which is
@@ -1660,7 +1803,19 @@ body[data-md-color-scheme="slate"] .md-typeset table:not([class]) {
 }
 
 /* Admonitions — neo-brutalist treatment: 2px ink border + 4px offset
-   shadow + accent-wash surface. Title in mono uppercase. */
+   shadow + accent-wash surface. Title in mono uppercase.
+
+   The `font-size: 0.92em` is load-bearing. Material ships
+   `.md-typeset .admonition { font-size: 0.64rem }`, which resolves to
+   10.24px and cascades into every child (`p` at 10.24px, inline `code`
+   at 9.2px, the title at 8.7px) — text no larger than a footer
+   credit, carrying paragraphs of prose. The value is a bare `rem`
+   literal rather than a ratio to the typeset size, so it does not track
+   `--md-typeset-font-size` and stays pinned at 10.24px no matter what
+   the surrounding text is set to. Declaring it here in `em` — same
+   specificity as Material's rule, and this file loads after Material's
+   bundle — rebases the whole block on the article's 17px: 15.6px body
+   copy, 12.8px inline code, 12.1px title. */
 .md-typeset .admonition {
   border-left: none;
   border: 2px solid var(--md-default-fg-color);
@@ -1668,6 +1823,7 @@ body[data-md-color-scheme="slate"] .md-typeset table:not([class]) {
   border-radius: 0;
   padding: 14px 18px;
   margin: 1em 0;
+  font-size: 0.92em;
   box-shadow: 4px 4px 0 0 var(--nr-shadow);
 }
 .md-typeset .admonition.note,
@@ -2188,7 +2344,12 @@ body.nr-print-page .md-content {
    a clean, readable output. */
 @media print {
   /* Strip all chrome — sidebar, menu-bar, search overlay, footer,
-     back-to-top button. None of it serves the printed page. */
+     back-to-top button. None of it serves the printed page.
+
+     `.md-code__button` joins that list: it's a control, and paper can't
+     press it. Left in, it printed as a 28px FLAG plate — but the palette
+     block below rewrites `--accent-flag` to black for paper, so it came
+     out as a hard black square in the corner of every code block. */
   .md-sidebar,
   .md-sidebar--primary,
   .md-sidebar--secondary,
@@ -2199,7 +2360,8 @@ body.nr-print-page .md-content {
   .md-top,
   .md-banner,
   .md-overlay,
-  .md-nav {
+  .md-nav,
+  .md-code__button {
     display: none !important;
   }
 
@@ -2332,6 +2494,19 @@ body.nr-print-page .md-content {
   .nr-print-btn {
     display: none !important;
   }
+
+  /* …and the two other on-screen affordances that have no meaning on
+     paper. Both are `position: absolute` inside `.md-content__inner`,
+     which Material's print rules leave in flow, so they printed as
+     ordinary text: the "edit this page" button rendered as its full
+     href (…/edit/master/docs/print.md) and every heading permalink as a
+     `¶` mark, both stacked in a hairline column to the right of the
+     article. On the printable edition that is 184 stray marks and a
+     broken-looking URL on paper. */
+  .md-content__inner > .md-content__button.md-icon,
+  .md-typeset .headerlink {
+    display: none !important;
+  }
 }
 
 /* ============================================================================
@@ -2383,6 +2558,22 @@ body.nr-print-page .md-content {
     margin-left: 0 !important;
     max-width: 100vw !important;
   }
+  /* The footer is a sibling of `.md-main` inside Material's flex
+     container, so it does NOT pick up the sidebar offset from
+     `.md-main__inner` — §3 gives it its own `margin-left: 340px` to
+     line its left edge up with the article. That rule is unconditioned,
+     so it survived into this breakpoint and squeezed the footer into
+     the 35px sliver between x=340 and the right edge of a 375px phone.
+     Its children (the copyright line, the GitHub / Support links) then
+     overflowed that sliver and pushed `document.scrollWidth` to 432px:
+     the whole document scrolled sideways on every phone page, for a
+     footer the reader cannot see past x=340. Same treatment as the
+     menu-bar above — full width, no offset. */
+  .md-footer {
+    margin-left: 0;
+    width: 100%;
+    max-width: 100%;
+  }
 
   /* Sidebar — hidden by default on mobile (slides off-screen to the
      left). Width capped at 85vw so it doesn't overflow a narrow phone
@@ -2394,6 +2585,170 @@ body.nr-print-page .md-content {
     transform: translateX(-100%);
     width: min(340px, 85vw);
     transition: transform 220ms ease-out;
+  }
+
+  /* ── Touch targets ──────────────────────────────────────────────
+     The menu-bar's icon buttons are 32×32 on the desktop, which is the
+     right density for a mouse. A finger needs closer to 44×44 (the
+     WCAG 2.5.5 / platform HIG floor), and 32px is 46% below it. The
+     bar itself grows from 50px to 56px to hold them, which also stops
+     the row from feeling cramped on a phone.
+
+     `position: relative` is added alongside the negative margins: the
+     buttons are flex children whose hit area is their own box, so
+     widening them without pulling the neighbours back would just push
+     the right-hand cluster off the edge. */
+  .nr-menubar__inner { height: 56px; }
+  .nr-menubar { height: 56px; }
+  .nr-icon-button {
+    width: 44px;
+    height: 44px;
+    margin: -6px -4px;
+  }
+  /* The search slab wraps its own magnifier, so it has to grow to the
+     same target rather than staying a 36px icon tile. */
+  .nr-menubar__left-buttons .md-search__inner {
+    width: 44px;
+    height: 40px;
+  }
+  .md-search__form { height: 40px; }
+  /* The magnifier label inside the slab is 18×18; the form is the real
+     hit area (extra.js §3a binds `mousedown` on it), so the label
+     itself only needs to stop being a sub-44px focusable. */
+  .md-search__form > .md-search__icon.md-icon { pointer-events: auto; }
+
+  /* Code-block copy button — Material parks it in the plate's
+     top-right corner, where on a phone it lands on top of the code
+     itself: at 390px the code column is ~350px wide and the button
+     covers the last two characters of every first line. Growing it
+     made the overlap worse, so it is hidden below the tablet
+     breakpoint instead — a phone reader scrolls the block sideways
+     anyway, and the text stays selectable by long-press. The button
+     returns at tablet width, where the code column is wide enough to
+     carry it without covering anything. */
+  .md-typeset .md-code__button { display: none; }
+
+  /* The permalink plate on every heading (`toc.permalink: true`) is a
+     20×20 link revealed on hover. Touch has no hover, so on a phone it
+     was both invisible AND unreachable.
+
+     It has to be visible, but at the desktop's full weight a solid
+     FLAG plate sits beside every heading on the page and out-shouts
+     the heading itself. So on touch it drops to a muted outline at
+     partial opacity — discoverable without competing — and only fills
+     in when it is pressed or focused. The hit area is still 28px
+     square, which is the smallest that a fingertip lands reliably. */
+  .md-typeset .headerlink {
+    opacity: 0.45;
+    min-width: 28px;
+    height: 28px;
+    background: transparent;
+    color: var(--md-default-fg-color--light);
+  }
+  .md-typeset .headerlink:active {
+    opacity: 1;
+    background: var(--accent-flag);
+    color: var(--md-default-fg-color);
+  }
+  .md-typeset .headerlink:focus-visible {
+    opacity: 1;
+    background: var(--accent-flag);
+  }
+
+  /* The "Edit this page" pencil in the content column. */
+  .md-content__inner > .md-content__button.md-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  /* The magnifier inside the search slab is a bare 18×18 label. The
+     slab around it is the real hit area (extra.js §3a binds `mousedown`
+     on `.md-search__form`), so this only needs to stop being a
+     hairline target of its own. */
+  .md-search__form > .md-search__icon.md-icon {
+    width: 22px;
+    height: 22px;
+    margin-right: 10px;
+  }
+  /* The slab kept its desktop chrome — 2px border + offset shadow — so
+     on a phone the search read as a heavier, boxed control next to the
+     four unboxed icon buttons, and the bar looked unbalanced. Drop the
+     plate so it matches its neighbours; the 44px box is the target and
+     the border was never carrying the affordance. */
+  .nr-menubar__left-buttons .md-search__form {
+    border: none;
+    box-shadow: none;
+  }
+  .nr-menubar__left-buttons .md-search__form:hover,
+  .nr-menubar__left-buttons .md-search__form:focus-within {
+    box-shadow: none;
+    transform: none;
+    background-color: var(--nr-sidebar-spacer);
+  }
+
+  /* Drawer nav rows. The section titles carry `line-height: 2.2em` and
+     the page links `1.5em`, which at the sidebar's 0.875em base lands
+     them at 20–26px — a finger needs closer to 44px, and these are the
+     primary navigation on a phone. Padding rather than line-height, so
+     the type keeps its current optical rhythm. The active row's
+     `border-left` is preserved by leaving its own padding alone. */
+  .md-nav--primary .md-nav__item--section > .md-nav__link {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  .md-nav--primary .md-nav__item:not(.md-nav__item--section) .md-nav__link {
+    padding-top: 9px;
+    padding-bottom: 9px;
+    line-height: 1.35;
+  }
+
+  /* Double chevron. §6 draws the section chevron as a `::after` on the
+     link because it needs `margin-left: auto` to sit hard right — a
+     flex child, which Material's own icon is not. Material hides the icon
+     it puts inside a section link, but only from `min-width: 76.25em`
+     up; below that the drawer renders the two side by side, and every
+     chapter row on a phone showed two arrows 40px apart. The section
+     link is the only place both exist, so this is scoped to it. */
+  .md-nav--primary .md-nav__item--section > .md-nav__link .md-nav__icon {
+    display: none;
+  }
+
+  /* Drawer header and repository strip. Both of these are cream on a
+     docked sidebar (§6) and turn black in the drawer, because Material
+     restyles them inside its own `max-width: 76.2344em` block:
+     `html [data-md-color-primary="black"] .md-nav--primary
+     .md-nav__title[for="__drawer"]` and
+     `.md-nav--primary .md-nav__title[for="__drawer"]`, and
+     `.md-nav__source { background-color: var(--md-primary-fg-color--dark) }`.
+     The header selector carries two classes, two attribute selectors and
+     an element, so §6's `.md-sidebar--primary .md-nav__title` (0,2,0)
+     cannot outrank it and the header drew a near-black bar across the top
+     of a cream drawer. `.md-nav__source` is only a single class, so the
+     fix there is one more class than Material's.
+
+     Repeating the `html` prefix on the header is what lifts the
+     specificity to match Material's, rather than padding the selector
+     with a class that isn't there. */
+  html .md-sidebar--primary .md-nav--primary .md-nav__title[for="__drawer"] {
+    background-color: var(--nr-sidebar-bg);
+    color: var(--md-default-fg-color);
+  }
+  .md-sidebar--primary .md-nav__source {
+    background-color: var(--nr-sidebar-bg);
+    color: var(--nr-sidebar-fg);
+  }
+
+  /* Safe-area insets — on a notched phone in landscape (or with the
+     home indicator) the menu-bar and the content column would otherwise
+     sit under the notch. `viewport-fit=cover` is already set in
+     overrides/main.html, so these resolve. */
+  .nr-menubar__inner {
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+  .md-content {
+    padding-left: max(20px, env(safe-area-inset-left));
+    padding-right: max(20px, env(safe-area-inset-right));
   }
 
   /* Backdrop — dims content while the drawer is open. Created lazily
@@ -2433,17 +2788,52 @@ body.nr-print-page .md-content {
     padding-right: 20px;
   }
 
-  /* Tables — convert to a horizontally-scrollable block. Cells keep
+  /* Tables — horizontally scrollable on a narrow viewport. Cells keep
      their normal wrap behaviour; long single-token cells scroll
      horizontally inside the table instead of overflowing the
      viewport. No JS card-transform — the 5-column tables (e.g. how-to/
      llm-frameworks.md:22-36 coverage matrix) become worse as stacked
-     cards than as scrollable rows. */
-  .md-typeset table:not([class]) {
+     cards than as scrollable rows.
+
+     The scroll container is Material's WRAPPER, not the table. Its
+     `tables` extension wraps every table in
+     `<div class="md-typeset__table">` and styles that as
+     `display: inline-block` with the table sized to its content — which
+     is what makes the wrapper grow to 677–792px on a 390px phone. An
+     earlier version of this rule set `overflow-x: auto` on the
+     `table` element itself, but the table was then a fixed-width block
+     INSIDE an already-overflowing inline-block: the document absorbed
+     the overflow and the table was simply cropped at the right edge
+     with no way to reach the hidden columns.
+
+     So the pair is inverted here — the wrapper becomes the scroller
+     (`max-width: 100%` + `overflow-x: auto`), and the table inside it
+     goes back to `display: table` at its natural width, which is what
+     gives the wrapper something to scroll. `display: block` on the
+     table would collapse it to the container's width and re-crop the
+     columns instead. */
+  .md-typeset .md-typeset__table {
     display: block;
     max-width: 100%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    /* A scrollbar-less scroller gives no hint that there is more to the
+       right, which is the other half of why the columns read as simply
+       cut off. The fade is a `mask` on the wrapper, not a gradient
+       overlay, so it doesn't intercept the touch-drag that scrolls it. */
+    mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
+  }
+  .md-typeset .md-typeset__table > table:not([class]) {
+    display: table;
+    width: auto;
+    min-width: 100%;
+  }
+  /* The fade should only appear while there is actually something to
+     scroll to. `.md-typeset__table` can't know that on its own, so the
+     table carries a marker from a scroll listener (extra.js §7) and the
+     mask is opt-in. */
+  .md-typeset .md-typeset__table:not([data-nr-scrollable]) {
+    mask-image: none;
   }
 
   /* Menubar title — populate via `{{ page.title }}` in overrides/
@@ -2546,6 +2936,11 @@ body.nr-print-page .md-content {
   .nr-hero__cta a.tertiary {
     align-self: flex-start;
     padding: 4px 0;
+    /* Keep it a link visually, but give the row a finger-sized
+       height so it isn't a 32px-tall target on a phone. */
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
   }
   .nr-hero__cta a {
     width: 100%;
@@ -2579,8 +2974,17 @@ body.nr-print-page .md-content {
    rule does the heavy lifting regardless of breakpoint). The wrapper
    gets the same neo-brutalist frame as code blocks / screenshots —
    2px ink border + 4px offset shadow + cream surface — so diagrams
-   feel native to the docs chrome rather than looking like an embed. */
-.nr-mermaid {
+   feel native to the docs chrome rather than looking like an embed.
+
+   The selector is qualified as `.md-typeset pre.nr-mermaid` for
+   specificity, not decoration. §9's `.md-typeset pre` rule (code
+   blocks) scores 0-1-1 and this would otherwise score 0-1-0, so the
+   code-block background won and every diagram frame rendered in
+   `--md-code-bg-color` — which is the dark slate surface in *both*
+   themes, so a light-theme page showed a near-black frame around
+   Mermaid's light-theme `neutral` diagram. Qualifying raises this to
+   0-2-1 and the cream/dark surface resolves per theme as intended. */
+.md-typeset pre.nr-mermaid {
   display: block;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -2590,13 +2994,23 @@ body.nr-print-page .md-content {
   box-shadow: 4px 4px 0 0 var(--nr-shadow);
   padding: 16px;
   margin: 1em 0;
+  /* `.md-typeset pre` paints the fence source in the FLAG-yellow code
+     colour. Once the runtime lands, the SVG carries its own fills and
+     this is invisible — but on a failed render the source is what the
+     reader sees, and yellow-on-cream at 11px is the worst of both.
+     Set it to body ink so a fallback diagram is still readable. */
+  color: var(--md-default-fg-color);
   /* Until the runtime swaps in the SVG, the fence is still holding
      the diagram source. Hide it so no unstyled text flashes in the
      frame; extra.js sets this back to visible once render() lands. */
   visibility: hidden;
   min-height: 80px;
 }
-.nr-mermaid[data-nr-mermaid-rendered] {
+/* Qualified to match the wrapper rule above. At 0-2-0 this lost the
+   cascade to `.md-typeset pre.nr-mermaid` (0-2-1), which sets
+   `visibility: hidden` — so every diagram stayed hidden even with an
+   SVG and the reveal attribute present. */
+.md-typeset pre.nr-mermaid[data-nr-mermaid-rendered] {
   visibility: visible;
   min-height: 0;
 }

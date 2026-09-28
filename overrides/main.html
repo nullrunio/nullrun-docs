@@ -30,6 +30,24 @@
 -#}
 {% extends "base.html" %}
 
+{# Block override: add `viewport-fit=cover` to the viewport meta tag.
+
+   Material's `base.html` hardcodes it inside the `site_meta` block as
+   `width=device-width,initial-scale=1`, which is not something mkdocs.yml
+   can configure. Without `viewport-fit=cover` the layout viewport is
+   inset to the display cutout by the browser and `env(safe-area-inset-*)`
+   resolves to 0 — so the safe-area padding in extra.css §16, which keeps
+   the menu-bar and the content column clear of a notch in landscape and
+   of the home-indicator strip in portrait, would never engage.
+
+   `super()` renders the upstream block; the `replace` rewrites that one
+   attribute in the resulting markup. There is exactly one occurrence, so
+   the substitution is unambiguous. #}
+{% block site_meta %}
+  {{ super() | replace('width=device-width,initial-scale=1',
+                        'width=device-width,initial-scale=1,viewport-fit=cover') }}
+{% endblock %}
+
 {# Block override: keep upstream content, then append our social
    fallbacks + brand @font-face. `theme.social_cards` already emits
    og:image / twitter:image when configured; the block below adds

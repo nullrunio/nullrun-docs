@@ -46,6 +46,15 @@
 //      theme CSS can reach the result — Material renders into a
 //      closed shadow root that neither can.
 //
+//   7. Scrollable-table marker — on a narrow viewport the reference
+//      tables are horizontal scrollers (extra.css §16). A scroller
+//      with no affordance reads as a table whose right-hand columns
+//      are simply cut off, so each wrapper gets a
+//      `data-nr-scrollable` attribute whenever it actually has more
+//      content than width, and the CSS attaches the fade only then.
+//      Recomputed on resize, since the same table is a plain
+//      non-scrolling table once the viewport is wide enough.
+//
 // The menu-bar title h1 is intentionally hidden — the menu-bar is just
 // an icon strip; section context lives in the left sidebar.
 
@@ -465,7 +474,24 @@ const NR_THEME_KEY = "nullrun-docs-theme";
         if (!nodes.length) { themed = ""; return; }
 
         const theme = isDark() ? "dark" : "neutral";
-        if (themed === theme) return;
+
+        // The theme guard alone is not enough to skip this pass.
+        // Clicking a heading permalink changes the hash, and Material's
+        // instant navigation responds by replacing the whole content
+        // node — so `nodes` are brand-new elements that have never been
+        // rendered, sitting at `visibility: hidden` (extra.css) with no
+        // `data-nr-mermaid-rendered`. `themed` still equalled the
+        // current theme, so the old guard returned early and the
+        // diagrams stayed invisible until a full reload.
+        //
+        // Skip only when the theme is unchanged AND every node on the
+        // page has already produced an SVG. A node that has not is
+        // either brand new (SPA swap) or was reset for a re-render, and
+        // both need this pass to run.
+        const allRendered = nodes.every(
+            (n) => n.hasAttribute("data-nr-mermaid-rendered") && n.querySelector("svg")
+        );
+        if (themed === theme && allRendered) return;
 
         pending = true;
         try {
@@ -534,6 +560,63 @@ const NR_THEME_KEY = "nullrun-docs-theme";
         attributes: true,
         attributeFilter: ["data-md-color-scheme"],
     });
+})();
+
+/* ── 7. Scrollable-table marker ─────────────────────────────────────
+   On a narrow viewport the reference tables become horizontal
+   scrollers (extra.css §16, "Tables"). A scroller with no affordance
+   is indistinguishable from a table whose right-hand columns are
+   cropped — which is exactly how it read before the wrapper was
+   promoted to the scroll container.
+
+   The fade is a CSS `mask` on the wrapper, gated on this attribute so
+   it appears only when there is genuinely something off-screen. A
+   mask (rather than a gradient overlay) is what makes that work: an
+   overlay element would sit on top of the table and swallow the
+   touch-drag that scrolls it.
+
+   The check is `scrollWidth > clientWidth` on the wrapper, recomputed
+   on resize — the same table stops being scrollable once the viewport
+   is wide enough, and a stale marker would leave a fade hanging off
+   the right edge of a table that ends there. Re-runs after Material's
+   SPA navigation swaps the content, same as the Mermaid loader. */
+(function initScrollableTables() {
+    const SELECTOR = ".md-typeset__table";
+
+    function mark() {
+        for (const el of document.querySelectorAll(SELECTOR)) {
+            if (el.scrollWidth > el.clientWidth + 1) {
+                el.setAttribute("data-nr-scrollable", "");
+            } else {
+                el.removeAttribute("data-nr-scrollable");
+            }
+        }
+    }
+
+    mark();
+    window.addEventListener("popstate", mark);
+
+    // Debounced: a drag-resize fires `resize` continuously, and each
+    // pass walks every table on the page forcing a layout flush.
+    let t = null;
+    window.addEventListener("resize", () => {
+        clearTimeout(t);
+        t = setTimeout(mark, 120);
+    });
+
+    // The synchronous `mark()` above measures too early. extra.js is
+    // parsed at the end of <body>, before the first layout has been
+    // performed and before the webfont faces have swapped in, so every
+    // wrapper still reports `scrollWidth === clientWidth` and nothing
+    // gets marked. Two deferred passes fix that — one on the next
+    // frame (styles applied, layout flushed) and one when the fonts
+    // have actually loaded, since the fallback face has different
+    // column widths and can flip the answer either way. */
+    requestAnimationFrame(mark);
+    if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(mark);
+    }
+    window.addEventListener("load", mark);
 })();
 
 console.info("[nullrun-docs] extra.js loaded.");
