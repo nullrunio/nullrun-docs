@@ -198,14 +198,21 @@ nav:
 # The announcement-banner slot in overrides/main.html is intentionally
 # left empty — the design has no banner surface.
 #
-# `extra.social` is deliberately unset. Material's social plugin fires
-# an XHR to `api.github.com/repos/<repo>/releases/latest` on every page
-# load to badge the repo link; this repo has no GitHub releases, so
-# every visit logged a 404. The repo link itself is already a
-# first-class GitHub button in the menu-bar (overrides/partials/
-# header.html), so the plugin was buying a broken badge and a network
-# round-trip for a link we render ourselves. `config.repo_url` still
-# drives that button and the page-level "Edit this page" action.
+# `extra.social` is deliberately unset, so the social plugin renders no
+# badge links in the footer. That footer is an empty override anyway.
+#
+# Unsetting it was originally credited with silencing a 404 on
+# `api.github.com/repos/<repo>/releases/latest` on every page load —
+# it does not, and the request kept firing. The real source is the
+# theme core: `partials/nav.html` renders a repository link carrying
+# `data-md-component="source"`, and the bundle keys a
+# repository-facts fetch (releases/latest + repo stars/forks) off
+# that attribute whenever `config.repo_url` is set. `overrides/
+# partials/source.html` drops the attribute, which is what actually
+# stopped the 404. See the comment in that file.
+#
+# `config.repo_url` itself stays set — it also drives the GitHub
+# button in the menu-bar and the page-level "Edit this page" action.
 extra: {}
 
 # Markdown extensions — every one of these is load-bearing for the

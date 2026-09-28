@@ -136,21 +136,41 @@
   /* Typography.
      Sizes are in rem against a root pinned to 16px (see "ROOT FONT
      SIZE" above), so these read as the pixel values noted. Body copy
-     is 16px — the size MDN, Tailwind and Vercel all land on — and
-     line-height 1.7 gives Inter the vertical room it needs at that
-     size; 1.55 was tuned against the old 20-22px root and read tight
-     once the text came down. The heading scale is a tighter ratio
-     than Material's default so H1 dominates without the top of the
-     page shouting. */
+     is 17px and line-height 1.7 gives Inter the vertical room it needs
+     at that size; 1.55 was tuned against the old 20-22px root and
+     read tight once the text came down. The heading scale is a tighter
+     ratio than Material's default so H1 dominates without the top of
+     the page shouting.
+
+     The +1px on body (16 → 17) is the whole point of this revision.
+     16px is the web default and reads fine on a monitor at arm's
+     length, but these are reference pages — dense tables, error
+     catalogues, wire contracts — that people read for a long time and
+     often on a laptop rather than a desktop. One step up is enough to
+     take the edge off without pushing the line past a comfortable
+     measure, because the measure is declared in `em` (see "MEASURE"
+     below) and therefore scales with the text instead of staying
+     pinned at 640px. Net effect: 17px type at 680px of measure, which
+     holds the same ~80 characters per line at a larger glyph.
+
+     Deliberately NOT 18px. At 18px the same 80-character measure needs
+     720px, and the content column competes with the 340px sidebar for
+     a 1600px viewport — the code blocks and tables, which are the
+     reason a reader came, would start wrapping.
+
+     The heading scale moves with it (+1, +1, +1, +1) rather than
+     staying put, so the H1→H2 gap does not widen and the page does not
+     lose its hierarchy. */
   --md-text-font: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --md-code-font: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-display: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --md-typeset-font-size: 1rem;          /* 16px */
+  --md-typeset-font-size: 1.0625rem;     /* 17px */
   --md-typeset-line-height: 1.7;
-  --md-typeset-h1-font-size: 2.125rem;   /* 34px */
-  --md-typeset-h2-font-size: 1.5rem;     /* 24px */
-  --md-typeset-h3-font-size: 1.1875rem;  /* 19px */
-  --md-typeset-h4-font-size: 1rem;       /* 16px */
+  --md-typeset-h1-font-size: 2.25rem;    /* 36px */
+  --md-typeset-h2-font-size: 1.625rem;   /* 26px */
+  --md-typeset-h3-font-size: 1.25rem;    /* 20px */
+  --md-typeset-h4-font-size: 1.0625rem;  /* 17px */
+
   --md-typeset-h1-weight: 700;
   --md-typeset-h2-weight: 600;
   --md-typeset-h3-weight: 600;

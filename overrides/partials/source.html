@@ -1,0 +1,35 @@
+{#-
+  Override of Material's `partials/source.html` — the repository link
+  at the top of the left sidebar.
+
+  Upstream renders `data-md-component="source"` on the anchor, and the
+  theme's bundle keys a repository-facts fetch off that attribute: it
+  parses `config.repo_url` into owner/repo and requests
+  `https://api.github.com/repos/<owner>/<repo>/releases/latest` plus
+  the repo endpoint, on every page load, to badge stars/forks/version
+  into the sidebar. This repo has no GitHub releases, so the first
+  request 404s on every single page view.
+
+  That fetch is NOT driven by `extra.social` — the social plugin
+  renders badge links in the footer (which this theme replaces with an
+  empty partial), and it is not what fires the request. The theme
+  core's source link is, and it fires whenever `config.repo_url` is
+  set, regardless of the social plugin.
+
+  Dropping the attribute leaves the anchor an ordinary link to the
+  repository: the sidebar row keeps its icon and label, and clicking
+  it goes where it always went. Only the star/fork/version badge —
+  which never rendered here, since the requests 404 — is gone.
+
+  `config.repo_url` itself stays set: it also drives the GitHub button
+  in the menu-bar and the per-page "Edit this page" action.
+-#}
+<a href="{{ config.repo_url }}" title="{{ lang.t('source') }}" class="md-source">
+  <div class="md-source__icon md-icon">
+    {% set icon = config.theme.icon.repo or "fontawesome/brands/git-alt" %}
+    {% include ".icons/" ~ icon ~ ".svg" %}
+  </div>
+  <div class="md-source__repository">
+    {{ config.repo_name }}
+  </div>
+</a>

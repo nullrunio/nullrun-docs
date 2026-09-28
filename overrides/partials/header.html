@@ -86,14 +86,22 @@
     {# ── Right buttons: print, github ───────────────────────────────── #}
     <div class="nr-menubar__right-buttons">
 
-      {# Print document — full docs flattened into a single printable
-         page at /print/ (MkDocs' default `use_directory_urls: true`
-         renders `docs/print.md` as `/print/index.html`). The page is
-         not in the nav so `| url` cannot resolve it; the relative URL
-         `/print/` works regardless of `use_directory_urls` because
-         MkDocs only generates the URL — the directory is built by
-         MkDocs and served by nginx regardless of how we link. #}
-      <a href="print/" aria-label="Printable documentation" class="nr-icon-button">
+      {# Print document — the full docs flattened into a single
+         printable page. `docs/print.md` is deliberately absent from
+         the nav (it is a duplicate of every other page, not a step in
+         the reading order), but `| url` never consults the nav — it
+         only normalises a path against the current page, so the
+         filter resolves it fine and emits the correct depth-
+         relative href from wherever the reader is: `../../print/`
+         three levels down, `print/` from the site root, and `../` from
+         the print page itself so the button still points at it there.
+
+         A hardcoded relative `href="print/"` was wrong here for every
+         page below the root: relative URLs resolve against the
+         *current page's* directory, so on /getting-started/onboarding/
+         it asked for /getting-started/onboarding/print/ and 404'd on
+         all 48 nested pages. #}
+      <a href="{{ 'print/' | url }}" aria-label="Printable documentation" class="nr-icon-button">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3m-3 11H8v-5h8v5m3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1m-1-9H6v4h12V3Z"/>
         </svg>
