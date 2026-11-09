@@ -1,6 +1,6 @@
 ---
 title: OpenAI Agents
-description: Gate and cost-track an OpenAI Agents run with @protect. No vendor extra is needed.
+description: Gate an OpenAI Agents run with @protect, and let the SDK report the token counts of every model call the agent makes without manual tracking.
 maturity: stable
 ---
 
@@ -13,8 +13,9 @@ for it.
 pip install nullrun openai-agents
 ```
 
-The SDK attaches to the framework on its own. Instrumentation goes in
-when `init()` runs, and again on the first `@protect` call.
+The SDK attaches to the framework on its own. The attachment is
+installed once per process — see [LLM frameworks](llm-frameworks.md)
+for the rule. Import the `agents` package before that happens.
 
 ## The wiring
 

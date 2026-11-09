@@ -10,9 +10,9 @@ home: true
 
      The hero leads with code, not with a screenshot. A reader who
      landed here from a search result or a link in an issue came for
-     the integration, and the dashboard image was the only thing above
+     the integration, and the control center image was the only thing above
      the fold telling them what the product looks like rather than what
-     it does. The dashboard shot moved to its own section below the
+     it does. The control center shot moved to its own section below the
      fold, where it still runs but answers a question the code above
      it has already framed. -->
 <section class="nr-hero md-grid md-typeset">
@@ -62,14 +62,14 @@ def refund_customer(order_id: str, amount_cents: int) -> str:
 <section class="nr-section nr-section--shot md-grid md-typeset">
   <figure class="nr-shot">
     <img class="nr-shot__light" src="assets/images/screenshots/dashboard-hero-light.png"
-       alt="NullRun dashboard home showing the workflow control panel."
+       alt="NullRun control center overview."
        loading="lazy" decoding="async">
     <img class="nr-shot__dark" src="assets/images/screenshots/dashboard-hero-dark.png"
-       alt="NullRun dashboard home showing the workflow control panel."
+       alt="NullRun control center overview."
        loading="lazy" decoding="async">
     <figcaption class="nr-shot__caption">
       Every gate decision, budget reservation, and cost event lands in
-      the dashboard. That is the whole surface an operator touches.
+      the control center. That is the whole surface an operator touches.
     </figcaption>
   </figure>
 </section>
@@ -80,7 +80,7 @@ def refund_customer(order_id: str, amount_cents: int) -> str:
 ```mermaid
 flowchart LR
   Agent["Your agent<br/>(Python SDK)"] -->|"@protect"| Gateway["NullRun gateway"]
-  Gateway -->|"budget pre-flight<br/>policy fetch"| Decision{"allow?"}
+  Gateway -->|"tool rules → rate limit → budget"| Decision{"allow?"}
   Decision -->|"yes"| Body["wrapped function runs"]
   Decision -->|"no"| Block["raise NullRunBlockedException"]
   Operator["operator"] -.->|"kill / pause"| Gateway
@@ -109,10 +109,9 @@ flowchart LR
 </div>
 <div class="nr-feature__title">Budget gate</div>
 <div class="nr-feature__body">
-Set a per-workflow cap in cents. The SDK asks the gateway
-"any budget left?" before every <code>@protect</code> call.
-Hard blocks on overrun; soft mode allows a bounded
-overrun when an active chain is present.
+Set a cap in cents for one workflow or the whole org. The gateway
+reserves the money before the call runs. Hard mode blocks the
+overrun. Soft mode allows a bounded overrun inside an active chain.
 </div>
 </div>
 <div class="nr-feature">
@@ -159,11 +158,10 @@ reaches the top of the agent loop, not a swallowed
 </div>
 <div class="nr-feature__title">ToolBlock policy</div>
 <div class="nr-feature__body">
-Server-side glob-pattern rules (<code>mcp://payments/refund*</code>,
-<code>bash</code>, <code>db.drop</code>) decide which
-canonical tool names are allowed. <strong>Always Hard</strong>:
-fails closed on transport error, regardless of the budget's
-<code>enforcement_mode</code>.
+Server-side glob patterns (<code>mcp://payments/refund*</code>,
+<code>bash</code>, <code>db.drop</code>) list the tools that must
+never run. <strong>Always Hard</strong>: it fails closed on a
+transport error, whatever the budget's <code>enforcement_mode</code>.
 </div>
 </div>
 <div class="nr-feature">
@@ -193,11 +191,10 @@ every LLM call goes through the gateway.
 </div>
 <div class="nr-feature__title">Audit chain</div>
 <div class="nr-feature__body">
-Every gate decision (allow / block / require_approval) is
-recorded in an append-only audit log with a tamper-evident
-hash chain. The chain is recompute-verifiable on demand via
-the audit-log verify endpoint. The audit log is a plan feature —
-Lite and Starter do not carry it.
+Every gate decision (allow, block, require_approval) lands in an
+append-only audit log with a tamper-evident hash chain. Recompute
+the chain on demand from the audit-log verify endpoint. The log is
+a plan feature — Lite and Starter do not carry it.
 </div>
 </div>
 </div>
@@ -225,101 +222,89 @@ sequenceDiagram
 
 *End-to-end: the gate evaluation, cost accounting, and the kill path.*
 
-The Python SDK runs inside your own process and talks to the NullRun
-gateway over HTTPS. Every gate decision, budget reservation, and cost
-event travels over that connection — the SDK adds a network round-trip
-and nothing else to your deployment. Policies, workflows, approvals,
-and the operator controls live in the dashboard, which is where your
-team configures what the gate enforces.
+The Python SDK runs inside your own process and talks to the gateway over
+HTTPS. The gate check, the budget reservation, and the cost event all travel
+over that connection. Policies, workflows, approvals, and the operator
+controls live in the control center — that is where your team configures what
+the gate enforces.
 </section>
 
 <section class="nr-section md-grid md-typeset" markdown="1">
 ## Let LLM do all the heavy work
 
-You already run a coding agent — Claude Code, GPT, or anything else
-that edits your repo. Hand it this prompt and it does the whole
-NullRun setup: install, wrap the right call sites, handle the errors,
-and tell you which policies to create in the dashboard.
+You already run a coding agent — Claude Code, GPT, or anything else that
+edits your repo. Give it the prompt below and it installs NullRun, wraps the
+call sites that matter, handles the refusals, and writes the test. It reads
+the code before it changes it.
 
-Copy the block, paste it into your agent, and answer the two
-questions it asks. It reads the code before it changes it.
+Copy the block, paste it into your agent, and answer what it asks.
 
 ```text title="Prompt for Claude Code, GPT, or any coding agent"
-Set up NullRun in this repository. NullRun is a runtime decision layer
-for tool-using AI agents: the SDK asks a gateway before every tool or
-model call, and the gateway answers allow, block, or require_approval.
+Set up NullRun in this repository.
+
+NullRun is a runtime decision layer for tool-using AI agents. The Python SDK
+asks the gateway before every protected call. The gateway answers allow,
+block, or require_approval. The call runs only on allow.
 
 Docs: https://docs.nullrun.io
 
-Do this in order. Stop and ask me if a step is ambiguous.
+Read these two pages before you change anything:
+- https://docs.nullrun.io/getting-started/quickstart/
+- https://docs.nullrun.io/reference/sdk-api/
 
-1. READ FIRST
-   Read https://docs.nullrun.io/getting-started/quickstart/ and
-   https://docs.nullrun.io/reference/sdk-api/ so you use the real API.
-   The public surface is small: `nullrun.init()`, the `@nullrun.protect`
-   decorator, `with nullrun.guard():`, `nullrun.on_error(hook)`,
-   `nullrun.format_user_message(exc)`, and the `workflow` / `span` /
-   `agent` / `chain` context managers. There is no other decorator.
+Work through the steps below. Stop and ask me when a step is ambiguous.
 
-2. INSTALL
-   Add `nullrun` to the project's dependency file (pyproject.toml or
-   requirements.txt). Do not add vendor extras — the plain package
-   covers OpenAI, Anthropic, Gemini, Cohere, Mistral, and Bedrock.
-   Ask me for a NullRun API key if `NULLRUN_API_KEY` is not already
-   exported. Never commit the key.
+1. INSTALL
+   Add `nullrun` to pyproject.toml or requirements.txt. Use the plain
+   package. Do not add vendor extras.
+   Read the key from the NULLRUN_API_KEY environment variable. If it is
+   unset, ask me for one. Never write the key into a file. Never commit it.
 
-3. INITIALISE
-   Add one `import nullrun` and one `nullrun.init()` call at the
-   entry point of the application. Do not call `init()` more than once.
-   Leave the API key in the `NULLRUN_API_KEY` environment variable.
+2. INITIALIZE
+   Add `import nullrun` and one `nullrun.init()` call at the entry point
+   of the application. Call init() once.
 
-4. PROTECT THE CALL SITES
-   Find every place this code calls an LLM or a tool that has a side
-   effect: model completions, HTTP calls to a payment or messaging
-   provider, database writes, file deletion, shell commands.
-   Wrap each one with `@nullrun.protect`. The decorator takes no
-   arguments. Do not change the function body, its name, its
-   signature, or its return value.
-   Do not wrap pure functions that only compute a value.
-   If the app uses a framework (LangGraph, LangChain, CrewAI,
-   AutoGen, OpenAI Agents, LlamaIndex), wrap the entry point of the
-   agent run instead of every node, and say so in your summary.
+3. PROTECT THE CALL SITES
+   Find every call with a side effect: model completions, payment or
+   messaging HTTP calls, database writes, file deletion, shell commands.
+   Wrap each one with `@nullrun.protect`. The decorator takes no arguments.
+   Keep the function name, the signature, and the return value.
+   Leave pure functions alone.
+   On a framework (LangGraph, LangChain, CrewAI, AutoGen, OpenAI Agents,
+   LlamaIndex), wrap the agent entry point instead of every node. Say which
+   choice you made.
 
-5. HANDLE THE REFUSALS
-   Wrap the main entry point in `with nullrun.guard():` so a refused
-   call prints a clean message and exits non-zero. Where the app has
-   its own error handling, catch `nullrun.NullRunError` and show
-   `nullrun.format_user_message(exc)` to the user instead of the raw
-   exception text. Never let a refusal fall through as if it had
-   succeeded — a swallowed refusal means the call ran without being
-   authorised.
-   Register `nullrun.on_error(...)` to forward errors to the logging
-   or error-reporting system the project already uses, if there is one.
+4. HANDLE THE REFUSALS
+   Wrap the entry point in `with nullrun.guard():`. It writes the user
+   message and the developer report to stderr, then exits with code 1.
+   Where the app has its own error handling, catch `nullrun.NullRunError`
+   and show `nullrun.format_user_message(exc)` to the user.
+   Never swallow a refusal. A swallowed refusal means the call ran without
+   being authorized.
+   Register `nullrun.on_error(...)` if the project has a logging or error
+   reporting system.
 
-6. VERIFY
-   Run the project's own test suite. Then write one small test that
-   calls a protected function and asserts that a NullRun refusal
-   raises `nullrun.NullRunError`. Do not weaken or delete any existing
-   test to make the suite pass.
+5. VERIFY
+   Run the project's test suite. Add one test that calls a protected
+   function and asserts that a NullRun refusal raises `nullrun.NullRunError`.
+   Do not weaken or delete an existing test to make the suite pass.
 
-7. REPORT
-   Tell me, in this order:
-   - which files you changed and why;
-   - which call sites you protected and which you left alone;
-   - the exact dashboard steps I must do myself, because only I can
-     create policies: set the budget cap in cents for the workflow,
-     add a ToolBlock rule for the tools that should never run, and
-     add an approval rule for the calls that need a human. Include the
-     tool names you found, so I can write the patterns.
+6. REPORT
+   Give me, in this order:
+   - the files you changed and why;
+   - the call sites you protected and the ones you left alone;
+   - the control center steps only I can do: the spend cap in cents, the tools
+     that must never run, and the calls that need a human. Include the tool
+     names you found, so I can write the patterns;
    - anything you could not verify.
 ```
 
-The prompt covers everything that happens inside the code. Three things
-stay with you, because they live in the dashboard and not in the repo:
+The prompt covers the code. Three things stay with you, because they live in
+the control center, not in the repo:
 
 | You do this | Where |
 |---|---|
-| Set the budget cap in cents | Dashboard → your workflow → budget |
-| List the tools that must never run | Dashboard → Policies → ToolBlock |
-| List the calls that need a human | Dashboard → Policies → approval rule |
+| Set the spend cap | Control center → Policies → New policy → Budget |
+| List the tools that must never run | Control center → Policies → New policy → Tool block |
+| List the calls that need a human | Control center → Approval rules |
 </section>

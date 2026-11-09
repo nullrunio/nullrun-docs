@@ -1,76 +1,68 @@
 ---
 title: Notifications
 maturity: stable
-description: Where NullRun signals land — Slack and webhook channels, threshold rules, and the per-event switches that decide what each channel receives.
+description: Where NullRun signals land — the Slack and webhook channels that receive them, and the per-event switches that decide what each channel gets.
 ---
 
 # Notifications
 
-The **Notifications** page configures every outbound signal NullRun sends. It lives under **Notifications** in the sidebar.
+The **Notifications** page configures every outbound signal NullRun sends. It lives under **Account** in the sidebar.
 
 Notifications are on Starter and above. On Lite the sidebar entry carries a lock, and the page shows an upgrade prompt.
 
-The page has three sections:
+The page has two sections:
 
-1. **Channels** — where signals land.
-2. **Alert rules** — thresholds that fire when a value crosses.
-3. **Event subscriptions** — which events reach the channels.
+1. **Alert channels** — where signals land.
+2. **Event subscriptions** — which events reach the channels.
 
-The **Alerts** page is the read surface. Channels created here appear in the alert rules editor, and an alert that fires shows on both.
+Threshold rules are a third piece of the model, and the control center has no editor for them. Rules are configured over the REST API. See [Alerts](alerts.md#threshold-rules).
 
-## Channels
+## Alert channels
 
 Two channel types exist.
 
 | Type | What it is |
 |---|---|
-| **Slack** | A Slack channel connected through the Slack app. |
+| **Slack** | A Slack App channel. It is bound to a Slack installation and a Slack channel, and posts through Slack's API with a bot token. |
 | **Webhook** | A generic HTTPS endpoint that receives a JSON POST. |
 
-There is no email channel, no PagerDuty channel, and no Discord channel.
+The two types do not post the same payload. The Slack App connection is
+set up separately, and the **Add channel** dialog does not offer it. A
+Slack incoming webhook URL is saved as a **Webhook** channel.
+
+The API accepts `slack` and `webhook` only. A third type is refused.
 
 ### Adding a channel
 
-Click **+ Add channel** and pick a type.
-
-For a **webhook**, paste the HTTPS URL and give the channel a name. The signing secret is optional. With a secret set, every delivery carries three headers:
-
-| Header | Meaning |
-|---|---|
-| `X-NullRun-Signature` | HMAC-SHA256 over the timestamp, the nonce, and the body, in that order. |
-| `X-NullRun-Timestamp` | When the payload was signed. |
-| `X-NullRun-Nonce` | A one-shot value that makes the delivery unique. |
-
-A receiver should reject a timestamp that differs from its own clock by more than five minutes, and should remember a nonce for ten minutes. Compare the signature in constant time.
-
-A channel marked test-only receives synthetic payloads only. Test payloads never reach a production destination.
-
-### Send test
-
-The **Send test** button on each channel card posts a synthetic payload and reports the outcome. Use it after creating or editing a channel, to confirm the endpoint delivers.
-
-## Alert rules
-
-A rule watches one value and fires when it crosses a threshold.
+Click **Add channel** in the **Alert channels** section header and pick the type. The dialog asks for:
 
 | Field | Meaning |
 |---|---|
-| **Type** | What the rule watches. |
-| **Threshold** | The value that triggers the rule. Spend rules use cents. Error-rate rules use a count of events. |
-| **Window** | How far back the rule looks, in minutes. |
-| **Severity** | `info`, `warning`, or `critical`. The severity of the alert the rule produces. |
-| **Enabled** | Whether the rule fires at all. |
+| **Name** | The label on the channel card and in alert messages. |
+| **Webhook URL** | The HTTPS endpoint that receives the payload. |
+| **Signing secret** | Optional. The key the receiver verifies the payload with. |
+| **Test mode** | Suppress real alerts to this channel. |
 
-The rule types are:
+With a signing secret set, every delivery carries four headers:
 
-| Type | Watches |
+| Header | Meaning |
 |---|---|
-| `daily_spend` | Spend over a day. |
-| `hourly_spend` | Spend over an hour. |
-| `error_rate` | The count of failed calls in the window. |
-| `per_key_spend` | Spend by one API key. |
+| `X-NullRun-Signature` | HMAC-SHA256 over `timestamp.nonce.body`. |
+| `X-NullRun-Timestamp` | When the payload was signed. |
+| `X-NullRun-Nonce` | A one-shot value that makes the delivery unique. |
+| `X-NullRun-Event-Id` | The identifier of the event. |
 
-Each rule card shows the last value it observed against its threshold, and when it last fired.
+A receiver should reject a timestamp that differs from its own clock by more than five minutes, and should remember a nonce for ten minutes. Compare the signature in constant time.
+
+### Test mode
+
+A channel in test mode receives synthetic payloads only. Real alerts do not reach it. The channel card carries a **Test mode** badge.
+
+### Test send
+
+**Test send** in the channel menu posts a synthetic payload and reports the outcome. The card shows **Test sent** or **Test failed**. Use it after creating or editing a channel, to confirm the endpoint delivers.
+
+The card also shows the last delivery time, or **Never triggered**.
 
 ## Event subscriptions
 
@@ -91,7 +83,7 @@ The events are:
 | Digest | `daily_summary` | The previous day's activity digest. |
 | Digest | `weekly_summary` | The previous week's activity digest. |
 
-The toggle on the right of a row switches the event on or off for every channel. The dots are read-only indicators of where the event lands.
+The toggle on the right of a row switches the event on or off for every channel. The dots are read-only indicators of where the event lands, and a disabled channel shows a dashed cell.
 
 ## API
 

@@ -1,6 +1,6 @@
 ---
 title: Glossary
-description: Every NullRun term in one place — gate, policy, budget, execution_id, reservation, approval rule, and the fail-closed contract — with a link to the page that explains each one.
+description: Every NullRun term in one place — gate, policy, budget, execution_id, reservation, approval rule, and the fail-closed contract.
 maturity: stable
 ---
 
@@ -34,25 +34,31 @@ term means and links to the page that goes deeper on it.
 
 **Sensitive tool**
 :   A tool that should never run without a human paying attention —
-    sending mail, moving money, deleting a record. NullRun does not
-    ship a built-in list of these; you express them as `ToolBlock`
-    patterns. See [Sensitive tools](concepts/sensitive-tools.md).
+    sending mail, moving money, deleting a record. The SDK keeps a
+    registry of common sensitive tool names, but the registry enforces
+    nothing. Sensitivity is enforced by server-side rules: `ToolBlock`
+    patterns and approval rules. See
+    [Sensitive tools](concepts/sensitive-tools.md).
 
 **Fail-closed / fail-open**
-:   What happens when the gate cannot get the signal it needs. The
-    enforcement path fails **closed**: a missing tool block, a missing
-    aggregate rate-limit answer, or a missing budget answer refuses the
-    call. The SDK-side circuit breaker is the one component that fails
-    **open**, and only locally — an unreachable gateway short-circuits
-    the SDK's calls instead of hanging. See
-    [Policies](concepts/policies.md) and
+:   What happens when the gate cannot get the signal it needs. On the
+    gateway the enforcement path fails **closed**: a failure to evaluate
+    the budget or the per-organization rate limit refuses the call. In
+    the SDK the tool-policy gate also fails
+    **closed**, so a protected body does not run when the policy engine
+    cannot be reached. Two SDK checks fail **open**: the budget
+    pre-flight skips the check and logs a warning when the gateway is
+    unreachable, then corrects the spend in the tracked events, and the
+    control-plane check treats an unreachable gateway as a normal
+    workflow. See [Policies](concepts/policies.md) and
     [Circuit breaker](concepts/circuit-breaker.md).
 
 **Circuit breaker**
-:   The SDK-side guard that short-circuits gate calls after repeated
+:   The SDK-side guard that short-circuits event flushes after repeated
     infrastructure failures, so an unreachable gateway does not turn
     into a hang. It opens on transport errors and closes again after a
-    cooldown. See [Circuit breaker](concepts/circuit-breaker.md).
+    cooldown. It does not sit on the gate path, and a protected call is
+    never blocked by it. See [Circuit breaker](concepts/circuit-breaker.md).
 
 **Protocol version**
 :   The wire contract version the SDK sends on every gateway request in
@@ -63,16 +69,17 @@ term means and links to the page that goes deeper on it.
 ## Cost
 
 **Budget**
-:   The maximum a workflow may spend in one billing period. Amounts are
-    in cents. See [Budgets](concepts/budgets.md).
+:   The maximum a workflow may spend in one period. Amounts are in
+    cents. See [Budgets](concepts/budgets.md).
 
 **Enforcement mode**
 :   Whether a budget blocks hard or soft. `Hard` refuses the call once
     the projected cost exceeds what is left. `Soft` allows a bounded
     overdraft, but only when all three hold: the policy is set to
-    `Soft`, an active `chain_id` exists, and the cost stays inside both
-    `max_overdraft_cents` and `max_overdraft_percent`. The chain
-    returns to Hard mode once the cap is exhausted. See
+    `Soft`, an active `chain_id` exists, and the cost stays inside the
+    overdraft cap. The cap is the lower of `max_overdraft_cents` and
+    `max_overdraft_percent`. When the cap is exhausted the chain is
+    marked exhausted and further `Soft` calls on it are refused. See
     [Budgets](concepts/budgets.md).
 
 **execution_id**
@@ -134,7 +141,7 @@ term means and links to the page that goes deeper on it.
 **Span**
 :   One node in a trace — a single LLM or tool call, with its timing and
     its correlation ids. Spans nest, and a parent trace id propagates
-    across a workflow so the dashboard renders a true waterfall. See
+    across a workflow so the control center renders a true waterfall. See
     [Tracing](concepts/tracing.md).
 
 ## Control
@@ -146,12 +153,13 @@ term means and links to the page that goes deeper on it.
     [Human approval](concepts/human-approval.md).
 
 **Approval rule**
-:   A policy that asks for a human instead of answering `allow` or
-    `block` on its own. Its predicate reads the call's business
-    impact — an amount of money, or a named argument value. Approval
-    rules are separate from `ToolBlock`: the tool block says which
-    tools are off limits, the approval rule says which calls need a
-    person. See [Human approval](concepts/human-approval.md).
+:   A rule that asks for a human instead of answering `allow` or
+    `block` on its own. It is not a fourth policy type: it sits beside
+    the policies and matches tool patterns plus a predicate over the
+    call's business impact — an amount of money, or a named argument
+    value. Approval rules are separate from `ToolBlock`: the tool block
+    says which tools are off limits, the approval rule says which calls
+    need a person. See [Human approval](concepts/human-approval.md).
 
 **action_digest**
 :   The SHA-256 hash that binds an approval to the action it approves.
@@ -160,7 +168,7 @@ term means and links to the page that goes deeper on it.
     [Human approval](concepts/human-approval.md).
 
 **Control plane**
-:   The WebSocket channel between the dashboard and your running agent.
+:   The WebSocket channel between the control center and your running agent.
     It is what makes **Kill**, **Pause**, and **Resume** take effect
     immediately rather than on the next gate call. See
     [Control plane](concepts/control-plane.md).

@@ -1,6 +1,6 @@
 ---
 title: FastAPI
-description: Map NullRun gate refusals to HTTP status codes with the FastAPI integration.
+description: Map NullRun gate refusals and infrastructure failures to HTTP status codes with the FastAPI integration, or write your own handler.
 maturity: stable
 ---
 
@@ -42,8 +42,8 @@ def chat(message: str) -> dict:
 
 | Registration | Handles | HTTP |
 |---|---|---|
-| Exception handler for `NullRunDecision` | Budget, tool block, rate limit, pause, chain errors | Per `error_code` |
-| Exception handler for `NullRunInfrastructureError` | Transport, backend, auth, config errors | `503` |
+| Exception handler for `NullRunDecision` | Budget, tool block, loop, pause, chain errors | Per `error_code` |
+| Exception handler for `NullRunInfrastructureError` | Transport, backend, auth, config, rate limit | `503` |
 | ASGI middleware `NullRunMiddleware` | `WorkflowKilledInterrupt` | `503` |
 
 The kill middleware sits outside the exception handler chain. A kill
@@ -59,13 +59,17 @@ status.
 |---|---|---|
 | `NR-B004` | `429` | Budget exhausted |
 | `NR-L001` | `429` | Loop detected |
-| `NR-R001` | `429` | Rate limit hit |
+| `NR-R001` | `429` | Rate limited |
 | `NR-T001` | `403` | Tool blocked |
 | `NR-X001` | `403` | Generic block |
 | `NR-W003` | `503` | Workflow paused |
 | Any other decision code | `429` | Default |
 
-Every infrastructure error maps to `503`.
+Every infrastructure error maps to `503`. A gateway 429 arrives as
+`RateLimitError`, which is an infrastructure error, so it lands on
+`503` and not on `429`. A decision that carries `NR-R001` — the
+legacy block path, where the SDK reads the reason text and no wire
+code was sent — is a decision, and lands on `429`.
 
 The response carries a `Retry-After` header when the exception has a
 `retry_after` value (rate limit) or a `resume_after` value (pause).
@@ -143,9 +147,10 @@ def chat(message: str) -> dict:
         )
 ```
 
-Two classes carry no `status_code` attribute: `WorkflowPausedException`
-and `WorkflowKilledInterrupt`. Read the attribute with `getattr` and
-supply your own fallback.
+Not every decision carries a `status_code`. `WorkflowPausedException`
+and `WorkflowKilledInterrupt` have no such attribute, and a
+client-side `NullRunBlockedException` carries `None`. Read it with
+`getattr` and supply your own fallback.
 
 ## Per-deployment wording
 
@@ -156,7 +161,7 @@ import nullrun
 
 nullrun.set_user_message(
     "NR-B004",
-    "This workflow is out of budget. Raise the cap in the dashboard.",
+    "This workflow is out of budget. Raise the cap in the control center.",
 )
 ```
 

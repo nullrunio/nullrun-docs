@@ -606,7 +606,7 @@ change to it.
 - **Kill propagates as an exception rather than an exit.** A
   `WorkflowKilledInterrupt` raised by [Kill](concepts/control-plane.md)
   is not swallowed by an enclosing error handler, so an agent that is
-  stopped from the dashboard stops. See
+  stopped from the control center stops. See
   [Control plane](concepts/control-plane.md).
 
 - **Policy fetches fail closed.** A policy the gate cannot retrieve is
@@ -624,5 +624,5 @@ change to it.
 ---
 
 Reports something that does not match what you are reading here? The
-SDK repository takes issues, and the [GitHub](https://github.com/nullrunio/nullrun-docs)
-link in the footer points at this docs repository.
+[GitHub](https://github.com/nullrunio/nullrun-docs) link in the footer
+points at this docs repository. Open an issue there.

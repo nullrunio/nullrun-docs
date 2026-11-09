@@ -1,7 +1,7 @@
 ---
 title: Approvals
 maturity: stable
-description: The operator-facing side of approvals — what a pending request shows, how to approve or deny it, what expiry does, and how a grant binds to the exact payload.
+description: The operator review surface — what a pending request shows, how to approve or deny it, what expiry does, and what the agent sees next.
 ---
 
 # Approvals
@@ -10,7 +10,7 @@ An **approval** is a tool call that an agent wants to make and a human has to au
 
 The approvals feature is on Growth and above. On a lower plan the sidebar entry carries a lock, and the page shows an upgrade prompt.
 
-This page covers the review surface: what a request shows, how to decide, and what the agent sees afterwards. The rule format, the typed predicates, and the wire contract live in [Human approval](human-approval.md).
+This page covers the review surface: what a request shows, how to decide, and what the agent sees afterwards. The rule format, the typed predicates, the digest binding, and the wire contract live in [Human approval](human-approval.md).
 
 ## What a pending request shows
 
@@ -26,17 +26,17 @@ Each pending row carries:
 
 The pending feed refreshes every 30 seconds, and the badge next to **Approvals** in the sidebar carries the pending count.
 
-Click a row to open the full detail: the action fingerprint, the execution id, the rule, the tool patterns, the threshold, the review window, and the rendered predicate.
+Click a row to open the full detail: the request id, the action fingerprint, the execution id, the rule, the tool patterns, the per-call threshold, the rule priority, the review window, the rule creation time, and the rendered predicate.
 
 ## Approving
 
-The approve button names the amount or the action, so nobody approves a value they cannot see.
+The **Approve** button opens a **Confirm approval** dialog. The agent stays blocked until the operator confirms in the dialog.
 
 | Risk | What the operator does |
 |---|---|
-| **LOW** | Click **Approve**. |
-| **MEDIUM** | Click **Approve**, then type the amount. |
-| **HIGH** | Click **Approve**, then type the amount, then type the action label. |
+| **LOW** | Click **Approve**, then **Confirm**. |
+| **MEDIUM** | Click **Approve**, type the amount, then **Confirm**. |
+| **HIGH** | Click **Approve**, type the amount, then **Continue**, type the action label, then **Confirm**. |
 
 A request with no money amount has no amount to type. MEDIUM and HIGH requests then confirm on the action label alone. The action label is the tool name, or the action when the request carries no tool.
 
@@ -44,7 +44,7 @@ On approve, the grant is released and the agent resumes.
 
 ## Denying
 
-Deny takes the same path at every risk level. The operator types a reason for the denial, then confirms it.
+Deny takes the same path at every risk level. The operator types a reason for the denial, then confirms with **Confirm Deny**.
 
 The agent raises `NullRunApprovalDeniedError` (`NR-A011`) and the call does not run.
 
@@ -56,18 +56,11 @@ An approval never resolves silently. The operator has to click.
 
 ## How the grant binds to the payload
 
-An approval is a grant for one exact action, not for a tool name.
+A grant is for one exact action, not for a tool name.
 
-When the request is raised, the gate computes a SHA-256 digest of the action's impact payload and stores it on the approval row. On the call that follows an approval, the gate recomputes the digest from the live payload and compares it with the approved one. The comparison is atomic, so two concurrent re-checks cannot both spend the same grant.
+The gate stores a SHA-256 digest of the action's impact payload on the approval row. On the call that follows an approval, the gate recomputes the digest from the live payload and compares it with the approved one. The comparison is atomic, so two concurrent re-checks cannot both spend the same grant.
 
-| Situation | Result |
-|---|---|
-| The payload matches | The grant is consumed and the call proceeds |
-| The impact payload changed | Refused, `NR-A013` |
-| The tool digest changed | Refused, `NR-A014` |
-| The grant was already consumed | Refused, `NR-A015` |
-
-A changed amount, a changed argument, or a changed tool name all break the digest. The operator approved that amount and those arguments, and nothing else.
+A changed amount, a changed argument, or a changed tool name breaks the digest, and the call is refused. The refusal codes and the wire contract are in [Human approval](human-approval.md).
 
 ## History
 
@@ -88,22 +81,11 @@ Medium- and high-risk requests are not eligible for a bulk approval. Each one ta
 
 ## Programmatic approval
 
-A CI bot or an on-call rotation can decide through the same endpoints:
-
-```bash title="approve_via_api.sh"
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/approve" \
-  -H "Authorization: Bearer $NULLRUN_API_KEY"
-
-# Or deny explicitly
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/deny" \
-  -H "Authorization: Bearer $NULLRUN_API_KEY"
-```
-
-Deciding twice is not an error. Approving a decided request returns `409 APPROVAL_ALREADY_DECIDED`.
+A CI bot or an on-call rotation decides through the REST endpoints — see [HTTP API → approvals](../reference/http-api.md#approvals). An already-decided request answers `409 APPROVAL_ALREADY_DECIDED`; the codes are in [Error codes](../reference/errors.md).
 
 ## Audit trail
 
-Every approve and deny lands in the audit log with the operator, the timestamp, and the outcome. The action digest on the row proves which payload the operator approved.
+Every approve and deny lands in the audit log with the operator, the decision, the timestamp, and the execution id. The audit log is a plan feature: on Lite and Starter no row is written.
 
 ## See also
 

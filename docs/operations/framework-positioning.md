@@ -1,7 +1,7 @@
 ---
 title: Framework & ecosystem positioning
 maturity: stable
-description: How NullRun overlaps with framework-native human-in-the-loop patterns in LangGraph, LangChain, CrewAI, AutoGen, and OpenAI Agents — where it sits beside them, and what NullRun does not cover.
+description: Where NullRun sits beside an agent framework: what the SDK instruments, where approval overlaps with framework HITL, and what NullRun does not cover.
 ---
 
 # Framework & ecosystem positioning
@@ -9,34 +9,51 @@ description: How NullRun overlaps with framework-native human-in-the-loop patter
 Teams that already run an agent framework ask two questions: what
 does NullRun add, and where does it collide with what I have.
 
-This page answers both. The short version: the frameworks own
-**flow control**, NullRun owns **authorization**. The two layers
-answer different questions, and exactly one of them — approval for a
+This page answers both. The short version: the framework owns **flow
+control**, NullRun owns **authorization**. One of them — approval for a
 sensitive tool — is a real overlap.
 
-## The overlap matrix
+## The layers
 
-| Layer | LangGraph | LangChain | CrewAI | AutoGen | OpenAI Agents | **NullRun** |
-|---|---|---|---|---|---|---|
-| **Flow-level HITL** — pause a graph step for input | `interrupt()` + `Command(resume=...)` | `interrupt_before` / `interrupt_after` | `human_input=True` per task | `HandoffMessage` | `RunHooks` | Sits **above** this layer, not instead of it |
-| **Hard budget gate** — block before the call runs | — | — | — | — | — | Atomic cost reservation, period-bound, fail-closed |
-| **Tool-call policy** — declarative block or allow | — | — | — | — | — | Policy list with pattern matching |
-| **Immutable audit trail** — refusals included | Call trace only | Call trace only | — | — | Tracing only | Hash-chained log of gate decisions, kept separate from execution records |
-| **Policy as data** — per organization, per workflow | — | — | — | — | — | Scopes and versions in the dashboard |
+Two layers belong to the framework:
 
-Two layers have no framework equivalent:
+- **Flow control.** Graph state, node order, scheduling.
+- **Flow-level HITL.** Pausing a step and waiting for input.
 
-- **Budget and tool policy as enforcement.** A framework callback can
-  observe a tool call. It cannot hold the call frame while a server
-  decides.
-- **An audit log of decisions.** A trace records what happened. It
-  does not record that the call was *refused*, and it is not a
-  tamper-evident chain.
+NullRun does not manage graph state, and it does not decide whether the
+agent's plan is a good plan.
 
-One layer belongs to the frameworks alone:
+Four layers belong to NullRun. The gateway enforces all of them.
 
-- **Flow-level HITL.** NullRun does not manage graph state, and it
-  does not decide whether the agent's plan is a good plan.
+| Layer | What it does |
+|---|---|
+| **Hard budget gate** | Reserves the cost of a call before it runs, against a period-bound counter. A refusal stops the call. |
+| **Tool-call policy** | A declarative list of block and allow patterns, matched on the tool name. |
+| **Immutable audit trail** | A hash-chained log of gate decisions, kept separate from execution records. A refusal is in it. |
+| **Policy as data** | Scopes and versions in the control center, per organization and per workflow. |
+
+NullRun sits above the framework layer. It does not replace it.
+
+## What the SDK instruments automatically
+
+`nullrun.init()` installs the patches. There is no patch to install
+and no opt-in list to maintain.
+
+| Path | What the SDK patches | Gate check |
+|---|---|---|
+| `httpx` | The `httpx.Client` and `httpx.AsyncClient` transports | Before the request |
+| `requests` | The `requests` session | Before the request |
+| LangChain | `BaseCallbackManager` | On the model call |
+| LangChain | `BaseChatModel.invoke`, `ainvoke`, `stream`, `astream` | On the model call |
+| LangGraph | `Pregel.invoke`, `stream`, `ainvoke`, `astream` | On the model call |
+| OpenAI Agents | `Runner.run`, `Runner.run_sync` | None |
+| LlamaIndex | The `llama_index.core` dispatcher | None |
+| CrewAI | `Crew.kickoff`, `Crew.kickoff_async`, and the event bus | None |
+| AutoGen | `BaseChatAgent.on_messages` and the OpenAI model client | None |
+
+Where there is no gate check, the SDK still records the call, so the
+cost reaches the ledger. Put `@protect` on the tools that carry policy
+weight.
 
 ## The one real overlap: action-level approval
 
@@ -46,12 +63,12 @@ different.
 
 | Layer | Question | When it fires | Who answers |
 |---|---|---|---|
-| Framework `interrupt()` | "Is this step right?" | Inside a node, around the model or tool call | The flow's operator, in Slack, a UI, or an IDE |
+| Framework HITL | "Is this step right?" | Inside a node, around the model or tool call | The flow's operator |
 | NullRun approval | "Is this action allowed under this policy?" | Before the tool function body runs | The governance team, in the Approvals view |
 
 Both can fire on one tool call. That is the design point, not a
-conflict — a run can need both an operator who confirms the plan and
-a governance team that authorizes the action.
+conflict — a run can need both an operator who confirms the plan and a
+governance team that authorizes the action.
 
 ### Where it bites
 
@@ -64,12 +81,8 @@ may matter. Two ways to reduce it:
   approval for sensitive tool calls only.
 
 **Two approval surfaces.** If both layers fire on the same tool, the
-operator can see two prompts. Ways out:
-
-- Join the framework's thread id and the NullRun `execution_id` in one
-  dashboard view.
-- Use framework HITL for planning and NullRun approval for sensitive
-  invocations only.
+operator can see two prompts. One way out: use the framework's HITL for
+planning and NullRun approval for sensitive invocations only.
 
 **Conceptual confusion.** A team can have a complete framework HITL
 setup and still overspend, still write to production without a
@@ -79,17 +92,16 @@ decision, and still have no enforcement log to show an auditor.
 
 ### LangGraph and LangChain
 
-Keep your `interrupt()` nodes as they are. Add `@protect` on the tool
-functions and on the model call site inside the node. The SDK attaches
-to the framework on the first `@protect` call, so there is no patch to
-install and no opt-in list to maintain.
+Keep your own HITL nodes as they are. Add `@protect` on the tool
+functions and on the model call site inside the node. `nullrun.init()`
+installs the framework patches, so there is nothing to wire up.
 
 ### CrewAI
 
-`human_input=True` on a task stays — it answers "is the framing
-right?". Add `@protect` on tool calls that carry policy weight:
-database writes, outbound email, payments. CrewAI has no budget gate,
-so this is additive.
+Keep your own human-input step. It answers "is the framing right?".
+Add `@protect` on tool calls that carry policy weight: database writes,
+outbound email, payments. The CrewAI patch records the run's cost, so
+`@protect` is what gates the calls.
 
 ### AutoGen
 
@@ -98,9 +110,9 @@ invocation site with `@protect`.
 
 ### OpenAI Agents
 
-`RunHooks` stays for run-level lifecycle events. Add `@protect` on
-the tool function itself. The SDK instruments `Runner.run` and
-`Runner.run_streamed` automatically.
+Keep your run-level lifecycle hooks. Add `@protect` on the tool
+function itself. The SDK instruments `Runner.run` and `Runner.run_sync`
+automatically.
 
 ## What NullRun does not claim
 
@@ -112,20 +124,20 @@ These are outside the product by design, not gaps in the roadmap.
 3. **Retrieval governance.** Vector store and retrieval quality.
 4. **Network egress policy.** NullRun decides on call metadata. It
    does not inspect a tool payload for exfiltration.
-5. **Provider-side cost reconciliation.** NullRun computes cost from
-   the response it sees. The upstream webhook is the authority for
-   what the provider billed.
+5. **Provider-side cost reconciliation.** NullRun prices the tokens it
+   records against its own pricing table. It does not compare that
+   number with the provider's invoice.
 
 If your evaluation includes one of these, NullRun is a complement.
 
 ## Gaps
 
-- **Framework drift.** Framework HITL features move quickly. Check
-  the vendor's current documentation for the framework you run.
-- **No latency benchmark against framework HITL.** A framework pause
-  is a process-local suspension. A NullRun decision is a network
-  authorization call. The two numbers are not comparable, and
-  NullRun's own p99 at production scale is not measured.
+- **Framework drift.** Framework HITL features move quickly. Check the
+  vendor's current documentation for the framework you run.
+- **No latency benchmark against framework HITL.** A framework pause is
+  a process-local suspension. A NullRun decision is a network
+  authorization call. The two numbers are not comparable, and NullRun's
+  own p99 at production scale is not measured.
 - **No empirical study of approval friction.** The mitigations above
   are design guidance. Teams running both layers should compare the
   two surfaces before committing.

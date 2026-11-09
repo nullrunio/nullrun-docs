@@ -6,14 +6,14 @@ description: The plan an organization runs on — its caps, its features, the pe
 
 # Billing & Plan
 
-The **Billing & Plan** page covers two things: the subscription and the plan. It lives under **Billing** in the sidebar and has two tabs.
+The **Billing & Plan** page covers two things: the subscription and the plan. It lives under **Account** in the sidebar and has two tabs.
 
 | Tab | Answers |
 |---|---|
 | **Billing** | Which plan, at what price, paid how, with which invoices. |
 | **Plan** | How much of the plan is used, and what a different plan gives. |
 
-The tab is part of the URL: `?tab=billing` or `?tab=plan`. **Billing** is the default. Every upgrade prompt in the dashboard opens `?tab=plan`, so a comparison comes before a payment.
+The tab is part of the URL: `?tab=billing` or `?tab=plan`. **Billing** is the default. Every upgrade prompt in the control center opens `?tab=plan`, so a comparison comes before a payment.
 
 ## Plans and prices
 

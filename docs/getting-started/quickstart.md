@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Send your first LLM call through the NullRun gate in three steps.
+description: Install the NullRun SDK, export an API key, and decorate one function to send your first LLM call through the NullRun gate.
 maturity: stable
 ---
 
@@ -16,7 +16,7 @@ pip install nullrun
 
 ## 2. Export an API key
 
-Create a key in the dashboard under **Access → API keys**. Every key is bound to one workflow.
+Create a key in the control center under **Access → API keys**. Every key is bound to one workflow.
 
 ```bash title="shell"
 export NULLRUN_API_KEY=nr_live_...
@@ -68,7 +68,7 @@ If the gateway allows the call, the function body runs. The SDK then tracks the 
 
 ## What a refusal looks like
 
-`with nullrun.guard():` catches every refusal. It writes the user-facing message and a developer report to stderr. The report carries the error code, the stage that failed, the endpoint, the reason, and the fix. The process exits with code `1`.
+`with nullrun.guard():` catches every `NullRunError`. It writes the user-facing message and a developer report to stderr. The report carries the error code, the stage that failed, the endpoint, the reason, and the fix. The process exits with code `1`. A kill signal propagates instead of being caught.
 
 ```
 You've reached the usage limit for this conversation. Please try again later.

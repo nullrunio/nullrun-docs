@@ -138,48 +138,52 @@ they act on whatever URL the agent picks.
 
 An MCP tool's name is whatever the server exposes. The SDK sends that
 name to the gateway unchanged, so a `ToolBlock` pattern has to spell it
-the way the server does. The **MCP servers** view in the dashboard
+the way the server does. The **MCP servers** view in the control center
 lists the servers and the tools each one registers — read the names off
 there rather than guessing them from the server's documentation.
 
 ## Recommended ToolBlock starter list
 
-The SDK ships no built-in sensitive-tool list. You express "this tool
-needs review" with a `ToolBlock` policy, evaluated by the gateway on
-every gate call.
+The SDK keeps a built-in set of sensitive tool names — `stripe.charge`,
+`send_email`, `db.delete` and similar. `runtime.get_sensitive_tools()`
+returns that set plus any tool registered with
+`runtime.register_sensitive_tools(...)`. The set classifies names. It
+blocks nothing on its own. A tool is blocked by a `ToolBlock` policy,
+and the gateway evaluates that policy on every gate call.
 
-Create the policy in the dashboard under **Policies → New policy**, and
-pick **Tool block** as the type. The dashboard renders the canonical
-tool name for every framework integration, so you can match against
-the right string.
+Create the policy in the control center under **Governance → Policies → New
+policy**, and pick **Tool block** as the type. The control center renders
+the canonical tool name for every framework integration, so you can
+match against the right string.
+
+The same policy as a `POST /api/v1/orgs/{org_id}/policies` body:
 
 ```json title="tool_block_policy.json"
 {
-  "policies": [
-    {
-      "name": "Sensitive starter (matches the catalog)",
-      "type": "ToolBlock",
-      "scope": "Org",
-      "config": {
-        "tool_pattern": [
-          "stripe*", "charge", "send_payment", "create_invoice", "refund",
-          "send_email", "send_gmail", "send_message", "send_sms",
-          "slack_send*", "office365_send*",
-          "delete_file", "file_delete", "write_file", "file_write",
-          "execute_sql", "run_sql", "db_write", "db_delete",
-          "write_query", "create_table",
-          "s3_delete*", "ec2_terminate*", "ec2_stop*",
-          "lambda_invoke", "kubernetes_delete", "kubernetes_apply",
-          "python_repl*", "bash", "shell", "terminal",
-          "execute_*", "run_command", "run_bash_command",
-          "git_commit", "github_merge*", "github_push*", "github_delete*",
-          "memory_delete", "vector_store_delete", "delete_entities"
-        ]
-      }
-    }
-  ]
+  "name": "Sensitive starter (matches the catalog)",
+  "policy_type": "tool_block",
+  "scope": "org",
+  "config": {
+    "tool_pattern": [
+      "stripe*", "charge", "send_payment", "create_invoice", "refund",
+      "send_email", "send_gmail", "send_message", "send_sms",
+      "slack_send*", "office365_send*",
+      "delete_file", "file_delete", "write_file", "file_write",
+      "execute_sql", "run_sql", "db_write", "db_delete",
+      "write_query", "create_table",
+      "s3_delete*", "ec2_terminate*", "ec2_stop*",
+      "lambda_invoke", "kubernetes_delete", "kubernetes_apply",
+      "python_repl*", "bash", "shell", "terminal",
+      "execute_*", "run_command", "run_bash_command",
+      "git_commit", "github_merge*", "github_push*", "github_delete*",
+      "memory_delete", "vector_store_delete", "delete_entities"
+    ]
+  }
 }
 ```
+
+`tool_pattern` holds an array of strings. One bare string is rejected
+with `422`.
 
 Note the trailing `*` on the family patterns. `stripe*` covers
 `stripe_charge`, `stripe_refund` and every other `stripe_…` name.
@@ -215,11 +219,12 @@ That entry matches `bash`, `sh` and `shell`, and nothing else.
 | `prefix.*` | The bare prefix **and** any dotted continuation. `bash.*` covers `bash`, `bash.foo` and `bash.foo.bar`. It does not cover `bash_foo`. |
 | `\|` | Separates alternatives inside one entry. Each alternative is evaluated on its own. |
 | `?` | An ordinary character, not a single-character wildcard. |
-| `**` | Matches nothing. A pattern with two adjacent stars is refused rather than read as one. |
+| `*` alone | Matches every tool name. |
+| `**` | Matches nothing. The policy is accepted, but the pattern never matches a tool. |
 | Empty | Matches nothing. |
 
 Matching is case-sensitive. A built-in tool name is lowercase ASCII
-letters, digits, `_` and `-`, up to 64 characters, so write the pattern
+letters, digits, `_` and `-`, up to 64 bytes, so write the pattern
 in the same shape.
 
 ## What a pattern cannot do

@@ -1,35 +1,48 @@
 ---
 title: Budgets
 maturity: stable
-description: Hard and soft budget enforcement, billing-period rollover, and the reserve-and-consume rule that keeps a single call from being charged twice.
+description: Hard and soft budget enforcement, the billing period that resets the spend counter, and the reserve-and-consume rule behind every cent.
 ---
 
 # Budgets
 
-A **budget** is the maximum amount of money a workflow may spend in
-one billing period. Set it too low and your agent stops working. Set
-it too high and a runaway agent burns through real money.
+A **budget** is the maximum amount of money a workflow may spend in one
+billing period. Set it too low and your agent stops working. Set it
+too high and a runaway agent burns real money.
 
 Amounts are always in **cents**. `$50.00` is `5000`.
 
+## Which cap binds
+
+Two caps can apply to the same workflow:
+
+| Cap | Where it comes from | Counter it is measured against |
+|---|---|---|
+| Org ceiling | A `BudgetLimit` policy with scope **Org** | One counter shared by every workflow in the organization |
+| Workflow ceiling | A `BudgetLimit` policy with scope **Workflow** | One counter per workflow |
+
+Both apply. The control center shows the smaller of the two as the
+effective cap. The org ceiling is **always strict** — it is enforced
+even when the workflow's own policy uses Soft mode.
+
+A workflow with no `BudgetLimit` policy of its own has no workflow
+ceiling. The org ceiling still applies to it.
+
 ## Where you see it
 
-On the **Workflows** detail page, the budget appears as a progress
-bar near the top:
+The **Budget** card on a workflow's **Overview** tab shows the spend
+for the current period against the effective cap, a progress bar, and
+a caption that names where the cap came from.
 
-```
-Spend this period         $47.30 of $50.00  (95%)
-████████████████████████░░
-Time to exhaustion         ~16 hours at current rate
-```
-
-Three numbers:
-
-- **Spend this period** — cents spent since the period started. It
-  resets automatically.
-- **Budget** — the cap. Set this in workflow settings.
-- **Time to exhaustion** — at the current rate of spend, when the
-  budget runs out.
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/workflow-detail-light.png"
+       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap."
+       loading="lazy" decoding="async">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/workflow-detail-dark.png"
+       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap."
+       loading="lazy" decoding="async">
+  <figcaption class="nr-shot__caption">Workflows · Budget card</figcaption>
+</figure>
 
 ## What the budget covers
 
@@ -44,8 +57,8 @@ and the per-model prices the gateway holds:
 - **Cache read** and **cache write** tokens, at their own rates
 - **Reasoning tokens**, at the reasoning rate
 
-The total is the sum across every `@protect` call in the workflow, for
-the current period.
+The total is the sum across every `@protect` call for the current
+period.
 
 ## Periods
 
@@ -54,17 +67,18 @@ period comes from the server, not from your agent.
 
 | Plan | Period source | When it resets |
 |---|---|---|
-| **Lite** (free) | Rolling one-month window anchored at signup | One month after signup (signed up Jun 15 → resets Jul 15, Aug 15, …) |
-| **Paid** (Starter / Growth / Scale) | Your billing cycle | On renewal |
+| **Lite** | A rolling month anchored at signup | One month after signup, then every month after that |
+| **Paid** | Your billing cycle | On renewal |
+| Any org with no billing cycle | The UTC calendar month | On the first of the month |
 
-The dashboard shows the period start and end dates next to the spend
+The control center shows the period start and end dates next to the spend
 bar. When the period rolls over, the counter resets to zero and the
 budget applies fresh.
 
 ## What happens at the boundary
 
-Three scenarios, depending on the workflow's [enforcement
-mode](policies.md#budgetlimit-extra-fields).
+Two scenarios, depending on the workflow's
+[enforcement mode](policies.md#budgetlimit-extra-fields).
 
 ### Hard mode
 
@@ -82,11 +96,15 @@ after the LLM returns. A refused call is never charged.
 
 ### Soft mode
 
-Soft mode lets the agent run past its budget when an active chain is
-present, up to the configured overdraft cap
-(`max_overdraft_cents` or `max_overdraft_percent`, whichever is
-lower). The chain returns to Hard mode once the cap is exhausted. See
-[Policies → BudgetLimit extra fields](policies.md#budgetlimit-extra-fields).
+Soft mode lets the agent run past its workflow ceiling while an
+active chain exists, up to a bounded overdraft. It needs the policy
+to be scoped to a workflow, an active chain, and headroom under both
+overdraft caps. If one is missing, the budget behaves as Hard.
+
+The org ceiling still applies in Soft mode.
+
+See
+[Policies → Soft mode requirements](policies.md#soft-mode-requirements).
 
 ## Reserve and consume
 
@@ -100,62 +118,52 @@ cost once the call returns. Three rules hold:
 - The booking may exceed the reservation by a **fixed-cent epsilon**
   only. The default is 1¢, and each policy can set its own
   `consume_epsilon_cents`. A percentage epsilon is not supported.
-- A retry is safe. The reservation and the later booking are both
-  idempotent, so a retried call reuses the stored result instead of
-  charging twice.
 
 An actual cost above the reservation plus the epsilon is **rejected**:
 the commit returns HTTP **422** with the wire code
 `CONSUME_OVERBUDGET`, and the SDK raises
 `NullRunConsumeOverbudgetError` (`NR-O001`). The call is never
-silently re-reserved. The period counter still shows the real
-spend.
+silently re-reserved. The period counter still shows the real spend.
+
+A transport retry does not double-charge. The SDK mints one
+`operation_id` for a logical action and carries it across the
+reserve, the approval check and the booking. A repeated booking with
+the same id replays the original response instead of charging again.
 
 ## How to set the budget
 
-A new workflow has no budget cap. A cap of `0` means **no
-per-workflow budget is configured** — the call passes through to the
-org-level plan cap. It does not mean "block everything".
+The cap comes from a budget policy:
 
-To set the budget:
+1. Open **Governance → Policies → New policy**.
+2. Pick the type **Budget**.
+3. Pick the scope — **Organization** for a ceiling on the whole
+   organization, or one **Workflow** for a cap on that workflow alone.
+4. Fill **Max cost (USD/month)**. `$50.00` is `5000` cents.
+5. Save. The policy is active immediately.
 
-1. Open the workflow.
-2. Click **Settings**.
-3. Find **Budget** and enter cents (`$50` = `5000`).
-4. Save.
+The steps for every policy type are in
+[Policies → How to create one](policies.md#how-to-create-one).
 
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../../assets/images/screenshots/workflow-detail-light.png"
-       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../../assets/images/screenshots/workflow-detail-dark.png"
-       alt="Workflow detail — Overview tab. The Budget card sits at the top showing spent / cap."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">Workflows · Budget card</figcaption>
-</figure>
+A policy always carries a positive cap. The server rejects a
+`budget_cents` of `0`. To remove a cap, deactivate or delete the
+policy.
 
-Reasonable starting budgets:
-
-| Use case | Suggested budget |
-|---|---|
-| Personal / dev experiment | $5 (500 cents) per period |
-| Single-tenant internal tool | $20 (2000 cents) per period |
-| Customer-facing AI feature | $100 (10000 cents) per period, plus an alert at 80% |
-
-The dashboard warns you when spend crosses 80% of the cap and again
-at 100%. Configure alert destinations under **Notifications** in the
-sidebar.
-
-## What happens when you change the budget mid-period
+## When you change the budget mid-period
 
 - **Raise** — the new cap applies to the next gate call.
-- **Lower below current spend** — no refund is issued. Every call
-  from that point is refused until the period rolls over, because the
-  counter does not go down inside a period.
+- **Lower below the current spend** — no refund is issued. Calls are
+  refused until the period rolls over, because the counter does not go
+  down inside a period.
+
+## Getting alerts
+
+The spend alerts fire on the organization's monthly budget limit at
+80%, 95% and 100%. The ladder and the channels are in
+[Alerts → The budget ladder](alerts.md#the-budget-ladder).
 
 ## Approximate budget endpoint
 
-To show "you have used X of Y" in a custom dashboard or a
+To show "you have used X of Y" in your own report or a
 notification, the gateway exposes an approximate-spend endpoint:
 
 ```bash title="shell"

@@ -1,6 +1,6 @@
 ---
 title: CrewAI
-description: Gate a CrewAI crew run with @protect and let the SDK report the crew's cost.
+description: Gate a CrewAI crew run with @protect, and let the SDK report the crew's lifecycle events and the run's model usage totals to the workflow.
 maturity: stable
 ---
 
@@ -13,8 +13,9 @@ it.
 pip install nullrun crewai
 ```
 
-The SDK attaches to CrewAI on its own. The attachment happens on
-`init()` and on the first `@protect` call.
+The SDK attaches to CrewAI on its own. The attachment is installed once
+per process — see [LLM frameworks](llm-frameworks.md) for the rule.
+Import the `crewai` package before that happens.
 
 ## The wiring
 
@@ -49,14 +50,14 @@ print(run_crew())
 is refused if the workflow is out of budget, if the policy rate-limits
 the call, or if the workflow is paused or killed.
 
-Individual CrewAI tool executions are reported as events. They are not
+CrewAI tool calls are reported as span events. They are not
 evaluated against the tool policy on their own.
 
 ## What the SDK reports
 
 | Source | What it reports |
 |---|---|
-| The CrewAI event bus | Crew, agent, and task lifecycle events |
+| The CrewAI event bus | Crew, agent, task, model, and tool lifecycle events |
 | `crew.usage_metrics` | One LLM cost row per model, read after the run returns |
 
 The event bus path needs CrewAI 1.15 or newer. On an older release the

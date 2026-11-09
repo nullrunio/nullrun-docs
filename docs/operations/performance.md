@@ -1,7 +1,7 @@
 ---
 title: Performance & limits
 maturity: stable
-description: The bounds that affect a NullRun integration — request and approval timeouts, rate limits, per-plan caps, and what happens when the gateway is unreachable.
+description: The request and approval timeouts, retry counts, rate limits, and per-plan caps that bound a NullRun integration, and what happens in an outage.
 ---
 
 # Performance & limits
@@ -29,6 +29,21 @@ Two consequences worth planning around:
   tool's runtime against the reservation, not against the budget.
 - An approval that no human answers inside the window fails. The
   exception is `NullRunApprovalExpiredError`.
+
+## Retries
+
+The SDK retries failed calls. The gateway does not retry for the
+caller.
+
+| Call | Retries | Backoff |
+| --- | --- | --- |
+| Gate | **3** | 0.5 s base, doubled each attempt, capped at 10 s, with jitter |
+| Execute | **10** | 0.5 s base, doubled each attempt, capped at 30 s, with jitter |
+| Event flush batch | **10** | 0.5 s base, doubled each attempt, capped at 10 s, with jitter |
+
+A `4xx` answer is a decision and is never retried. A `Retry-After`
+value replaces the computed delay and is treated as a floor, so the
+retry never lands before the server permits it.
 
 ## Rate limits
 
@@ -78,19 +93,19 @@ quota alongside its policy quota.
 
 ## When the gateway is unreachable
 
-The SDK ships a circuit breaker in front of every gateway call. It is
-the one component in the chain that fails open, and it fails open
-locally: the call is short-circuited inside your process, so a gateway
-outage does not turn into a hang.
+The SDK ships a circuit breaker in front of the event flush. It is the
+one component in the chain that fails open, and it fails open locally:
+the flush is short-circuited inside your process, so a gateway outage
+does not turn into a hang. The breaker does not sit on the gate path.
 
 | Setting | Value |
 | --- | --- |
-| Consecutive failures before the breaker opens | **5** |
+| Consecutive failed flushes before the breaker opens | **10** |
 | How long the breaker stays open | **30 s** |
 | Probe calls allowed while half-open | **1** |
 
-A call that the breaker short-circuits raises
-`NullRunTransportError`. A call that reaches the gateway and gets a
+A flush that the breaker short-circuits raises
+`BreakerTransportError`. A call that reaches the gateway and gets a
 refusal raises the refusal's own exception. The two are different
 outcomes and only one of them is a policy decision.
 
@@ -120,7 +135,7 @@ call and retries the write. The spend is not lost.
 | A policy's rate limit is hit | `429` | `RATE_LIMIT_EXCEEDED` |
 | The plan's aggregate cap is hit | `429` | `RATE_LIMIT_PLAN_TIER` |
 | Too many approvals are waiting | `429` | `TOO_MANY_PENDING_APPROVALS` |
-| The workflow was paused from the dashboard | `403` | `WORKFLOW_PAUSED` |
+| The workflow was paused from the control center | `403` | `WORKFLOW_PAUSED` |
 
 A consume may exceed its reservation by a small fixed tolerance —
 1¢ by default. A larger overshoot is refused with
@@ -146,14 +161,11 @@ The things we have not measured, stated plainly.
 
 ### Known limits
 
-- The gateway does not set a timeout on the outbound provider call it
-  makes. The 30 s request cap is the only bound.
-- The gateway does not retry a failed gate or cost-tracking request.
-  The refusal reaches you, and the retry is yours.
-- The retry loops in the background workers use a fixed backoff with
-  no jitter.
-- `Retry-After` is a body field on the gate path. The HTTP header is
-  only set by the per-IP limiter.
+- The audit drain retries on a fixed 1, 2, 4, 8, 16 second schedule.
+  The delivery outbox retries 30 s doubled each attempt, with jitter.
+- `Retry-After` on the gate path is a body field (`retry_after_seconds`
+  and `retry_after_ms`). The gate does not set the HTTP header. The
+  per-IP limiter and the generic error envelope do.
 - The published OpenAPI contract carries fewer response fields than
   the gateway returns. The running gateway is the wire truth.
 

@@ -1,7 +1,7 @@
 ---
 title: SDK API
 maturity: stable
-description: Reference for the NullRun Python SDK: the public package surface, the protect decorator, context managers, manual tracking, runtime methods, and the full exception catalog with error codes.
+description: The NullRun Python SDK: the public package surface, the protect decorator, context managers, manual tracking, runtime methods, and exception handling.
 ---
 
 # SDK API
@@ -215,7 +215,7 @@ default otherwise.
 | `workflow(name=None)` | `workflow_id` | Sets the workflow id for every event inside the block. The id is `name` or a fresh UUID. Also mints a root trace and span. |
 | `span(name=None)` | `span_id` | Sets the active span for nested traces. |
 | `agent(name=None)` | `agent_id` | Sets the agent identity for events inside the block. |
-| `chain(chain_id, op="start")` | `chain_id` | Scopes the calls to one chain. `op` must be `"start"`, `"continue"`, `"end"`, or `"auto"`; any other value raises `ValueError`. `chain_id` must be a **UUID v4**; any other format raises `ValueError`. |
+| `chain(chain_id, op="start")` | `chain_id` | Scopes the calls to one chain. `op` must be `"start"`, `"continue"`, `"end"`, or `"auto"`; any other value raises `ValueError`. `chain_id` must be a **UUID version 4**; another UUID version raises `ValueError` too. |
 
 ```python title="chain.py"
 import uuid
@@ -318,7 +318,7 @@ as its first argument.
 | `check_workflow_budget(*, model=None, estimated_tokens=None, max_output_tokens=None)` | Ask whether the workflow has budget left. |
 | `execute(tool_name, input_data, mode="auto", ...)` | Run one tool call through the gateway. |
 | `heartbeat(chain_id)` | Post a cadence heartbeat for a chain. |
-| `ping_chain(chain_id, interval=30.0)` | Keep a chain alive on a timer. |
+| `ping_chain(chain_id, interval=30.0)` | Keep a chain alive on a timer. The interval must be between 10 and 120 seconds. |
 | `cancel_execution(execution_id, reason=None)` | Cancel an in-flight execution. |
 | `consume_approval(...)` | Close an approved grant. |
 | `chain_end(chain_id)` | Close a chain. |
@@ -367,53 +367,10 @@ failure with another.
 `.tool_name`, `.status_code`, and `.details`. It has **no** `.message`
 attribute — use `str(exc)`.
 
-| Class | Base | `error_code` | Raised when |
-|---|---|---|---|
-| `NullRunError` | `BreakerError` | `NR-0000` | Base class for every SDK exception. |
-| `NullRunDecision` | `NullRunError` | `NR-0000` | Marker for expected policy outcomes. |
-| `NullRunInfrastructureError` | `NullRunError` | `NR-0000` | Marker for system failures. |
-| `NullRunBlockedException` | `NullRunDecision` | `NR-X001` | Generic policy block. |
-| `NullRunDeniedError` | `NullRunBlockedException` | `NR-D001` | The operator refused this specific call. Carries `.agent_message`. |
-| `NullRunBudgetError` | `NullRunBlockedException` | `NR-B004` | Budget exhausted. |
-| `NullRunBudgetRecheckFailedError` | `NullRunBudgetError` | `NR-B006` | The budget moved between the gate call and the execute call. |
-| `NullRunToolBlockedError` | `NullRunBlockedException` | `NR-T001` | The tool is in the block list. |
-| `NullRunApprovalDbUnavailableError` | `NullRunBlockedException` | `NR-A016` | The approval store is unreachable. |
-| `NullRunApprovalResponseMissingError` | `NullRunBlockedException` | `NR-A004` | The gate asked for approval and no approval row exists. |
-| `NullRunApprovalNotYetApprovedError` | `NullRunBlockedException` | `NR-A010` | The operator has not decided yet. |
-| `NullRunApprovalDeniedError` | `NullRunBlockedException` | `NR-A011` | The operator denied the approval. |
-| `NullRunApprovalExpiredError` | `NullRunBlockedException` | `NR-A012` | The approval expired. |
-| `NullRunApprovalReplayRejectedError` | `NullRunBlockedException` | `NR-A015` | The grant was already consumed. |
-| `NullRunApprovalDigestMismatchError` | `NullRunBlockedException` | `NR-A013` | The action changed since the approval. |
-| `NullRunApprovalToolDigestMismatchError` | `NullRunBlockedException` | `NR-A014` | The tool surface changed since the approval. |
-| `NullRunApprovalToolMismatchError` | `NullRunBlockedException` | `NR-A017` | The tool is outside the approved tool set. |
-| `NullRunMcpDestructiveBlockedError` | `NullRunBlockedException` | `NR-MCP01` | A destructive MCP tool was blocked. |
-| `NullRunMcpReadonlyBypassBlockedError` | `NullRunBlockedException` | `NR-MCP02` | A read-only MCP tool was blocked. |
-| `NullRunMcpApprovalRequiredError` | `NullRunBlockedException` | `NR-MCP03` | An MCP tool needs operator approval. |
-| `NullRunConsumeOverbudgetError` | `NullRunDecision` | `NR-O001` | The actual cost exceeded the reservation. |
-| `NullRunChainError` | `NullRunDecision` | `NR-CH001` | The chain scope check failed. |
-| `WorkflowPausedException` | `NullRunDecision` | `NR-W003` | The workflow is paused. Carries `.resume_after`. |
-| `NullRunWorkflowInactiveError` | `NullRunDecision` | `NR-W004` | The workflow is inactive. |
-| `WorkflowKilledInterrupt` | `NullRunError` | `NR-W002` | The operator killed the workflow. Not a `NullRunDecision`. |
-| `NullRunWorkflowKilledError` | `WorkflowKilledInterrupt` | `NR-W002` | Typed name for the kill signal. |
-| `NullRunConfigError` | `NullRunInfrastructureError` | `NR-C000` | Misconfiguration. |
-| `NullRunAuthenticationError` | `NullRunInfrastructureError` | `NR-A001` | The credentials were rejected. |
-| `NullRunAuthError` | `NullRunAuthenticationError` | `NR-A003` | The API key was rejected. |
-| `NullRunProtocolError` | `NullRunInfrastructureError` | `NR-P001` | The wire-protocol version does not match. |
-| `NullRunMalformedGateResponseError` | `NullRunProtocolError` | `NR-P002` | The gate response is not a decision the SDK can act on. |
-| `NullRunGateIndeterminateError` | `NullRunInfrastructureError` | `NR-P004` | The SDK could not obtain a decision. |
-| `NullRunUnclassifiedRefusalError` | `NullRunInfrastructureError` | `NR-P003` | The refusal category is not one the SDK understands. |
-| `NullRunUnknownActionError` | `NullRunInfrastructureError` | `NR-P005` | The control plane sent an action type this SDK cannot run. |
-| `NullRunRateLimitRedisError` | `NullRunInfrastructureError` | `NR-R002` | The rate limiter is unavailable. |
-| `NullRunTransportError` | `NullRunInfrastructureError` | `NR-B001` | The request never reached the gateway. Carries `.source` and `.endpoint`. |
-| `NullRunBackendError` | `NullRunTransportError` | `NR-B002` | The gateway returned 5xx. |
-| `NullRunExecutionNotFoundError` | `NullRunBackendError` | `NR-EX01` | The execution id is unknown or its binding expired. |
-| `RateLimitError` | `NullRunTransportError` | `NR-R001` | The gateway returned 429. Carries `.retry_after` and `.upgrade_url`. |
-| `BreakerError` | `Exception` | — | Root alias for the SDK error hierarchy. |
-| `BreakerTransportError` | `BreakerError` | — | Events could not be delivered. Not a `NullRunError`. |
-| `InsecureTransportError` | `BreakerTransportError` | — | HTTPS was required. |
-
-`TransportErrorSource` has four values: `NETWORK_ERROR`, `GATEWAY_ERROR`,
-`AUTH_ERROR`, `BREAKER_OPEN`.
+The class tree, the `error_code` on each class, and the wire code each class
+maps to live in one place: [Errors → SDK exception hierarchy](errors.md#sdk-exception-hierarchy).
+The `error_code` catalog is in
+[Errors → NR-* error code catalog](errors.md#nr-error-code-catalog).
 
 ## Catch-all pattern
 

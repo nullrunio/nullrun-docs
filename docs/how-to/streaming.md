@@ -1,6 +1,6 @@
 ---
 title: Streaming responses
-description: Gate a streamed LLM response, keep the chain alive while the stream runs, and report the cost of a stream.
+description: Gate a streamed LLM response, keep the chain alive while the stream runs, and report the cost of the stream when the SDK cannot see it.
 maturity: stable
 ---
 
@@ -51,8 +51,8 @@ gate one decision per chunk, which costs a round trip per chunk.
 
 ## Keep the chain alive
 
-A chain closes after five minutes without a protected call, or when
-`max_chain_duration_seconds` is exceeded. It defaults to 3600 seconds.
+A chain closes after five minutes without a protected call, or after one
+hour of chain lifetime.
 
 Send a heartbeat while the stream runs. `ping_chain` schedules them on
 a wall-clock timer and returns a callable that stops the schedule:
@@ -124,6 +124,7 @@ usage block:
 
 ```python title="track_stream.py"
 from openai import OpenAI
+
 from nullrun import get_runtime
 
 client = OpenAI()
@@ -143,12 +144,17 @@ def stream_with_cost(prompt: str):
 
     usage = getattr(final, "usage", None)
     if usage:
-        get_runtime().track_llm(
+        runtime = get_runtime()
+        runtime.check_workflow_budget(model="gpt-4o-mini")
+        runtime.track_llm(
             input_tokens=usage.prompt_tokens,
             output_tokens=usage.completion_tokens,
             model="gpt-4o-mini",
         )
 ```
+
+A manual report needs a budget check in the same scope. The SDK drops
+an `llm_call` report that has no reservation, and logs the drop.
 
 A report the SDK already made adds the tokens a second time. Report a
 call once.
@@ -156,12 +162,11 @@ call once.
 ## Kill during a stream
 
 An operator kill reaches the SDK over the control-plane connection. It
-surfaces at the next protected call.
-
-| Protected function | What propagates |
-|---|---|
-| Async | `WorkflowKilledInterrupt` |
-| Sync | `NullRunBlockedException` with `error_code` `NR-W002` |
+surfaces at the next protected call. A coroutine raises
+`WorkflowKilledInterrupt`. A sync function raises
+`NullRunBlockedException` with `error_code` `NR-W002`. See
+[Control plane → Sync and async behave differently](../concepts/control-plane.md#sync-and-async-behave-differently)
+for the full matrix.
 
 A chunk loop over an open stream holds no protected call, so the kill
 lands on the next stream you open. Catch it by name and close the

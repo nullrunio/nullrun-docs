@@ -1,35 +1,40 @@
 ---
 title: Workflows
 maturity: stable
-description: Group agent calls into a named workflow, bind policies and keys to it, and scope a chain across several calls.
+description: Group agent calls into a named workflow, bind policies and keys to it, and scope a chain across several calls of one request.
 ---
 
 # Workflows
 
 A **workflow** is one agent you run. It appears under **Workflows** in
-the sidebar. Each workflow has its own budget, its own policies and
-its own API keys.
+the sidebar. Each workflow has its own policies, its own budget and its
+own API keys.
 
-## What you see in the dashboard
+## What you see in the control center
 
 The **Workflows** page lists every workflow in your organization. Each
 row shows:
 
-- The workflow's name
-- Whether it is **Active**, **Paused** or **Killed**
-- Spend for the current period against the cap
-- How many API keys are bound to it
-- When it last saw traffic
+- The workflow's name and its external id
+- Its state — **Active**, **Paused** or **Archived**
+- The gate decisions recorded for it in the current billing period
+- Spend against its budget cap for the current period. No cap set means
+  it draws on the organization budget.
+- When it last reached the gate
+
+A killed workflow sits on the **Archived** tab. The **Flagged** and
+**Tripped** tabs list the workflows whose circuit breaker is not fully
+closed.
 
 Open a workflow for its detail page. The page has six tabs:
 
 | Tab | What it shows |
 |---|---|
-| **Overview** | Name, state, spend against the cap, applied policies, and the **Pause**, **Resume**, **Kill** and **Delete** controls. You change the budget cap here. |
-| **Policies** | The policies scoped to this workflow, filtered to this workflow |
+| **Overview** | Name, state, spend against the cap, the last gate activity, and the **Pause**, **Resume**, **Kill** and **Delete** controls. |
+| **Policies** | The effective controls, the approval rules attached to this workflow, and the stacked policy list. |
 | **Executions** | Every gate call this workflow made — allowed, blocked, rate-limited |
 | **Traces** | The nested view of one run: every LLM call, every tool call, with timing and cost |
-| **API keys** | The keys bound to this workflow. **Generate API key** mints a new one; the value is shown once. |
+| **API keys** | The keys bound to this workflow. **Generate key** mints a new one and shows the value once. You revoke a key here. |
 | **Coverage** | The tools and MCP servers observed on this workflow, and what is not governed yet |
 
 ## How to create one
@@ -71,7 +76,7 @@ You land on the new workflow's detail page. From there:
 
 ## How to control one
 
-A workflow has three states you control from the dashboard or the API:
+A workflow has three states you control from the control center or the API:
 **Active**, **Paused** and **Killed**.
 
 | State | What the agent sees |
@@ -86,18 +91,36 @@ agent does not have to wait for its next call to learn. See
 
 Killed is terminal. There is no way back to Active from Killed.
 
-## The workflow's settings
+## What actually runs
 
-- **Budget** — the per-period cap in cents. The dashboard shows a bar
-  of spend against the cap.
-- **Enforcement mode** — `Hard` (block on budget exceeded) or `Soft`
-  (allow a bounded overdraft when a chain is active). See
-  [Policies → BudgetLimit extra fields](policies.md#budgetlimit-extra-fields).
-- **Human approvals** — require operator approval for sensitive
-  tools. Needs the Approvals feature, on Growth and above.
-- **Tool block list** — the patterns the agent must not call. See
-  [Tool policies](tool-policies.md).
-- **Trace retention** — how long to keep detailed traces.
+A workflow can carry its own budget ceiling, and it has no approval
+switch of its own. It holds **policies**, and the gate combines them
+with the organization's policies and the plan tier into the controls
+that actually run. The **Policies** tab shows the result, under
+**Effective controls**.
+
+Two sections:
+
+| Section | Rows it holds |
+|---|---|
+| **Spend** | The budget cap, whether a ceiling is in force, the enforcement mode, and the organization ceiling |
+| **Rate** | The per-key call limit, the per-organization ceiling, and the loop guard |
+
+Each section splits its rows in two. The controls this workflow's own
+policies drive, and the ceilings it inherits from the organization or
+the plan tier. An inherited ceiling cannot be changed on this page.
+
+The tab also shows the **Approval rules** attached to this workflow and
+the **Stacked policies** list. Every approval rule attached to a
+workflow is active — there is no switch to turn approvals on.
+
+The budget cap comes from the workflow's own cap, from a `BudgetLimit`
+policy, or from the organization ceiling. The **Budget** card on the
+Overview tab shows the spend against the effective cap and names where
+the cap came from. See [Budgets](budgets.md).
+
+Trace retention is not a workflow setting. It follows your plan's
+window. See [Tracing](tracing.md#how-long-traces-are-kept).
 
 ## Chain context
 
@@ -137,7 +160,7 @@ A chain closes on the **first** of:
 
 - `op="end"`
 - five minutes without a protected call
-- `max_chain_duration_seconds` exceeded, which defaults to 3600
+- one hour of chain lifetime
 
 For a long stream, send a heartbeat roughly every 30 seconds. See
 [Heartbeat](../how-to/streaming.md#chain-heartbeat).

@@ -1,6 +1,6 @@
 ---
 title: Install
-description: Install the NullRun Python SDK, create an API key, and see what gets instrumented automatically.
+description: Install the NullRun Python SDK, create an API key, and see which HTTP clients and agent frameworks the SDK instruments automatically.
 maturity: stable
 ---
 
@@ -32,7 +32,7 @@ Set `NULLRUN_SECRET_KEY` yourself only if your secret manager already holds the 
 
 ## What gets instrumented
 
-Instrumentation attaches when the runtime starts. It patches the HTTP client and every framework it finds in `sys.modules`.
+Instrumentation attaches when the runtime starts — at `init()`, or at the first `@protect` call if you never call `init()`. The SDK patches the HTTP client and each agent framework it recognises. A framework that is not installed is skipped.
 
 | Package | What the SDK attaches |
 | --- | --- |
@@ -75,13 +75,13 @@ pip install nullrun openai-agents
 | --- | --- | --- |
 | `nullrun[websocket]` | `websockets` | Real-time workflow state push. Without it the SDK polls the gateway for state changes, and a kill or pause takes longer to reach the agent. |
 | `nullrun[opentelemetry]` | `opentelemetry-api`, `opentelemetry-sdk` | Exporting spans to an OpenTelemetry collector. |
-| `nullrun[dev]` | `pytest`, `pytest-asyncio`, `respx`, `mypy`, `ruff`, `coverage`, `httpx` | Running the SDK test suite locally. |
+| `nullrun[dev]` | `websockets`, `pytest`, `pytest-asyncio`, `pytest-rerunfailures`, `pytest-xdist`, `pytest-cov`, `respx`, `coverage`, `httpx`, `mypy`, `ruff`, `langchain-core`, `fastapi`, `tomli` (Python 3.10 only) | Running the SDK test suite locally. |
 
 ```bash title="shell"
 pip install "nullrun[websocket]"
 ```
 
-## If the dashboard stays empty
+## If the control center stays empty
 
 The SDK logs one warning when `@protect` has run 50 times and the SDK has seen no LLM call. The gate is enforced, but no cost is booked. The usual causes are a raw `httpx` client outside the instrumented surface, a custom transport, or a framework that is not on the list above.
 

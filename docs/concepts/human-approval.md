@@ -1,7 +1,7 @@
 ---
 title: Human approval
 maturity: beta
-description: Bind approvals to a typed BusinessImpact predicate and a SHA-256 action_digest, so a grant is refused when the action payload changes.
+description: The approval rule object, its typed predicates, and the SHA-256 action_digest that binds a grant to the exact payload the operator approved.
 ---
 
 # Human approval
@@ -10,10 +10,12 @@ Some operations need a human to click **Approve** before they run.
 Sending an email to a customer, moving money, deleting a record —
 operations where you want a paper trail and a conscious decision.
 
-In the dashboard, pending approvals live under **Approvals** in the
-sidebar. When the agent hits an approval rule, the call parks. The
-agent stays parked until a human clicks **Approve** or **Deny**, or
-the approval times out.
+When the agent hits an approval rule, the call parks. The agent stays
+parked until a human decides, or the approval expires.
+
+This page covers the rule and the wire contract. The operator's review
+surface — what a pending request shows, how to approve or deny it — is
+in [Approvals](approvals.md).
 
 ## Approval rules — separate from ToolBlock
 
@@ -22,27 +24,30 @@ require_approval` field. They are a separate rule object:
 
 | Field | Purpose |
 |---|---|
-| `name` | Display name for the rule |
+| `workflow_id` | The workflow the rule applies to. Every rule is scoped to one workflow. |
 | `tool_patterns` | Glob patterns matching the tool name |
-| `per_call_threshold_cents` | Projected-cost threshold |
-| `action_predicate` | Typed `BusinessImpact` predicate |
-| `priority` | Ordering for tied rules |
-| `expires_in_seconds` | How long the operator has to decide |
-| `action_label` | Display label shown in the dashboard |
-| `risk_level` | `LOW`, `MEDIUM` or `HIGH` |
+| `per_call_threshold_cents` | Projected-cost threshold. A wire field; the control center sends `null`. |
+| `action_predicate` | Typed predicate over the call's impact |
+| `action_label` | Label shown in the control center. Up to 255 characters. |
+| `priority` | Order among the rules that match. Lower wins. Range 0–1000. |
+| `expires_in_seconds` | How long the operator has to decide. 30–3600 seconds. |
+| `risk_level` | `LOW`, `MEDIUM` or `HIGH`. Defaults to `MEDIUM`. |
+
+Rules live under **Governance → Approval rules**. That page needs the
+approvals feature, which is on Growth and above.
 
 When a protected call matches an approval rule, the gate returns
 `decision = "require_approval"` and the SDK parks until the operator
 decides.
 
-## Predicate kinds
+## When a rule fires
 
-Two predicate fields can fire the same approval rule:
+Two fields can fire the same rule:
 
 - **`per_call_threshold_cents`** — projected execution cost in cents,
   evaluated against the estimated tokens the SDK reports.
-- **`action_predicate`** — a typed condition over a structured
-  `BusinessImpact` extracted from the live call.
+- **`action_predicate`** — a typed condition over a structured impact
+  extracted from the live call.
 
 When both are set, the rule fires only when **both** pass. Either may
 be absent, in which case it does not contribute. A rule with neither
@@ -64,6 +69,10 @@ Two predicate kinds are supported on `action_predicate`.
 }
 ```
 
+`direction` is `outflow` or `inflow`. `operator` is `gt`, `gte` or
+`eq`. `threshold_minor` is a non-negative integer count of cents, so
+`5000` is `$50.00`. `currency` must be `USD`.
+
 **`tool_parameters`** — a disjunction over up to 5 named parameters,
 with `equals`, `one_of`, `numeric_range`, `regex` and `exists`
 matchers:
@@ -83,11 +92,12 @@ matchers:
 `{"logic": "groups", "groups": [[0, 1], [2]]}`. The groups form lists
 AND-groups of condition indices joined by OR. The default is `any`.
 
-The `tool_parameters` predicate reads values out of the arguments the
-SDK ships with every `@protect`-decorated function. The rule
-references a value by `param_name`, and the gate evaluates it
-directly. No extra decorator is needed to make a tool eligible for
-`tool_parameters` rules.
+The `tool_parameters` predicate reads the canonical argument bag on the
+wire: `tool_arguments`, then `tool_params`. MCP tool calls carry it.
+A plain `@protect` function does not, so the predicate cannot be
+evaluated and the call escalates to a human instead of matching on the
+argument. The `money_amount` predicate is unaffected — it reads
+`business_impact`, which the SDK does ship.
 
 ## `action_digest` — the binding
 
@@ -110,6 +120,7 @@ differ from the approved one, and the call is refused:
 | The impact payload drifted | Refused, `error_code = "NR-A013"` |
 | The tool digest drifted | Refused, `error_code = "NR-A014"` |
 | The grant was already consumed | Refused, `error_code = "NR-A015"` |
+| The executing tool is outside the approved tool set | Refused, `error_code = "NR-A017"` |
 
 ## Approval resume flow
 
@@ -121,95 +132,23 @@ differ from the approved one, and the call is refused:
 3. The gate returns `decision = "require_approval"` with the
    approval id and the timeout.
 4. The SDK parks until the operator decides.
-5. The operator clicks Approve or Deny in the dashboard.
+5. The operator clicks Approve or Deny in the control center.
 6. The gateway publishes the resolution on the WebSocket channel.
 7. The SDK wakes up and resumes with the operator's outcome.
+
+A denial reaches the agent as `NullRunApprovalDeniedError` (`NR-A011`).
 
 If no decision arrives within the timeout, the SDK **fails closed**
 and raises `NullRunApprovalExpiredError` (`NR-A012`). There is no
 HTTP polling fallback for approvals: a silent network must not
 silently approve a privileged action.
 
-## What you see in the dashboard
-
-The **Approvals** page lists every pending, approved, denied and
-expired request. Each row shows:
-
-- The tool the agent wanted to call
-- The workflow that requested it
-- The action digest — the first 16 hex characters, the full digest in
-  the tooltip
-- For typed predicates, the rendered impact summary
-- How long ago it was created
-- How long until it expires
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../../assets/images/screenshots/approvals-light.png"
-       alt="Approvals page listing every pending, approved, denied and expired request."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../../assets/images/screenshots/approvals-dark.png"
-       alt="Approvals page listing every pending, approved, denied and expired request."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">Approvals</figcaption>
-</figure>
-
-Click an approval to see the full context: what the agent was trying
-to do, the tool's arguments, and any notes you attached.
-
-## How to approve or deny
-
-Open a request in the **Approvals** page. You see the agent's goal,
-the tool, the typed impact summary or the projected cost, the action
-digest, and how long the request has been pending.
-
-Two buttons:
-
-- **Approve** — the grant is released and the agent resumes. The
-  gateway re-checks the digest against the live payload on the way
-  out and refuses on a mismatch.
-- **Deny** — the gateway rejects and the agent raises
-  `NullRunApprovalDeniedError` (`NR-A011`).
-
-If neither button is clicked within the request's window, it expires
-and the SDK raises `NullRunApprovalExpiredError` (`NR-A012`).
-
-## Notification channels
-
-When an approval is created, the gateway notifies every active channel
-configured on your organization:
-
-- **Slack** — through your organization's installed Slack app.
-- **Webhook** — a generic HTTPS POST with an HMAC-SHA256 signature.
-
-Disable a channel under **Notifications** in the sidebar (Channels,
-Alert rules, and an Event subscriptions matrix).
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../../assets/images/screenshots/approval-rules-light.png"
-       alt="Approval rules page with the New rule button highlighted in the top right."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../../assets/images/screenshots/approval-rules-dark.png"
-       alt="Approval rules page with the New rule button highlighted in the top right."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">Governance · Approval rules · New rule</figcaption>
-</figure>
-
-## Programmatic approval
-
-The dashboard is for humans. A CI bot or an on-call rotation can
-decide through the same endpoints:
-
-```bash title="approve_via_api.sh"
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/approve" \
-  -H "Authorization: Bearer $NULLRUN_API_KEY"
-
-# Or deny explicitly
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/deny" \
-  -H "Authorization: Bearer $NULLRUN_API_KEY"
-```
-
-Deciding twice is not an error. Approving an already-decided request
-returns `409 APPROVAL_ALREADY_DECIDED`.
+An approval request reaches your channels only if the
+`approval_required` event subscription is on. The **Approval required**
+subscription is off in the notification settings by default. An
+organization that has never saved its notification settings still
+announces approval requests on its configured channels.
+See [Notifications](notifications.md).
 
 ## When to use approval instead of blocking
 
@@ -243,8 +182,19 @@ those arguments.
 
 ## See also
 
+- [Approvals](approvals.md) — the operator's review surface
 - [Tool policies](tool-policies.md) — `ToolBlock` rules
 - [Sensitive tools](sensitive-tools.md) — when blocking is enough
 - [Workflows → How to control one](workflow.md#how-to-control-one) —
   Pause and Kill work the same way
 - [API keys](api-keys.md) — how to mint a key bound to a workflow
+
+<figure class="nr-shot">
+  <img class="nr-shot__light" src="../../assets/images/screenshots/approval-rules-light.png"
+       alt="Approval rules page with the New rule button highlighted in the top right."
+       loading="lazy" decoding="async">
+  <img class="nr-shot__dark" src="../../assets/images/screenshots/approval-rules-dark.png"
+       alt="Approval rules page with the New rule button highlighted in the top right."
+       loading="lazy" decoding="async">
+  <figcaption class="nr-shot__caption">Governance · Approval rules · New rule</figcaption>
+</figure>

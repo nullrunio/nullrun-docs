@@ -1,14 +1,14 @@
 ---
 title: Troubleshooting
 maturity: stable
-description: Symptom, cause, and fix for the failures a NullRun integration hits — gate refusals, an unreachable gateway, an approval that never arrives, and a budget that does not reset.
+description: Symptom, cause, and fix for the failures a NullRun integration hits: gate refusals, an unreachable gateway, a stalled approval, a budget that does not reset.
 ---
 
 # Troubleshooting
 
 Format: symptom → cause → fix. If your case is not here, see the
 [Errors reference](reference/errors.md), or send a report from the
-dashboard's **Help → Send feedback** form with the `workflow_id` and
+control center's **Help → Send feedback** form with the `workflow_id` and
 the failing decision id.
 
 !!! info "The endpoint that enforces"
@@ -24,20 +24,20 @@ column.
 
 | Symptom | Wire code | Status | SDK exception | Fix |
 |---|---|---|---|---|
-| The workflow ran out of budget | `BUDGET_HARD_BLOCKED` | `402` | `NullRunBudgetError` | Raise the budget in the dashboard, or wait for the next billing period. |
+| The workflow ran out of budget | `BUDGET_HARD_BLOCKED` | `402` | `NullRunBudgetError` | Raise the budget in the control center, or wait for the next billing period. |
 | The organization's ceiling was reached | `BUDGET_ORG_CEILING_BLOCKED` | `402` | `NullRunBudgetError` | Raise the plan ceiling, or lower the workflow budgets under it. |
 | The call cost more than its reservation | `CONSUME_OVERBUDGET` | `422` | `NullRunConsumeOverbudgetError` | Report the real cost. A cost above the reservation plus the tolerance is refused. |
 | A tool matches a block pattern | `TOOL_BLOCKED` | `403` | `NullRunToolBlockedError` | Change the pattern, or use a different tool. |
 | An MCP tool is destructive | `MCP_DESTRUCTIVE_BLOCKED` | `403` | `NullRunMcpDestructiveBlockedError` | The tool is off limits for this workflow. |
 | The plan's executions quota is spent | `EXECUTION_QUOTA_EXCEEDED` | `402` | `NullRunBlockedException` | Raise the plan, or wait for the quota to reset. |
-| The workflow is not running | `WORKFLOW_INACTIVE` | `403` | `NullRunWorkflowInactiveError` | Restore the workflow in the dashboard, or create a new one. |
-| The workflow is paused | `WORKFLOW_PAUSED` | `403` | `NullRunBlockedException` | Resume it in the dashboard. |
+| The workflow is not running | `WORKFLOW_INACTIVE` | `403` | `NullRunWorkflowInactiveError` | Restore the workflow in the control center, or create a new one. |
+| The workflow is paused | `WORKFLOW_PAUSED` | `403` | `NullRunBlockedException` | Resume it in the control center. |
 | A policy rate limit was hit | `RATE_LIMIT_EXCEEDED` | `429` | `RateLimitError` | Back off. The window is fixed, not sliding. |
 | The plan's aggregate cap was hit | `RATE_LIMIT_PLAN_TIER` | `429` | `RateLimitError` | Raise the plan. The cap belongs to the plan, not to your policy. |
 | Too many approvals are waiting | `TOO_MANY_PENDING_APPROVALS` | `429` | `NullRunBlockedException` | Clear the backlog in the Approvals view. The cap is 50 per organization. |
-| The chain ran past its duration | `CHAIN_MAX_DURATION_EXCEEDED` | `402` | `NullRunChainError` | Start a new chain, or raise the chain duration. |
+| The chain ran past its duration | `CHAIN_MAX_DURATION_EXCEEDED` | `402` | `NullRunChainError` | Start a new chain. The gateway ends a chain after one hour. |
 | The request used a stale protocol version | `PROTOCOL_TOO_OLD` | `400` | `NullRunProtocolError` | Upgrade the SDK. It sends version 4. |
-| The key is revoked, expired, or disabled | `API_KEY_REVOKED`, `API_KEY_EXPIRED`, `API_KEY_INVALID` | `401` | `NullRunAuthError` | Rotate the key in the dashboard. |
+| The key is revoked, expired, or disabled | `API_KEY_REVOKED`, `API_KEY_EXPIRED`, `API_KEY_INVALID` | `401` | `NullRunAuthError` | Rotate the key in the control center. |
 
 ### The refusal is the wrong one
 
@@ -49,7 +49,7 @@ match `stripe_charge`. Use `stripe*`. See
 
 **The approval says the digest does not match.** The approval is bound
 to the exact payload it approved. If the arguments changed, the
-binding no longer holds, and the call is refused with
+binding is broken, and the call is refused with
 `APPROVAL_DIGEST_MISMATCH`. Send the payload that was approved.
 
 **The approval says the tool does not match.** An approval covers the
@@ -64,17 +64,19 @@ refusal.
 
 | Symptom | Cause | SDK exception | Fix |
 |---|---|---|---|
-| `NullRunTransportError` right after `init()` | The gateway did not answer, or the SDK's circuit breaker was already open. The breaker opens after 5 consecutive failures. | `NullRunTransportError` (NR-B001) | Check the gateway URL and the network. The breaker tries again after 30 seconds. |
+| `NullRunTransportError` right after `init()` | The gateway did not answer the authentication handshake (`POST /api/v1/auth/verify`). | `NullRunTransportError` (NR-B001) | Check the gateway URL and the network. |
 | `NullRunBackendError` with a `5xx` status | The gateway answered and reported a fault. | `NullRunBackendError` (NR-B002) | Read the wire code in `details.error_code` and follow its runbook. |
 | `NullRunRateLimitRedisError` | The aggregate per-organization rate limiter could not read its counter. The refusal is `503` `RATE_LIMIT_REDIS_UNAVAILABLE`. | `NullRunRateLimitRedisError` (NR-R002) | Back off and retry with jitter. |
-| `NullRunBackendError` with a `402` and `BUDGET_REDIS_UNAVAILABLE` | The budget store was unreachable. The refusal is fail-closed. | `NullRunBackendError` (NR-B002) | Wait for the store to recover. Do not retry the side effect blindly. |
+| `NullRunBudgetError` with a `402` and `BUDGET_REDIS_UNAVAILABLE` | The budget store was unreachable. The refusal is fail-closed. | `NullRunBudgetError` | Wait for the store to recover. Do not retry the side effect blindly. |
 | `NullRunAuthenticationError` or `NullRunAuthError` | The key is missing, rejected, expired, or disabled. | `NullRunAuthenticationError` (NR-A001), `NullRunAuthError` (NR-A003) | See the authentication section. |
+| `BreakerTransportError` during a run | The SDK's circuit breaker is open. It watches the event flush, not the gate, and opens after 10 consecutive failed flushes. | `BreakerTransportError` | Wait 30 seconds, then check the gateway. Pending events stay on disk. |
 
-The circuit breaker is the one component that fails open, and it fails
-open locally: an unreachable gateway short-circuits the SDK's calls
-instead of hanging. The enforcement path itself never fails open. A
-missing tool-block answer, a missing rate-limit answer, or a missing
-budget answer refuses the call.
+The circuit breaker is the one component that fails open. It fails open
+locally: an unreachable gateway short-circuits the event flush inside
+your process instead of hanging. The enforcement path itself never
+fails open. A missing tool-block answer, a missing rate-limit answer,
+or a missing budget answer refuses the call. See
+[Circuit breaker](concepts/circuit-breaker.md).
 
 ### Do not disable the gate to survive an outage
 
@@ -100,18 +102,14 @@ once the gateway recovers.
 ## The call is rejected with `NullRunBlockedException`
 
 The base class covers every refusal that has no more specific class.
-Read `exc.status_code` and `exc.details` to find the reason.
+Read `exc.status_code` and `exc.details` to find the reason, then
+match the wire code against the
+[gate refusal table](#the-gate-refused-the-call).
 
-1. **Budget exhausted.** The workflow budget or the organization
-   ceiling ran out. Raise the cap in the dashboard or wait for the
-   next billing period.
-2. **Tool blocked.** A `ToolBlock` pattern matched the tool name. The
-   workflow's detail page lists the merged policies in scope.
-3. **Workflow not running.** The workflow was deleted, paused, or
-   killed. See [Workflow context](concepts/workflow.md).
-4. **Cost above the reservation.** The reported cost exceeded the
-   reservation plus the tolerance. Report the real cost from the
-   model response.
+One extra pointer: the workflow's detail page lists the merged
+policies in scope, so a tool block can be traced to the rule that
+produced it. See [Workflow context](concepts/workflow.md) for the
+workflow states a refusal can name.
 
 ## The workflow paused or killed on its own
 
@@ -154,11 +152,10 @@ with nullrun.chain(str(uuid.uuid4()), op="start"):
 
 `@protect` fires on the functions it wraps. A plain model call with
 no `@protect` and no auto-instrumented framework is invisible to
-NullRun. The SDK instruments `httpx`, LangChain, LangGraph, the
-OpenAI Agents SDK, LlamaIndex, CrewAI, AutoGen, and the `requests`
-library on its own, so a model call made through one of those
-libraries is tracked without a decorator. See
-[LLM frameworks](how-to/llm-frameworks.md).
+NullRun. The SDK instruments these clients on its own, so a model call
+made through one of them is tracked without a decorator: `httpx`,
+`requests`, LangChain, LangGraph, the OpenAI Agents SDK, LlamaIndex,
+CrewAI and AutoGen. See [LLM frameworks](how-to/llm-frameworks.md).
 
 ## Health endpoints
 
@@ -166,7 +163,8 @@ libraries is tracked without a decorator. See
 |---|---|
 | `GET /health/live` | Process liveness. It answers 200 while the binary runs, even when a dependency is down. Do not use it as a readiness signal. |
 | `GET /health/ready` | Dependency readiness. It answers 503 when the database or the budget store is unreachable. This is the signal to page on. |
-| `GET /api/v1/capabilities` | The protocol version and the feature flags. |
+| `GET /health/startup` | Bootstrap readiness. It answers `started` once migrations and seeds are done. |
+| `GET /api/v1/capabilities` | The protocol version range, the live feature flags, and the server version. |
 
 During an outage, `/health/ready` flips first, then the capability
 probe answers, then the control-plane WebSocket reconnects, then the

@@ -1,7 +1,7 @@
 ---
 title: Error handling
 maturity: stable
-description: The NullRun exception hierarchy, the three layers of error handling, and the fail-CLOSED contract on the enforcement path.
+description: How a NullRun refusal reaches your code, your monitoring and your users — three layers, one fail-closed contract, and the codes you will meet.
 ---
 
 # Error handling
@@ -23,84 +23,38 @@ Every NullRun exception carries four fields:
 | Field | What it is | Example |
 |---|---|---|
 | `error_code` | Stable machine-readable identifier | `NR-B004` |
-| `user_action` | What to do next | `Wait 30s, then retry the call.` |
+| `user_action` | What to do next | `Request a fresh approval row and retry /gate.` |
 | `retryable` | Whether a backoff retry makes sense | `True` for a rate limit, `False` for a budget |
-| `docs_url` | Link to the code's reference page | `https://docs.nullrun.io/reference/errors` |
+| `docs_url` | Link to the code's reference page | `https://docs.nullrun.io/errors` |
 
 ### The hierarchy
 
-```
-Exception
-└── BreakerError
-    └── NullRunError
-        ├── NullRunDecision          a policy outcome: block, pause, approval
-        │   ├── NullRunBlockedException        generic block (NR-X001)
-        │   │   ├── NullRunBudgetError         (NR-B004)
-        │   │   │   └── NullRunBudgetRecheckFailedError (NR-B006)
-        │   │   ├── NullRunToolBlockedError    (NR-T001)
-        │   │   ├── NullRunDeniedError         (NR-D001)
-        │   │   ├── NullRunApprovalNotYetApprovedError (NR-A010)
-        │   │   ├── NullRunApprovalDeniedError (NR-A011)
-        │   │   ├── NullRunApprovalExpiredError (NR-A012)
-        │   │   ├── NullRunApprovalReplayRejectedError (NR-A015)
-        │   │   ├── NullRunApprovalDigestMismatchError (NR-A013)
-        │   │   ├── NullRunApprovalToolDigestMismatchError (NR-A014)
-        │   │   └── NullRunApprovalToolMismatchError (NR-A017)
-        │   ├── NullRunConsumeOverbudgetError   (NR-O001)
-        │   ├── NullRunChainError               (NR-CH001)
-        │   ├── NullRunWorkflowInactiveError    (NR-W004)
-        │   └── WorkflowPausedException         (NR-W003)
-        ├── NullRunInfrastructureError  a dependency could not be reached
-        │   ├── NullRunTransportError   (NR-B001)
-        │   │   ├── NullRunBackendError (NR-B002)
-        │   │   └── RateLimitError      (NR-R001)
-        │   ├── NullRunProtocolError    (NR-P001)
-        │   ├── NullRunGateIndeterminateError (NR-P004)
-        │   ├── NullRunRateLimitRedisError (NR-R002)
-        │   ├── NullRunConfigError      (NR-C000)
-        │   └── NullRunAuthenticationError (NR-A001)
-        │       └── NullRunAuthError    (NR-A003)
-        └── WorkflowKilledInterrupt    the operator killed the workflow
-            └── NullRunWorkflowKilledError
-```
+Every public exception inherits from `NullRunError`. Two marker classes
+split it by kind of event:
 
-Two things to internalise:
+| Marker | What it covers |
+|---|---|
+| `NullRunDecision` | The gate reached a verdict — budget cap, tool block, approval, chain rejection, workflow pause |
+| `NullRunInfrastructureError` | The SDK could not reach or read the gateway — network, 5xx, auth, config |
 
-- **`WorkflowKilledInterrupt` is not a `NullRunDecision`.** It sits
-  directly under `NullRunError`. Catch it by name.
-- **`NullRunApprovalDeniedError` and `NullRunApprovalExpiredError`
-  are siblings**, not the same class. One is a decision, the other is
-  a timeout.
+One class sits outside both: `WorkflowKilledInterrupt`, the
+control-plane kill signal. It inherits from `NullRunError` directly, so
+`except NullRunDecision` does not catch it. Catch it by name.
 
-### Codes you will meet
+The full tree, with every class and its code, is in
+[Reference → Errors](../reference/errors.md#sdk-exception-hierarchy).
 
-| Code | Meaning | Retryable |
-|---|---|---|
-| `NR-B001` | The gateway could not be reached (network) | Yes |
-| `NR-B002` | The gateway returned a server error | Yes |
-| `NR-B004` | The workflow budget for this period is exhausted | No |
-| `NR-B005` | The SDK circuit breaker is open | Yes |
-| `NR-B006` | The post-approval budget re-check failed | No |
-| `NR-R001` | The rate limit for this workflow or key is exhausted | Yes |
-| `NR-R002` | The rate-limit store is unreachable | Yes |
-| `NR-T001` | A ToolBlock pattern matched the tool name | No |
-| `NR-CH001` | The chain context is unknown or does not belong to this org | No |
-| `NR-O001` | The actual cost exceeded the reservation plus epsilon | No |
-| `NR-W002` | The workflow was killed by the operator | No |
-| `NR-W003` | The workflow is paused | Yes |
-| `NR-W004` | The workflow was deleted or disabled | No |
-| `NR-A001` | The SDK could not authenticate | No |
-| `NR-A003` | The API key was rejected | No |
-| `NR-A010` | The approval is still pending — nobody has decided | Yes |
-| `NR-A011` | The operator denied the approval | No |
-| `NR-A012` | The approval expired with no decision | Yes |
-| `NR-A013` | The approved action differs from the request | No |
-| `NR-A014` | The approved tool set differs | No |
-| `NR-A015` | The approval grant was already consumed | No |
-| `NR-P001` | The SDK and the gateway speak different protocol versions | No |
-| `NR-X001` | A block with no dedicated exception class | Depends |
+### Retry or not
 
-The full catalog is in [Reference → Errors](../reference/errors.md).
+`retryable` tells you whether a backoff retry is the right response.
+
+| Retryable | Codes |
+|---|---|
+| `True` | `NR-B001`, `NR-B002`, `NR-R001`, `NR-R002`, `NR-P002`, `NR-P004`, `NR-A010`, `NR-B006`, `NR-A016`, `NR-MCP03` |
+| `False` | Every other code |
+
+The full catalog is in
+[Reference → Errors](../reference/errors.md#nr-error-code-catalog).
 
 ### Catching
 
@@ -172,8 +126,8 @@ The context object carries:
 | `timestamp` | When the error fired |
 | `extra` | Free-form dict for stage-specific metadata |
 
-**The kill signal does not fire the hook.** A kill is a control-plane
-action, not an SDK failure. See [Kill signal](#kill-signal).
+**The kill signal fires the hook on the sync path only.** See
+[Kill signal](#kill-signal).
 
 Registering several hooks is fine. Each returns a callable that
 unregisters it.
@@ -198,24 +152,23 @@ if __name__ == "__main__":
 
 `guard()` catches every `NullRunError` raised inside the block,
 prints a developer report to stderr, and exits with code 1. The report
-has the catalog headline plus the code, the endpoint, the cause, and
-the fix:
+has the catalog headline plus the code, the stage, the endpoint, the
+cause, the fix, and a link:
 
 ```
 Too many requests. Please wait a moment and try again.
-  [NR-R001] what: gate (retryable)
+  [NR-R001] what: /api/v1/gate (retryable)
            where: endpoint=/api/v1/gate status=429 source=GATEWAY_ERROR
-           why: Per-workflow rate limit exceeded; retry after 30s.
-           how to fix: Wait 30s, then retry the call.
+           why: Transport error on /api/v1/gate: rate limit exceeded (source=GATEWAY_ERROR, details={'retry_after': 30.0})
+           how to fix: The NullRun backend rate-limited this API key. Wait retry_after seconds (or upgrade the plan) before retrying.
+           docs: https://docs.nullrun.io/errors
 ```
 
 `guard()` accepts `exit_code` if you want a different status.
 
-**One exception propagates unchanged: the kill signal.** `guard()`
-re-raises `WorkflowKilledInterrupt` so a kill reaches the top of the
-agent loop instead of turning into a graceful exit. A non-NullRun
-exception also propagates — your own bugs deserve an honest
-traceback.
+A non-NullRun exception propagates unchanged — your own bugs deserve an
+honest traceback. The kill signal is the one NullRun exception with a
+special rule, described in [Kill signal](#kill-signal).
 
 ### Branded wording
 
@@ -249,7 +202,7 @@ async def chat(req: ChatRequest):
         return await run_agent(req.message)
     except NullRunError as exc:
         raise HTTPException(
-            status_code=exc.status_code or 503,
+            status_code=getattr(exc, "status_code", None) or 503,
             detail={
                 "message": nullrun.format_user_message(exc),
                 "code": exc.error_code,
@@ -257,40 +210,34 @@ async def chat(req: ChatRequest):
         )
 ```
 
-`format_user_message(exc)` always returns a non-empty string that is
-safe to show an end user.
+Only some exception classes carry `status_code`, so read it with
+`getattr`. `format_user_message(exc)` always returns a non-empty string
+that is safe to show an end user.
 
 ## Kill signal
 
 The operator can kill a running workflow. The signal arrives as
 `WorkflowKilledInterrupt`, or its typed alias
-`NullRunWorkflowKilledError`. Catch it by name when you need
-kill-specific handling:
-
-```python
-from nullrun import NullRunError, NullRunWorkflowKilledError
-
-try:
-    my_agent(prompt)
-except NullRunWorkflowKilledError:
-    persist_state()
-    raise
-except NullRunError:
-    log.error("agent failed", exc_info=True)
-```
-
-A kill is a control-plane action, so it behaves differently on the two
-`@protect` flavours:
+`NullRunWorkflowKilledError`. How it reaches your code depends on the
+`@protect` flavour:
 
 | Flavour | What reaches your code |
 |---|---|
 | async `@protect` | The raw `WorkflowKilledInterrupt` propagates. The `on_error` hook stays silent. |
 | sync `@protect` | It arrives re-wrapped as `NullRunBlockedException` with `error_code = "NR-W002"`. The hook fires. |
 
-`guard()` re-raises the kill either way, so a kill never turns into a
-graceful exit. To keep the process alive after a kill — checkpoint,
-notify a supervisor, then exit — use a bare `@protect` with your own
-`except NullRunWorkflowKilledError:` arm.
+So `except WorkflowKilledInterrupt:` catches the kill on the async path
+only. On the sync path, catch `NullRunBlockedException` and read
+`error_code`.
+
+`guard()` follows the same split. On the async path it re-raises the
+kill, so the kill reaches the top of the agent loop. On the sync path
+the kill is already a `NullRunBlockedException`, so `guard()` prints
+the report and exits with status 1.
+
+To keep the process alive after a kill — checkpoint, notify a
+supervisor, then exit — use a bare `@protect` with your own
+`except NullRunBlockedException:` arm and check `error_code == "NR-W002"`.
 
 ## Fail closed
 
@@ -300,26 +247,30 @@ protected function does not run on a refused call.
 
 | Situation | Result |
 |---|---|
-| The gateway cannot be reached | The body does not run. `NullRunBlockedException` with a transport code: `NR-B001` network, `NR-B002` gateway 5xx, `NR-A003` auth, `NR-B005` breaker open |
+| The gateway cannot be reached | The body does not run. A network failure raises `NullRunBlockedException` with `NR-B001`, a gateway 5xx raises `NullRunBlockedException` with `NR-B002`, and a rejected key raises `NullRunAuthError` with `NR-A003` |
 | The rate-limit store cannot be reached | HTTP 503 `RATE_LIMIT_REDIS_UNAVAILABLE` |
 | The budget store cannot be reached | HTTP 402 `BUDGET_REDIS_UNAVAILABLE` |
 | A `ToolBlock` policy cannot be evaluated | HTTP 403 `TOOL_BLOCKED` |
 | The approval window closes with no decision | `NullRunApprovalExpiredError` (`NR-A012`) |
 
 The SDK circuit breaker is the one local exception. After repeated
-transport failures it stops calling the gateway and keeps the pending
-work on disk. See [Circuit breaker](circuit-breaker.md).
+transport failures it stops the event flush and keeps the pending events
+on disk. It never lets a protected call through unchecked. See
+[Circuit breaker](circuit-breaker.md).
 
 ## Audit trail
 
-Every gate decision lands in **Governance → Audit log**. Each row
-carries the decision, the reason code, the matched rule, the policy,
-the execution id and the tool name. It answers "why did my agent stop
-working at 14:32?".
+Gate decisions land in **Governance → Audit log**. Each row carries the
+decision, the reason code, the matched rule, the policy, the execution
+id and the tool name. It answers "why did my agent stop working at
+14:32?".
 
-The **Audit log** page needs the plan's Audit log feature. A plan
-without it does not record gate decisions.
+The log is hash-chained: each row carries the hash of the row before
+it. `GET /api/v1/orgs/{org_id}/audit-log/verify` recomputes the chain
+and names the first row that does not match.
 
+The **Audit log** page needs the plan's audit log feature. Lite and
+Starter do not include it, so those plans record no gate decisions.
 Pair it with [Traces](tracing.md) for the request behind the decision.
 
 ## What is NOT stored
@@ -329,19 +280,21 @@ NullRun never persists:
 - **Prompt content** or **LLM response payloads**. The gate receives
   only the model name, the tool name, the tool list, an estimated
   token count and an optional typed `business_impact` payload.
-- **Tool arguments** beyond the typed `business_impact` extraction.
-  Operators do not write JSONPath rules over tool payloads.
-- **MCP interaction payloads** — only the canonical tool name is
-  logged.
 - **Card numbers, CVC, expiry month or year.** Subscriptions carry
   only the payment method brand and its last four digits.
 - **OAuth refresh tokens.** The identity provider owns session
   lifetime.
 
-Email addresses and prompts are hashed or redacted at the log and
-trace-span boundary, so plaintext does not reach the structured log
-store. Uppercase `KEY=VALUE` pairs are rewritten to `KEY=[REDACTED]`
-so plaintext never reaches stdout.
+Tool arguments are the one case worth naming. The SDK ships the
+argument bag so the gate can evaluate a `tool_parameters` approval
+predicate and bind the approval digest to those exact arguments. The
+control center renders the tool name and the argument count, not the
+values.
+
+Personal data is redacted at the log boundary: email addresses, phone
+numbers, card numbers and tokens are replaced with a marker before the
+row is written. Uppercase `KEY=VALUE` pairs are rewritten to
+`KEY=[REDACTED]` before the bytes reach stdout.
 
 ## See also
 

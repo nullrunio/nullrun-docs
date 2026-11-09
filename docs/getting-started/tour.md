@@ -1,6 +1,6 @@
 ---
 title: 5-minute tour
-description: A walk through the NullRun dashboard that ends with an agent tripping a budget cap.
+description: A six-screen walk through the NullRun control center that ends with an agent stopping itself at the budget cap you set for it.
 maturity: stable
 ---
 
@@ -19,7 +19,7 @@ A small agent that:
 3. Books about two cents of spend in one run
 4. Stops at the cap once you lower it to one cent
 
-Every call lands in the dashboard.
+Every call lands in the control center.
 
 ## Step 1 — Set up the workspace
 
@@ -47,7 +47,7 @@ To use the key the wizard made, you can skip this step. To create another one:
   <figcaption class="nr-shot__caption">API keys · New key</figcaption>
 </figure>
 
-The dashboard shows the key once. The signing secret is never shown, and the SDK does not need it — it fetches the secret from the gateway on first use.
+The control center shows the key once. The signing secret is never shown, and the SDK does not need it — it fetches the secret from the gateway on first use.
 
 ```bash title="shell"
 export NULLRUN_API_KEY="nr_live_xxxxxxxxxxxxxxxx"
@@ -105,7 +105,7 @@ Open **Governance → Audit log**. You see:
 - The period presets **24h**, **7d**, **30d**, **90d**, and **All**, plus a **Custom** range. The page opens on **30d**.
 - **Allow** on every row so far.
 
-The audit log is a plan feature. A workspace in its trial has it.
+The audit log is a plan feature. Lite and Starter do not have it. A new workspace gets a 14-day Scale trial, so the audit log is there while the trial runs. After the trial the workspace keeps its Lite plan and loses the audit log. See [Billing → The Lite trial](../concepts/billing.md#the-lite-trial).
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/audit-log-light.png"

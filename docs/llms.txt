@@ -17,7 +17,7 @@ have no equivalent.
 
 - [Install](https://docs.nullrun.io/getting-started/install/): `pip install nullrun`, API key, auto-instrumentation
 - [Quickstart](https://docs.nullrun.io/getting-started/quickstart/): `@protect` in 30 lines
-- [5-minute tour](https://docs.nullrun.io/getting-started/tour/): guided walkthrough through the dashboard + SDK
+- [5-minute tour](https://docs.nullrun.io/getting-started/tour/): guided walkthrough through the control center + SDK
 - [Configuration](https://docs.nullrun.io/getting-started/configuration/): env vars, transport options, fail-CLOSED guards
 - [Onboarding](https://docs.nullrun.io/getting-started/onboarding/): first agent in 15 minutes
 
@@ -27,7 +27,7 @@ have no equivalent.
 - [Budgets](https://docs.nullrun.io/concepts/budgets/): hard/soft mode, period rollover, reservation invariant
 - [Sensitive tools](https://docs.nullrun.io/concepts/sensitive-tools/): fail-CLOSED, no opt-out
 - [Workflow context](https://docs.nullrun.io/concepts/workflow/): `nullrun.workflow(...)`, `chain(...)`, parent_trace_id
-- [Tracing](https://docs.nullrun.io/concepts/tracing/): spans, parent_trace_id, dashboard waterfall
+- [Tracing](https://docs.nullrun.io/concepts/tracing/): spans, parent_trace_id, control-center waterfall
 - [Control plane (WebSocket)](https://docs.nullrun.io/concepts/control-plane/): kill / pause / approval_resolved
 - [API keys](https://docs.nullrun.io/concepts/api-keys/): scopes, rotation, revocation
 - [Policies](https://docs.nullrun.io/concepts/policies/): BudgetLimit / RateLimit / ToolBlock aggregation
@@ -62,6 +62,7 @@ have no equivalent.
 - [SDK API](https://docs.nullrun.io/reference/sdk-api/): `@protect` (canonical, takes no parameters), `workflow`, `chain`, `guard`, exceptions, runtime tracking
 - [Decorators & context managers](https://docs.nullrun.io/reference/decorators/): `@protect`, `with nullrun.guard():`, `set_call_context`, context managers, order of application
 - [HTTP API](https://docs.nullrun.io/reference/http-api/): `/api/v1/gate`, `/api/v1/track`, `/api/v1/capabilities`, `/api/v1/heartbeat`, control-plane WebSocket
+- [Error lookup](https://docs.nullrun.io/errors/): the landing page every exception's `docs_url` points at
 - [Error codes](https://docs.nullrun.io/reference/errors/): `NR-B004`, `NR-T001`, `NR-R001`, full hierarchy + decision vs infrastructure
 - [LLM tool catalog](https://docs.nullrun.io/reference/llm-tool-catalog/): the tool names agents expose, their risk rating, and the ToolBlock patterns that cover them
 
@@ -81,6 +82,8 @@ have no equivalent.
 
 ## Optional
 
+- [Glossary](https://docs.nullrun.io/glossary/): every NullRun term in one place, with a link to the page that goes deeper
+- [Changelog](https://docs.nullrun.io/changelog/): what changed in each released SDK version
 - [Examples repository](https://github.com/nullrunio/nullrun-examples): runnable code (LangGraph, CrewAI, FastAPI)
 - [Python SDK on PyPI](https://pypi.org/project/nullrun/): `pip install nullrun`
 

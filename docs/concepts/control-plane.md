@@ -1,37 +1,51 @@
 ---
 title: Control plane
 maturity: stable
-description: The live channel between the dashboard and a running agent — pause, resume, and kill, delivered over a WebSocket with an HTTP fallback.
+description: The live channel between the control center and a running agent — pause, resume, and kill, delivered over a WebSocket with an HTTP fallback.
 ---
 
 # Control plane (real-time control)
 
-The **control plane** is the live channel between the dashboard and a running agent. An operator clicks **Pause**, **Resume**, or **Kill**, and the agent reacts while it runs.
+The **control plane** is the live channel between the control center and a
+running agent. An operator clicks **Pause**, **Resume**, or **Kill**,
+and the agent reacts while it runs.
 
 ## What the operator can do
 
 | Action | What the agent does |
 |---|---|
-| **Pause** | Every protected call raises `WorkflowPausedException` (`NR-W003`). The agent can catch it, save state, and wait. |
+| **Pause** | Protected calls are refused with `WorkflowPausedException` (`NR-W003`). The agent can catch it, save state, and wait. |
 | **Resume** | Protected calls run normally again. |
-| **Kill** | Every protected call raises `WorkflowKilledInterrupt` (`NR-W002`). |
+| **Kill** | Protected calls are refused with the kill signal (`NR-W002`). See [Sync and async behave differently](#sync-and-async-behave-differently). |
 
 Kill is terminal. A killed workflow does not run again.
 
-Pause is recoverable. The agent can catch the exception, checkpoint, and try again.
+Pause is recoverable. The agent can catch the exception, checkpoint,
+and try again.
 
 ## How the signal reaches the SDK
 
-The SDK opens a WebSocket to `wss://api.nullrun.io/ws/control/{organization_id}` on its first protected call. The connection is authenticated with the same API key the SDK uses for every other request.
+The SDK opens a WebSocket to
+`wss://api.nullrun.io/ws/control/{organization_id}` on its first
+protected call. The upgrade request carries the same API key the SDK
+uses for every other request, in the `X-API-Key` and `Authorization`
+headers. It carries no body, so it carries no request signature. Every
+frame the server sends is signed, and the SDK verifies the signature
+before it reads anything out of the frame.
 
-The SDK keeps a copy of the control-plane state for each workflow it tracks:
+The SDK keeps a copy of the control-plane state for each workflow it
+tracks:
 
 - With the WebSocket connected, the server pushes every state change.
-- Without a pushed state, the SDK reads the workflow state over HTTP from `GET /api/v1/status/{workflow_id}`.
+- Without a pushed state, the SDK reads the workflow state over HTTP
+  from `GET /api/v1/status/{workflow_id}`.
 
-Set `NULLRUN_TRANSPORT=http` to run the HTTP poll instead of the WebSocket. The poll runs once per second and suits environments where the WebSocket endpoint is blocked.
+Set `NULLRUN_TRANSPORT=http` to run the HTTP poll instead of the
+WebSocket. The poll runs once per second and suits environments where
+the WebSocket endpoint is blocked.
 
-The SDK chooses the transport for you. You do not pass a flag to enable the control plane.
+The SDK chooses the transport for you. You do not pass a flag to
+enable the control plane.
 
 ## What the agent sees
 
@@ -42,18 +56,22 @@ Two exceptions cover the whole control plane:
 | `WorkflowPausedException` | `NR-W003` | The operator paused the workflow. |
 | `WorkflowKilledInterrupt` | `NR-W002` | The operator killed the workflow. `NullRunWorkflowKilledError` is a typed subclass with the same code. |
 
-`WorkflowPausedException` carries `resume_after`: the number of seconds the pause lasts. It is `None` when the pause carries no duration.
+`WorkflowPausedException` carries `resume_after`: the number of
+seconds the pause lasts. It is `None` when the pause carries no
+duration.
 
 ### Sync and async behave differently
 
-The decorator translates the signal differently in a synchronous function and in a coroutine.
+The decorator translates the signal differently in a synchronous
+function and in a coroutine.
 
 | Protected function | What propagates |
 |---|---|
 | Sync | The signal is re-wrapped as `NullRunBlockedException` with `error_code` `NR-W002` or `NR-W003`. The `on_error` hook fires. |
 | Async | The raw `WorkflowKilledInterrupt` or `WorkflowPausedException` propagates. The `on_error` hook does not fire. |
 
-An async framework cancels a task on the original exception type, so the async wrapper leaves it alone.
+An async framework cancels a task on the original exception type, so
+the async wrapper leaves it alone.
 
 ```python
 import nullrun
@@ -78,15 +96,26 @@ except WorkflowPausedException:
     raise
 ```
 
-`nullrun.guard()` handles the pause: it prints the developer report and exits with status 1. It lets the kill through, because a kill has to reach the top of the agent loop.
+`nullrun.guard()` handles the pause: it prints the developer report
+and exits with status 1. The kill follows the same split as the
+decorator. On the async path `guard()` re-raises it, so the kill
+reaches the top of the agent loop. On the sync path the kill is
+already a `NullRunBlockedException`, so `guard()` prints the report
+and exits with status 1.
 
 ## Approval events
 
-The same WebSocket carries approval decisions. When the gate returns `require_approval`, the parked agent waits for the operator. The decision arrives over the control plane and the agent resumes with the outcome.
+The same WebSocket carries approval decisions. When the gate returns
+`require_approval`, the parked agent waits for the operator. The
+decision arrives over the control plane and the agent resumes with the
+outcome.
 
-If the approval window expires, the SDK raises `NullRunApprovalExpiredError` (`NR-A012`). An approval never resolves silently.
+If the approval window expires, the SDK raises
+`NullRunApprovalExpiredError` (`NR-A012`). An approval never resolves
+silently.
 
-The full approval flow is in [Human approval](human-approval.md#approval-resume-flow).
+The full approval flow is in
+[Human approval](human-approval.md#approval-resume-flow).
 
 ## Operator steps
 
@@ -107,9 +136,10 @@ The full approval flow is in [Human approval](human-approval.md#approval-resume-
 
 1. Open the workflow.
 2. Click **Kill**.
-3. The agent receives `WorkflowKilledInterrupt` at its next protected call.
+3. The agent receives the kill signal at its next protected call.
 
-Catch the kill explicitly and re-raise it. A bare `except Exception:` arm swallows the signal.
+Catch the kill explicitly and re-raise it. A bare `except Exception:`
+arm swallows the signal.
 
 ## See also
 

@@ -32,7 +32,7 @@ Two schemes. They are not interchangeable.
 |---|---|---|
 | SDK | `X-API-Key` | The API key, for example `nr_live_...` |
 | SDK with request signing | `X-API-Key`, `X-Signature`, `X-Signature-Timestamp` | The API key plus the signing secret |
-| Dashboard | `Authorization: Bearer <session_token>` | A session token from `POST /api/v1/auth/login` |
+| Control center | `Authorization: Bearer <session_token>` | A session token from `POST /api/v1/auth/login` |
 
 The enforcement path reads `X-API-Key`. It does not read
 `Authorization: Bearer`, so a call that carries only the bearer token answers
@@ -52,9 +52,11 @@ signing secret:
 The gateway rejects a stale timestamp with `401`.
 
 The SDK computes the signature for every request on its own. A request body is
-signed as the exact bytes that go on the wire. Signing covers the enforcement
-calls: `POST /api/v1/gate`, `POST /api/v1/execute`, `POST /api/v1/track`, and
-`POST /api/v1/track/batch`.
+signed as the exact bytes that go on the wire. The gateway requires a valid
+signature on the four enforcement calls: `POST /api/v1/gate`,
+`POST /api/v1/execute`, `POST /api/v1/track`, and `POST /api/v1/track/batch`.
+No other route reads the `X-Signature` header. Other routes authenticate their
+own way — the payment and chat webhooks verify a provider signature.
 
 ## SDK endpoints
 
@@ -63,7 +65,7 @@ These are the endpoints the SDK calls. You do not normally call them by hand.
 | Method | Path | What it does |
 |---|---|---|
 | `POST` | `/api/v1/auth/verify` | Verifies the API key. Returns the credential bundle: `organization_id`, `workflow_id`, `secret_key`, `key_version`, plan, features, limits. |
-| `GET` | `/api/v1/capabilities` | Reports the supported wire-protocol range, the recommended SDK version, and the feature flags. |
+| `GET` | `/api/v1/capabilities` | Reports the supported wire-protocol range, the feature flags, and the endpoint paths. |
 | `POST` | `/api/v1/gate` | Checks the budget for one action and reserves it. Returns the decision and a server-minted `execution_id`. Sending `chain_op: "end"` closes a chain. |
 | `POST` | `/api/v1/execute` | Evaluates the policy for one tool call. This is the primary enforcement point. |
 | `POST` | `/api/v1/track` | Commits one spend event against a reservation. |
@@ -75,7 +77,7 @@ These are the endpoints the SDK calls. You do not normally call them by hand.
 | `GET` | `/api/v1/budget/approximate` | Returns the approximate budget view. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log` | Lists audit entries. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log/verify` | Verifies the audit trail. |
-| `GET`, `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | Starts an export job and returns a job id. |
+| `GET`, `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | `GET` streams the export inline. `POST` enqueues an export job and returns a job id. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/status` | Reports the export job status. |
 | `WS` | `/ws/control/{organization_id}` | Streams control-plane events: kill, pause, approval decisions, key rotation. |
 
@@ -152,6 +154,7 @@ instead.
 | `decision_source` | Which rule produced the decision. |
 | `explanation` | The reason, in human text. |
 | `execution_id` | The server-minted id for this execution. |
+| `operation_id` | An echo of the `operation_id` you sent. The SDK keeps its own value and falls back to this one. The field is absent on some refusal responses. |
 | `approval_id` | The approval to wait on. Present on `require_approval`. |
 | `remaining_budget_cents` | The budget left in the period, in cents. |
 | `projected_cost_cents` | The reserved cost, in cents. |
@@ -170,24 +173,27 @@ Three units appear on the wire. They are not interchangeable.
 |---|---|
 | Cents, integer | The request wire: `cost_cents`, `reserved_cost_cents`, `budget_cents`, `threshold_cents`, `amount_minor`, `threshold_minor`, `projected_cost_cents`, `remaining_budget_cents`. |
 | Millicents, integer | The ledger and the lease responses: `cost_millicents`, `granted_millicents`, `spent_millicents`, `monthly_cost_millicents`. One millicent is 1/1000 of a cent. |
-| US dollars, float | The track response snapshot: `total_cost_usd`, `cost_usd`, `rate_per_minute`. |
+| US dollars, float | The track response: `total_cost_usd` and `rate_per_minute` on the snapshot, `cost_usd` on each tool-history entry. |
 
 A field named `projected_cost_millicents` does not exist on the wire. The gate
 reports `projected_cost_cents`.
 
 ## Idempotency
 
-Two body fields carry the idempotency key.
+Two body fields carry the idempotency key. Each endpoint reads one of them.
 
-| Field | Sent on | Value |
+| Field | Read by | Value |
 |---|---|---|
-| `idempotency_key` | `/api/v1/gate`, `/api/v1/track` | A UUID v4 minted by the SDK for the logical action. |
-| `operation_id` | `/api/v1/gate`, `/api/v1/execute` | The SDK's name for the same value. |
+| `operation_id` | `/api/v1/gate` | A UUID v4 minted by the SDK for one budget check. The gateway keys its duplicate-detection on this field and echoes it back in the response. `/api/v1/execute` accepts and echoes the field too, but does not deduplicate on it. |
+| `idempotency_key` | `/api/v1/track`, `/api/v1/track/batch` | The SDK's own `operation_id`. The SDK stamps it on the track body, and adds the span id after a colon when the event belongs to a span. |
 
 The gateway binds the reservation to the key, so a repeated call with the same
-key settles the same action instead of charging twice. The SDK reuses one
-`operation_id` for the whole gate-then-execute-then-track sequence of a single
-action.
+key settles the same action instead of charging twice. The SDK mints one
+`operation_id` per budget check and carries it across the gate, the execute
+and the track of that call.
+
+The gate ignores `idempotency_key` if you send it. Use `operation_id` on the
+gate.
 
 Two endpoints are idempotent by contract and need no key from you:
 
@@ -197,7 +203,7 @@ Two endpoints are idempotent by contract and need no key from you:
 
 ## Control-plane endpoints
 
-These endpoints drive the dashboard and the control plane. They are not part
+These endpoints drive the control center and the control plane. They are not part
 of the SDK's request path.
 
 ### Workflows
@@ -236,20 +242,31 @@ A policy body carries:
 
 | Field | Values |
 |---|---|
+| `name` | The policy name. |
 | `policy_type` | `rate_limit`, `budget_limit`, or `tool_block`. |
 | `scope` | `org` or `workflow`. |
-| `enforcement_mode` | `Hard` or `Soft`. |
+| `workflow_id` | The workflow the policy applies to. Required when `scope` is `workflow`. |
+| `config` | The policy payload. Required. The keys depend on `policy_type`. |
+| `enforcement_mode` | `Hard` or `Soft`. Applies to `budget_limit` policies only. |
+| `max_overdraft_cents` | Maximum overdraft in cents. Applies to `budget_limit` policies only. |
+| `max_overdraft_percent` | Maximum overdraft as a percentage of the budget. Applies to `budget_limit` policies only. |
+| `loop_threshold` | The loop-detection ceiling. |
+| `loop_window_secs` | The loop-detection window, in seconds. |
+| `anomaly_mode` | `lite`, `moderate`, or `strict`. |
+| `mcp_destructive_policy` | `allow`, `block`, or `approval`. Applies to MCP tools that report themselves destructive. |
+| `mcp_readonly_policy` | `allow`, `block`, or `approval`. Applies to MCP tools that report themselves read-only. |
 
-The config keys depend on `policy_type`.
-
-| `policy_type` | Config keys |
+| `policy_type` | `config` keys |
 |---|---|
-| `rate_limit` | `max_calls_per_minute`. An integer. `0` means no limit. |
-| `budget_limit` | `budget_cents`. An integer number of cents. |
-| `tool_block` | `tool_pattern` — one glob — plus `blocked_tools`, `tools`, and `parameter_conditions`. |
+| `rate_limit` | `max_calls_per_minute`. Required. An integer. `0` means no limit. |
+| `budget_limit` | `budget_cents`. A whole number of cents, greater than zero. `consume_epsilon_cents` sets the consume tolerance in cents. |
+| `tool_block` | `tool_pattern` — a JSON array of glob patterns — plus `blocked_tools`, `tools`, and `parameter_conditions`. |
 
-The tool-block key is `tool_pattern`, singular. The plural `tool_patterns` is
-rejected with `422`.
+The gateway enforces the smallest `max_calls_per_minute` across the active
+rate-limit policies that apply to the call.
+
+`tool_pattern` holds an array of strings. A bare string is rejected with `422`.
+The key is singular: the plural `tool_patterns` is also rejected with `422`.
 
 ### Approvals
 
@@ -268,8 +285,8 @@ rejected with `422`.
 | `GET` | `/api/v1/orgs/{org_id}/executions/{execution_id}` | Get one execution. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log` | List audit entries. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log/verify` | Verify the audit trail. |
-| `GET` | `/api/v1/orgs/{org_id}/audit-log/export` | Start an export job. |
-| `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | Start an export job. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export` | Stream the export inline. |
+| `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | Enqueue an export job and return a job id. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/status` | Poll the export job. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/download` | Download the exported file. |
 | `GET` | `/api/v1/orgs/{org_id}/traces` | List trace spans. |
@@ -277,7 +294,7 @@ rejected with `422`.
 | `GET` | `/api/v1/orgs/{org_id}/incidents` | List active and recent incidents. |
 | `GET` | `/api/v1/orgs/{org_id}/usage` | Usage breakdown. |
 | `GET` | `/api/v1/orgs/{org_id}/quota` | Usage breakdown. Same payload as `/usage`. |
-| `GET` | `/api/v1/orgs/{org_id}/dashboard` | Dashboard payload. |
+| `GET` | `/api/v1/orgs/{org_id}/dashboard` | Control center overview payload. |
 | `GET` | `/api/v1/orgs/{org_id}/control-center` | Workflows, recent decisions, and alerts in one call. |
 
 ### Budget and status
@@ -310,15 +327,17 @@ prompt, not a zero spend.
 | `usage_today_cents` | Spend over the last 24 hours. |
 | `usage_month_cents` | Spend over the current billing period. |
 | `budget_used_cents` | Org budget used in the period. |
-| `budget_remaining_cents` | `null` when the plan sets no org budget. |
-| `budget_limit_cents` | `null` when the plan budget is unlimited. |
-| `budget_pct_used` | `null` when there is no cap. |
-| `time_to_limit` | `null` when no exhaustion is projected in the period. |
+| `budget_remaining_cents` | Budget left in the period. `null` together with `budget_limit_cents` and `budget_pct_used` when the plan sets no org cap. |
+| `budget_limit_cents` | The plan's org cap, in cents. `null` under the same condition. |
+| `budget_pct_used` | Percentage of the cap used. `null` under the same condition. |
+| `time_to_limit` | Absent when no exhaustion is projected in the period. Otherwise an object with `seconds_remaining` and a `display` string. |
 | `rate` | Rate-limit status for the org. |
 | `per_key_rate` | Per-key rate visibility. Absent when not available. |
 | `limits` | Plan limits and the current usage against them. |
 | `plan`, `plan_name` | The plan tier and its display name. |
-| `subscription_status` | `active`, `past_due`, `cancelled`, or `expired`. |
+| `subscription_status` | `active` or `past_due`. |
+| `cost_estimate_approximate` | Always `false`. The server prices the spend from its own catalog. |
+| `cost_accuracy_hint` | A note that names the pricing source. |
 | `period_window` | The period the month counters are read from. |
 
 ### Organization
@@ -393,11 +412,13 @@ body listing each dependency.
 
 | Field | Type | Notes |
 |---|---|---|
+| `protocol_version` | number | The protocol version the gateway speaks. |
 | `min_protocol_version` | number | The oldest protocol version the gateway accepts. |
 | `max_protocol_version` | number | The newest protocol version the gateway accepts. |
-| `sdk_min_version` | string | The SDK version the gateway recommends. |
-| `server_version` | string | The gateway release tag. |
 | `capabilities` | object | The feature flags, nested under this key. |
+| `endpoints` | object | The endpoint paths the gateway serves. |
+| `server_version` | string | The gateway release tag. |
+| `built_at` | string \| null | ISO-8601 build timestamp, when the build reports one. |
 
 The SDK probes this endpoint during `init()` and logs a warning when the
 version the SDK sends falls outside the range the gateway accepts. The probe is
@@ -422,7 +443,7 @@ See [Control plane](../concepts/control-plane.md) for the reaction matrix.
 
 ## Example
 
-The dashboard endpoints take a session token. The SDK endpoints take an API
+The control center endpoints take a session token. The SDK endpoints take an API
 key.
 
 ```bash title="shell"

@@ -19,8 +19,10 @@ happens when it is deleted.
 
     The gate is a **decision** layer, not a content scanner. It
     evaluates structured metadata about a call — tool name, model,
-    declared sensitivity, cost, scope — and returns `allow`, `block`,
-    or `require_approval` before the call executes.
+    declared sensitivity, cost, scope — and returns `allow`,
+    `soft_pass`, `require_approval`, `block`, or `deny` before the call
+    executes. `soft_pass` lets the call run and books the overspend as
+    an overdraft.
 
     It does not read the free-text arguments of a tool call to decide
     whether the *content* is acceptable. A payload that passes the

@@ -1,6 +1,6 @@
 ---
 title: Error codes
-description: NullRun error reference: the gateway error vocabulary, the SDK exception hierarchy, decision versus infrastructure handling, and the full NR-* error-code catalog.
+description: NullRun error reference: the gateway error vocabulary, the SDK exception hierarchy, decision versus infrastructure, and the NR-* code catalog.
 maturity: stable
 ---
 
@@ -366,8 +366,8 @@ See [Use with FastAPI](../how-to/fastapi.md) for the reference integration.
 | 5xx | Gateway error | Retry with backoff. |
 
 When the gateway is unreachable, the SDK raises `NullRunTransportError` with
-`source` set to one of `NETWORK_ERROR`, `GATEWAY_ERROR`, `AUTH_ERROR`, or
-`BREAKER_OPEN`.
+`source` set to `NETWORK_ERROR` when the request never left the process, and
+`GATEWAY_ERROR` when the gateway answered.
 
 ## NR-* error code catalog
 
@@ -422,7 +422,6 @@ the exact cause does not matter.
 |---|---|---|---|
 | `NR-B001` | The request never reached the gateway — timeout, connection error, or DNS failure. | — | `NullRunTransportError` |
 | `NR-B002` | The gateway returned 5xx. | 500 or 503 | `NullRunBackendError` |
-| `NR-B005` | The SDK's own circuit breaker is open, so the call short-circuits. | 503 | `NullRunBackendError` (with `source=BREAKER_OPEN`) |
 | `NR-R001` | The gateway returned 429 with a `Retry-After`. | 429 | `RateLimitError` |
 | `NR-R002` | The rate limiter is unavailable. Fails closed. | 503 | `NullRunRateLimitRedisError` |
 | `NR-C000` | The SDK is misconfigured. | — | `NullRunConfigError` |

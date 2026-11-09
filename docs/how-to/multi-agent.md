@@ -1,6 +1,6 @@
 ---
 title: Several agents on one host
-description: Run several agents on one host. Each API key binds to one workflow, and each process holds one runtime.
+description: Run several agents on one host. Each API key binds to one workflow, and each process holds one runtime and one key at a time.
 maturity: stable
 ---
 
@@ -30,7 +30,7 @@ The rule does not change with the supervisor. Give each process its own
 NULLRUN_API_KEY=nr_live_replace_me
 ```
 
-The dashboard then shows separate spend per workflow, kill and pause
+The control center then shows separate spend per workflow, kill and pause
 work independently, and you can restart one without touching the
 others.
 
@@ -44,6 +44,11 @@ import multiprocessing as mp
 import os
 
 from nullrun import protect
+
+
+def call_model(text: str) -> str:
+    """Your model call goes here."""
+    return text
 
 
 def _run_one(job: tuple[str, str]) -> str:
@@ -67,8 +72,9 @@ def fan_out(jobs: list[tuple[str, str]]) -> list[str]:
 ```
 
 Use the `spawn` start method. The `fork` method copies the parent's
-runtime into the child, and the child then reports to the parent's
-workflow with the parent's key.
+memory into the child. If the parent already created a runtime, the
+child inherits it and reports to the parent's workflow with the parent's
+key.
 
 ## Pattern 3 — one subprocess per request
 
@@ -102,14 +108,14 @@ The runtime is a process-wide singleton. A second `init()` call shuts
 the first runtime down, so one process cannot hold two keys at once.
 
 The failure mode of forcing it is interleaved events: calls land on the
-workflow of whichever key the runtime happens to hold, and the dashboard
+workflow of whichever key the runtime happens to hold, and the control center
 shows a spend that belongs to no single workflow.
 
 ## One workflow across many processes
 
-The dashboard already aggregates every process that holds the same key
-under one workflow record. Several workers with the same key produce
-one workflow with the combined spend.
+Every process that holds the same key reports to the same workflow.
+Several workers with the same key produce one workflow record with the
+combined spend.
 
 ## See also
 

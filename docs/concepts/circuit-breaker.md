@@ -1,15 +1,15 @@
 ---
 title: Circuit breaker
 maturity: stable
-description: The SDK-side circuit breaker — it opens after repeated transport failures, short-circuits calls while open, and recovers after a cooldown.
+description: The SDK-side circuit breaker — it opens after repeated failed event flushes, short-circuits the flush while open, and recovers after a cooldown.
 ---
 
 # Circuit breaker
 
-The SDK ships a client-side circuit breaker. It sits in the transport
-layer and watches the calls the SDK makes to the gateway. After a run
-of transport failures it opens and stops sending, so an unreachable
-gateway does not turn into a hang. It closes again after a cooldown.
+The SDK ships a client-side circuit breaker in the transport layer. It
+watches the event flush the SDK makes to the gateway. After a run of
+failed flushes it opens and stops sending, so an unreachable gateway
+does not turn into a hang. It closes again after a cooldown.
 
 A policy refusal and a breaker trip are different things:
 
@@ -22,48 +22,60 @@ A policy refusal and a breaker trip are different things:
 
 | State | What happens |
 |---|---|
-| **Closed** | Calls go out normally. A transport failure raises the failure count. A success resets it. |
-| **Open** | Calls short-circuit. The SDK raises `BreakerTransportError` instead of waiting on the network. |
+| **Closed** | The flush goes out normally. A transport failure raises the failure count. A success resets it. |
+| **Open** | The flush is skipped. The events stay queued and the SDK retries them after the cooldown. |
 | **Half-open** | The breaker lets one probe through. A success closes it. Another failure opens it again. |
+
+The breaker keeps its state in the process that runs it, so two
+processes run two breakers.
 
 ## When it opens
 
 The breaker opens after a run of consecutive transport failures: a
-timeout, a refused connection, a 5xx. The threshold on the SDK's
-event-flush path is the failed-flush limit, 10 by default. The
-half-open probe waits 30 seconds.
+timeout, a refused connection, a 5xx. The threshold is the failed-flush
+limit, 10 by default.
 
-While the breaker is open the SDK keeps the pending work on disk and
-retries it on a later flush. No record is dropped, and the agent keeps
-running.
+The half-open probe waits 30 seconds, plus a random delay of up to 5
+seconds, so two processes do not probe at the same instant. One probe
+runs at a time.
+
+While the breaker is open the SDK keeps the pending events and retries
+them on a later flush. The agent keeps running.
 
 ## What it raises
 
-`BreakerTransportError` extends `BreakerError`. It is not a
-`NullRunError`, so `except NullRunError` does not catch it:
+Nothing into your code. The breaker sits on the event flush, in a
+background thread. When it is open, the SDK logs a warning and moves on.
 
-```python
-from nullrun import BreakerError, BreakerTransportError
+`BreakerError` and `BreakerTransportError` are the breaker's own
+exception types. They stay inside the SDK, so neither
+`except NullRunError` nor `except BreakerTransportError` in your code
+sees one.
 
-try:
-    run_agent("...")
-except BreakerTransportError:
-    # The gateway was not answering.
-    # The SDK is protecting itself, not enforcing a rule.
-    ...
-```
-
-A breaker-open transport failure on the `@protect` gate surfaces as a
-block with `error_code = "NR-B005"`, and the protected body does not
-run.
+One breaker error does reach you, and it happens at start-up rather than
+during a run: an API URL on plain HTTP against a host that is not
+localhost raises `InsecureTransportError`.
 
 ## What it does not do
 
+The breaker does not sit on the gate path. It guards the event flush,
+not the policy decision. A protected call is never blocked by it.
+
+When the gateway cannot be reached, the gate path fails closed on its
+own. A network failure raises `NullRunBlockedException` with `NR-B001`,
+a gateway 5xx raises `NullRunBlockedException` with `NR-B002`, and a
+rejected key raises `NullRunAuthError` with `NR-A003`. The protected body
+does not run in any of the three cases. See
+[Policies → Fail closed](policies.md#fail-closed).
+
+The gateway keeps a per-workflow breaker of its own. When breaker
+enforcement is on, an open workflow breaker refuses the call with HTTP
+403 `CIRCUIT_BREAKER_TRIPPED`, which the SDK raises as
+`NullRunBlockedException`.
+
 The breaker never relaxes enforcement. A tool block, a budget refusal
 and a rate-limit refusal are answers from the gateway, and the SDK
-raises them whatever state the breaker is in. When the gateway cannot
-be reached at all, the enforcement path refuses — see
-[Policies → Fail closed](policies.md#fail-closed).
+raises them whatever state the breaker is in.
 
 ## See also
 

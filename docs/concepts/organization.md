@@ -14,7 +14,7 @@ The **Organization** page covers the organization's identity and its legal metad
 
 | Field | What it does |
 |---|---|
-| **Name** | The display name in the dashboard, in email headers, and in audit rows. An owner can change it. |
+| **Name** | The display name in the control center, in email headers, and in audit rows. An owner can change it. |
 | **Slug** | The URL-safe identifier. It is fixed for the life of the organization. |
 | **Contact email** | The address billing and security messages go to. An owner can change it. |
 
@@ -30,7 +30,7 @@ Every earlier acceptance stays visible underneath, with the version, the date, a
 
 | Method | Meaning |
 |---|---|
-| `in_product` | Accepted by clicking through the dashboard. |
+| `in_product` | Accepted by clicking through the control center. |
 | `signed_pdf` | Accepted offline and recorded by support. |
 | `signup_checkbox` | Accepted on the sign-up form. |
 | `checkout_step` | Accepted during checkout. |

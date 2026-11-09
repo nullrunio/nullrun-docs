@@ -1,6 +1,6 @@
 ---
 title: CI/CD integration
-description: Run a synthetic load against a pre-prod gateway in CI, and fail the build when the gate refuses.
+description: Run a synthetic load against a pre-prod gateway in CI, and fail the build when the gate refuses the traffic or the key is wrong.
 maturity: stable
 ---
 
@@ -38,7 +38,7 @@ Exit code:
 | Code | Meaning |
 |---|---|
 | `0` | Every call succeeded |
-| `1` | At least one call failed |
+| `1` | At least one call failed, or the API key is missing |
 | `2` | The confirmation was declined |
 
 ## GitHub Actions
@@ -126,7 +126,7 @@ range it accepts as `min_protocol_version` and `max_protocol_version`.
 
 - **Real spend.** The token counts are random. Use a staging workflow
   with a small cap for a cost estimate.
-- **Pricing for a model.** Check the cost view in the dashboard after
+- **Pricing for a model.** Check the cost view in the control center after
   one real call.
 - **Kill and pause.** The synthetic load does not exercise the
   control-plane paths. Trigger them by hand during a release
@@ -145,7 +145,7 @@ every release candidate. See
 
 | Symptom | Meaning | Fix |
 |---|---|---|
-| The tool exits `1` and prints a configuration report | `NULLRUN_API_KEY` is missing | Add the key to the job secrets |
+| The tool exits `1` and prints a report to stderr | `NULLRUN_API_KEY` is missing | Add the key to the job secrets |
 | Every call raises a budget refusal | The pre-prod cap is too tight for the load | Raise the cap on the pre-prod workflow |
 | Every call raises a rate-limit refusal | The rate limit is below the load rate | Raise the rate limit on the pre-prod workflow |
 | The health check fails to connect | `NULLRUN_API_URL` is wrong | Point it at the pre-prod gateway |

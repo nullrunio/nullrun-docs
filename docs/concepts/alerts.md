@@ -55,16 +55,29 @@ Beneath the active list, a **Resolved today (N)** section holds the alerts dismi
 
 ### Threshold rules
 
-You write these on the **Notifications** page. Each rule watches one value in a window.
+Threshold rules are configured over the REST API. The control center has no editor for them: the **Notifications** page carries channels and event subscriptions, and nothing else.
 
-| Rule type | Watches |
+Each rule has:
+
+| Field | Meaning |
+|---|---|
+| **Name** | The label on the rule and in the alert it produces. |
+| **Type** | What the rule watches. |
+| **Threshold** | The value that triggers the rule. Spend rules use cents. Error-rate rules use a count of events. |
+| **Window** | How far back the rule looks, in minutes. Defaults to 60. |
+| **Severity** | `info`, `warning`, or `critical`. The severity of the alert the rule produces. Defaults to `warning`. |
+| **Enabled** | Whether the rule fires at all. Defaults to on. |
+
+The rule types are:
+
+| Type | Watches |
 |---|---|
 | `daily_spend` | Spend over a day. |
 | `hourly_spend` | Spend over an hour. |
-| `error_rate` | The count of failed calls in the window. |
+| `error_rate` | The count of blocked and denied decisions in the window. |
 | `per_key_spend` | Spend by one API key. |
 
-A rule has a threshold, a window in minutes, a severity, and an enabled switch. A spend rule uses cents. An error-rate rule uses a count of events.
+A rule does not fire again within 15 minutes of its last firing. Each rule carries the last value it observed and when it last fired.
 
 ### The budget ladder
 
@@ -78,19 +91,11 @@ Spending against a monthly budget raises alerts at fixed points:
 
 ### Events
 
-The event subscriptions on the **Notifications** page decide which of these reach your channels and which show on this page:
-
-- Approaching the execution limit.
-- A workflow over its budget.
-- A workflow making repeated identical calls.
-- An action blocked by policy.
-- A workflow terminated.
-- An API key created.
-- A member invited.
+The event subscriptions on the **Notifications** page decide which events reach your channels. The full list is in [Notifications](notifications.md#event-subscriptions).
 
 ## Configuring alerts
 
-The **Set up alerts** button in the header opens the **Notifications** page, where you add channels and write rules. The Alerts page is the read surface; Notifications is the configure surface. They share the same feed, so an alert that fires shows on both.
+The **Set up alerts** button in the header opens the **Notifications** page, where you add the channels that receive the signals. The Alerts page is the read surface; Notifications is the configure surface. They share the same feed, so an alert that fires shows on both.
 
 ## API
 
@@ -103,8 +108,10 @@ The **Set up alerts** button in the header opens the **Notifications** page, whe
 
 Dismiss-all covers the whole organization. There is no per-workflow bulk path, so cleaning up one workflow means dismissing its rows one by one.
 
+The alert rules use their own paths. See [Notifications → API](notifications.md#api).
+
 ## See also
 
-- [Notifications](notifications.md) — channels and rules
+- [Notifications](notifications.md) — channels and event subscriptions
 - [Budgets](budgets.md) — the spend behind a spend alert
 - [Policies](policies.md) — what produces a blocked action

@@ -1,25 +1,27 @@
 ---
 title: Tracing
 maturity: stable
-description: Every protected call becomes a span, every run becomes a trace, and the dashboard renders the tree as a waterfall.
+description: Every protected call becomes a span, every run becomes a trace, and the control center renders the tree as a waterfall.
 ---
 
 # Tracing
 
 A **trace** is one run of your agent. A **span** is one step inside
-it. The dashboard puts traces under **Executions** and **Traces** in
+it. The control center puts traces under **Executions** and **Traces** in
 the sidebar.
 
 When a user reports "the agent did something odd at 14:30", the trace
 is where you look.
 
-## What you see in the dashboard
+## What you see in the control center
 
-The **Executions** page lists every gate decision your organization
-made. Each row shows the execution id, the action, the agent, the
-workflow, the model, the tool, the cost and the time. Four counters
-above the table count the outcomes: **Allow**, **Block**, **Pending**
-and **Denied**. The **Export** button downloads the loaded rows.
+The **Executions** page lists the executions your organization ran.
+Each row shows the execution id, the action, the agent, the workflow,
+the model, the tool, the token count, the result, the cost and the
+time. The four counters above the table count gate decisions —
+**Allow**, **Block**, **Pending** and **Denied**. A blocked call has no
+row, because it produced no execution. The **CSV** button downloads the
+rows on the screen as a CSV file.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/executions-light.png"
@@ -31,10 +33,9 @@ and **Denied**. The **Export** button downloads the loaded rows.
   <figcaption class="nr-shot__caption">Executions</figcaption>
 </figure>
 
-The **Traces** page lists the runs. Open one and you get a header with
-the workflow, the start and end times, the total duration and the
-number of spans. Under it, a counter strip shows how many spans loaded
-and how many of them were errors, plus the median duration.
+The **Traces** page lists the runs. Above the table, four tiles count
+the loaded runs, the ones that succeeded, the ones that errored, and
+the median duration.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/traces-light.png"
@@ -46,16 +47,22 @@ and how many of them were errors, plus the median duration.
   <figcaption class="nr-shot__caption">Traces · Waterfall</figcaption>
 </figure>
 
+Open one and you get a header with the start time, the end time, the
+total duration and the number of spans, with the error count
+alongside it. Under the header is the waterfall.
+
 The waterfall is the trace. Each row is one span:
 
 - The **name** of the protected function
 - A **duration bar**, positioned against the longest span in the trace
 - A **status** — ok or error
 - The **policy verdict** for that call, when the gate recorded one
-- The **span id**, so you can correlate it with the audit log
+- The **span id**, in the row tooltip. The audit log carries no span
+  column, so you reach an audit row through the execution id.
 
 Nested calls sit under their parent, so a supervisor that calls
-sub-agents renders as one tree rather than several.
+sub-agents renders as one tree rather than several. Click a row to
+pin its details.
 
 ## How spans are created
 
@@ -102,8 +109,8 @@ is attached to the span that was active when it happened.
 | `span_id` | One protected call |
 | `parent_span_id` | The span this one sits under |
 
-Search the dashboard by `trace_id` to pull the whole run, and the same
-value to find its rows in the audit log.
+Open a run by its `trace_id` in the trace URL. The audit log filters by
+execution id, not by trace id.
 
 ## What is not stored
 
@@ -133,8 +140,8 @@ Lite workflow stops producing traces inside the 3-day window. See
 [Billing & Plan → Caps](billing.md#caps).
 
 Export the rows you need; the retention window removes them. The
-**Export** button on the Executions page writes the loaded rows as
-JSON.
+**CSV** button on the Executions page writes the rows on the screen as
+a CSV file, not the organization's whole history.
 
 ## Common questions
 
@@ -159,7 +166,7 @@ the LLM clients it supports. If you also report the same call with
 
 ### "Why is my trace missing a step?"
 
-The dashboard shows one span per protected call. A helper function
+The control center shows one span per protected call. A helper function
 that is not decorated with `@protect` produces no span. Decorate every
 call you want to see in the tree.
 

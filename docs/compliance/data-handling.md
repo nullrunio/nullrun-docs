@@ -23,10 +23,10 @@ This page is the detailed companion to the
 |---|---|---|
 | What does the SDK send? | Tool name, cost estimate, optional typed business impact, optional action digest, and the argument bag. | [Data transmitted](#1-data-transmitted) |
 | What does the backend store in Postgres? | Organization, user, key, workflow, policy, approval, cost, and audit rows. The audit table is immutable. | [Data stored](#2-data-stored) |
-| What does the backend store in Redis? | Budget counters, execution bindings, rate-limit buckets, session and chain state. No PII. | [Data stored](#2-data-stored) |
+| What does the backend store in Redis? | Budget counters, execution bindings, rate-limit buckets, session and chain state. The session entries hold the user and organization id. | [Data stored](#2-data-stored) |
 | Where is it hosted? | DigitalOcean, with EU regions available. Self-hosted Postgres and Redis on one VPS. | [Hosting](#3-hosting) |
 | Who can access production data? | Four role levels. Production shell access through an allowlisted wrapper. | [Access controls](#4-access-controls) |
-| How is it encrypted? | TLS at the edge, column-level encryption for Slack OAuth tokens, HMAC-SHA256 for request signing and audit exports. | [Encryption](#5-encryption) |
+| How is it encrypted? | TLS at the edge, column-level encryption for Slack OAuth tokens and TOTP secrets, HMAC-SHA256 for request signing and audit exports. | [Encryption](#5-encryption) |
 | Which third parties see data? | DigitalOcean, Brevo (DE), Polar (SE), Slack, GitHub, Google. | [Sub-processors](#6-sub-processors) |
 | How is data deleted? | Soft-delete with a 60-day grace, then a purge of tenant data. API key revocation is two-phase. | [Deletion](#7-deletion) |
 | Where physically is data? | Region selectable at signup. Single-region deployment. | [Residency](#8-data-residency) |
@@ -40,7 +40,7 @@ The gate request carries:
 
 | Field | Source | Notes |
 |---|---|---|
-| `execution_id` | SDK-supplied | The gateway **mints a UUIDv7** and echoes it back. A client-supplied id is not honoured for ownership. |
+| `execution_id` | Gateway-minted | The gateway **mints a UUIDv7** and echoes it back. A client-supplied id is not honoured for ownership. |
 | `trace_id`, `tool`, `mode`, `operation_id` | SDK-supplied | The request envelope. |
 | `tool_arguments` | SDK-supplied | The call's argument bag. A `tool_params` field is accepted as an alternative name. A typed approval rule reads a named argument from it. |
 | `business_impact` | SDK-supplied | Optional. Required only for typed approval rules. |
@@ -78,7 +78,8 @@ identifier. `[V]`
 - Provider types cover OpenAI, Anthropic, Google, and Azure.
 - **NULLRUN does not proxy model calls.** The SDK talks to providers
   directly, using the customer's own API keys. `[D]`
-- **Credential invariant:** the SDK never holds a raw provider API key.
+- **Credential invariant:** NULLRUN holds no provider API key. The
+  customer's key stays in the customer's process.
 
 ### 1.5 Control plane
 
@@ -114,13 +115,16 @@ identifier. `[V]`
 | `cost_events` | Cost in cents and millicents, token counts, provider-reported and authoritative cost, an integrity label, tool and model, correlation ids, agent and organization ids, receipt timestamp. Partitioned by month. | Mutable | Database level | The plan's history window |
 | `approvals` | The decision, and who made it — a person, a system expiry, or an unknown source | Mutable: pending becomes approved, denied, expired, or revoked | Database level | Pending rows are collected by a sweep worker |
 | `organizations` | Id, name, slug, contact email, plan, deletion timestamp, purge date | Mutable, soft delete | Database level | Hard-deleted by the retention worker after the grace |
-| `users` | Id, email, display name, password hash (Argon2), role, default organization, tombstone timestamp | Mutable | Database level | Until the organization cascade |
-| `organization_api_keys` | Id, name, key prefix and suffix, key hash (SHA-256), the HMAC signing secret, status, version, last use, expiry, scopes | Mutable | Database level | Until the organization cascade |
-| `sessions` | Bearer token store: token, user id, organization id, expiry | Mutable; a revocation is a delete | Database level | 7-day lifetime |
+| `users` | Id, email, display name, password hash (Argon2id), role, default organization, tombstone timestamp | Mutable | Database level | Until the organization cascade |
+| `organization_api_keys` | Id, name, key prefix and suffix, the key hash (Argon2id), the SHA-256 lookup fingerprint, the HMAC signing secret, status, version, last use, expiry, scopes | Mutable | Database level | Until the organization cascade |
+| `user_2fa` | The user id, the TOTP secret, the pending TOTP secret, and the hashed recovery codes | Mutable | Column-level encryption on the TOTP secrets | Until the user row is deleted |
 | `policies` | Id, scope, policy type, enforcement mode, budget amount, overdraft cap | Mutable, soft delete | Database level | The plan's history window |
 | `approval_rules` | The typed predicates that ask for a human, mirroring the policy quota | Mutable | Database level | The plan's history window |
-| `audit_export_secrets` | The per-organization signing secret for audit exports | Mutable | Database level | Until the organization cascade |
 | `workflows` | Metadata, state (normal, flagged, tripped, paused, killed), budget amount, archive and deletion timestamps | Mutable | Database level | Persistent |
+
+**Sessions are not in Postgres.** Browser sessions live in Redis under a
+7-day expiry, and hold the user id, the organization id, and the creation
+time. The token itself is the key. A revocation writes a tombstone.
 
 ### 2.2 Immutability of the audit table
 
@@ -137,9 +141,10 @@ Four independent controls protect the audit table:
 ### 2.3 Column-level encryption
 
 Column-level encryption uses pgcrypto AES. It is applied to the Slack
-OAuth bot tokens. The threat model: a stolen disk image or a
-read-only dump yields ciphertext, and the plaintext needs both the
-database and the encryption key.
+OAuth bot tokens, the TOTP secrets, and the MCP discovery bearer
+tokens. The threat model: a stolen disk image or a read-only dump
+yields ciphertext, and the plaintext needs both the database and the
+encryption key.
 
 ### 2.4 Redis
 
@@ -150,13 +155,13 @@ Redis holds short-lived operational state. Grouped by purpose:
 | Budget | The period cost counter, the reserved amount per execution | No |
 | Execution binding | The organization and API key an `execution_id` belongs to | No |
 | Rate limiting | Per-organization and per-key counters | No |
-| Session and token | Session lookups, two-factor challenge and recovery tokens | User id only |
+| Session and token | Session lookups and revocation tombstones, two-factor challenge and recovery tokens | User and organization id only |
 | Chain state | The chain state machine for a chain of workflows | No |
 | Audit chain fast path | The last event's content hash per organization | No |
 | Circuit state | The workflow circuit-breaker state | No |
 
-No personal data is stored in any of them. The keys hold opaque
-identifiers.
+The keys hold opaque identifiers. The only personal data is the user
+and organization id in the session entry.
 
 ## 3. Hosting
 
@@ -190,7 +195,7 @@ identifiers.
 
 | Role | Level | Used for |
 |---|---|---|
-| Viewer | 0 | Read-only dashboard. |
+| Viewer | 0 | Read-only access. |
 | Operator | 1 | Operator-tier mutations: kill and pause workflows, decide approvals. This level exists only at runtime. |
 | Admin | 2 | Organization and member management. |
 | Owner | 3 | Organization deletion, billing changes, ownership transfer. |
@@ -255,15 +260,15 @@ role. A lookup failure refuses the request.
 |---|---|---|
 | **In transit, server edge** | TLS 1.2 and 1.3, Mozilla intermediate ciphers, HSTS | `[V]` |
 | **In transit, WebSocket** | HMAC-SHA256 over canonical JSON, 300-second replay window | `[V]` |
-| **At rest, Postgres columns** | pgcrypto AES, hex-encoded, on the Slack OAuth bot tokens | `[V]` |
+| **At rest, Postgres columns** | pgcrypto AES, hex-encoded, on the Slack OAuth bot tokens, the TOTP secrets, and the MCP discovery bearer tokens | `[V]` |
 | **At rest, Postgres disk** | **Not attested**; relies on the provider's disk encryption | `[N]` |
 | **At rest, Redis** | **Not attested**; the backup volumes rely on host disk encryption | `[N]` |
 | **At rest, object storage** | S3-compatible storage. Bucket-side encryption settings are **not exposed** | `[D]` |
 | **Key management** | One environment-held key drives the column encryption. No managed key service is integrated. Rotation needs a manual runbook, and it breaks two-factor and Slack until every copy is replaced | `[D]` |
 | **Request signing** | HMAC-SHA256 over gate, execute, and track bodies. The signing key is at least 32 bytes and is never generated automatically | `[V]` |
-| **API keys at rest** | The key itself is stored as a SHA-256 hash. The signing secret is stored in plaintext because the hot path needs it. A prefix and suffix are kept for display | `[V]` |
+| **API keys at rest** | The key itself is stored as an Argon2id hash. A SHA-256 fingerprint of the key is stored beside it, so the row can be found without a full hash verification. The signing secret is stored in plaintext because the hot path needs it. A prefix and suffix are kept for display | `[V]` |
 | **Cookies** | Host prefix, Secure, HttpOnly for the session, SameSite=Lax, Path=/, 7-day lifetime. The CSRF cookie is readable by the single-page app by design | `[V]` |
-| **Audit exports** | A per-organization HMAC-SHA256 sidecar signature. There is no development fallback | `[V]` |
+| **Audit exports** | An HMAC-SHA256 sidecar signature, keyed by one deployment-wide secret held in the environment. The secret is required in production: with it unset and no explicit development, test, or staging environment set, the service refuses to start. A fixed development value is used only in those explicit non-production environments | `[V]` |
 
 ## 6. Sub-processors
 
@@ -338,7 +343,7 @@ The deny list lives for twice the authentication cache lifetime.
 
 | Right | Implementation |
 |---|---|
-| **Access** | A per-user export job. The download expires after 7 days, and each section is capped at 100 000 records. |
+| **Access** | A per-user export job. The download expires after 7 days, and each section is capped at 100 000 records. The session section reads a Postgres table that the migrations do not create, so it comes back empty and the job logs it and continues. |
 | **Erasure** | The tenant purge scrubs tenant-scoped data, and runs automatically 60 days after the soft delete. There is no self-serve kickoff path. |
 | **Audit retention on erasure** | Audit rows are physically deleted when the organization is purged. They are retained through the grace period on purpose. |
 | **Drift guard** | An automated check keeps personal data from accumulating in payloads where it would later need to be scrubbed. |
@@ -430,8 +435,9 @@ These are the questions a vendor reviewer should follow up on.
 4. **Status page.** No public status host is referenced.
 5. **Breach-notification SLA.** Not documented.
 6. **Disk-level encryption at rest.** Column-level encryption covers
-   the Slack OAuth bot tokens. Full-disk or tablespace encryption
-   relies on the provider's disk encryption.
+   the Slack OAuth bot tokens, the TOTP secrets, and the MCP discovery
+   bearer tokens. Full-disk or tablespace encryption relies on the
+   provider's disk encryption.
 7. **Redis disk encryption.** The backup volumes are bind-mounted
    with no documented encryption at rest.
 8. **Object-storage encryption settings.** Bucket-side encryption

@@ -1,14 +1,17 @@
 ---
 title: LangGraph agent
-description: Gate and cost-track a LangGraph agent with @protect. No vendor extra is needed.
+description: Gate and cost-track a LangGraph agent with @protect, and fall back to an entry-point wrapper when the auto-patch misses your graph.
 maturity: stable
 ---
 
 # Protect a LangGraph agent
 
-The SDK attaches to LangGraph on its own. Instrumentation goes in when
-`init()` runs, and again on the first `@protect` call, so a graph that
-is compiled after either point is covered.
+The SDK attaches to LangGraph on its own. The attachment is installed
+once per process — see [LLM frameworks](llm-frameworks.md) for the
+rule.
+
+Import LangGraph before that happens. The patch wraps the `Pregel`
+class, so a module that arrives after the attachment is never patched.
 
 No vendor extra is needed. Install LangGraph and whatever chat model
 client you use next to the SDK.
@@ -42,7 +45,7 @@ app = graph.compile()
 result = app.invoke({"messages": [{"role": "user", "content": "Hi"}]})
 ```
 
-Every LLM call in the graph is cost-attributed and gated. The
+Every model call in the graph is cost-attributed to the workflow. The
 `@protect` wrapper on the node is the gate boundary: the gateway
 decides before the node body runs.
 
@@ -51,8 +54,8 @@ decides before the node body runs.
 Two cases need a different wiring:
 
 - the graph is compiled in a worker thread, or
-- LangGraph is imported after the first `@protect` call has already
-  run.
+- LangGraph is imported after `init()` or after the first `@protect`
+  call has already run.
 
 Wrap the entry point instead of the graph. Every invocation passes
 through that function, so the gate fires once per run:

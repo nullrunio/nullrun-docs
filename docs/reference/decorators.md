@@ -1,7 +1,7 @@
 ---
 title: Decorators & context managers
 maturity: stable
-description: "Reference for @protect — the one gate decorator — and the workflow / span / agent / chain context managers it pairs with, plus the with nullrun.guard(): friendly-exit wrapper."
+description: "Reference for @protect — the one gate decorator — the workflow, span, agent, and chain context managers, and the nullrun.guard() exit wrapper."
 ---
 
 # Decorators & context managers
@@ -35,7 +35,7 @@ def f(): ...
 
 The SDK collects the facts — function name, arguments, keywords — and
 ships them on the wire. The gateway decides. Business meaning ("this
-moves money", "this needs a human") lives in dashboard policies, not
+moves money", "this needs a human") lives in control center policies, not
 in a second decorator. See [Human
 approval](../concepts/human-approval.md).
 
@@ -51,29 +51,39 @@ approval](../concepts/human-approval.md).
 | 6 | Tool track | Records the call and its cost. |
 
 Argument names that look like credentials are replaced with `***`
-before the call leaves your process. Passwords, tokens, API keys,
-authorization headers, session cookies, card numbers, PINs, and OTPs
-are covered.
+before the call leaves your process. The name must match exactly:
+`password`, `token`, `api_key`, `authorization`, `cookie`,
+`credit_card_number`, `cvv`, `pin`, `otp`, `email`, `phone`, `ssn` and
+similar. A name that only contains one of those words is not masked —
+`card_number` and `user_password` keep their value. Credential-shaped
+values are covered too, even under an argument name nobody listed: a
+NullRun key, a JSON web token, an AWS access key id, an `sk-` secret, a
+PEM private key, and a bearer credential are all replaced.
 
 ### When the gateway cannot be reached
 
-The SDK distinguishes three outcomes, and they are not the same thing:
+The SDK distinguishes four outcomes, and they are not the same thing:
 
 | Outcome | What the SDK does |
 |---|---|
 | The gateway **refused** the call | The refusal is honoured. The call does not run. |
-| The gateway is **unreachable** (network error, timeout, 5xx with no refusal body) | The call proceeds. Enforcement is advisory until the gateway recovers. |
-| The answer arrived but the SDK **cannot read it** | The SDK raises `NullRunGateIndeterminateError` (`NR-P004`). The call does not run. |
+| The gateway is **unreachable** during the budget pre-flight (network error, timeout, 5xx) | The pre-flight is skipped and the call proceeds. |
+| The gateway is **unreachable** during the tool policy check | The call does not run. The SDK raises `NullRunBlockedException`. |
+| The answer **arrived but the SDK cannot read it** | The SDK raises `NullRunMalformedGateResponseError` (`NR-P002`). The call does not run. |
+| The SDK's own code **faults** while it asks the gate | The SDK raises `NullRunGateIndeterminateError` (`NR-P004`). The call does not run. |
 
-An unanswered question is not a yes. Only the middle row fails open,
-and only on the pre-flight step. A credential failure or an
-unreadable body raises instead of proceeding.
+An unanswered question is not a yes. Only the budget pre-flight fails
+open, and only on a transport error. The tool policy check fails
+closed. A credential failure or an unreadable body raises instead of
+proceeding.
 
 `NULLRUN_SENSITIVE_FAIL_OPEN=1` exists for local development. On its
 own it opens nothing: the set of tools allowed to fail open is empty
 until you name the tools explicitly.
 
 ```python title="fail_open_tools.py"
+import nullrun
+
 runtime = nullrun.get_runtime()
 runtime.register_fail_open_tools(["charge_card"])   # local development only
 ```
@@ -88,13 +98,15 @@ wrappers:
 | sync `@protect` | `NullRunBlockedException` with code `NR-W002` | yes |
 | async `@protect` | `WorkflowKilledInterrupt` (code `NR-W002`) | no |
 
-The sync form unifies the signal into one catchable class. The async
-form lets the raw interrupt through, so `asyncio` cancellation and
-signal handlers behave as they normally do.
+The sync form re-wraps the interrupt as a `NullRunBlockedException` and
+fires the `on_error` hook. The async form lets the raw
+`WorkflowKilledInterrupt` through and does not fire the hook.
 
 Catch the kill by name, ahead of the decision branch:
 
 ```python title="catch_kill.py"
+from nullrun import NullRunDecision, WorkflowKilledInterrupt
+
 try:
     result = run_agent(prompt)
 except WorkflowKilledInterrupt:
@@ -109,6 +121,9 @@ A protected call inside another protected call becomes a child span.
 You do not thread span context through arguments.
 
 ```python title="protect_span_tree.py"
+import nullrun
+from nullrun import get_current_span
+
 @nullrun.protect
 def orchestrator(q):
     return researcher(q)             # child span
@@ -167,7 +182,7 @@ exits the process.
 ### `workflow()` and the policy binding
 
 The workflow name is what links a run to the budget and policies you
-configured in the dashboard. Give it the same name as the workflow
+configured in the control center. Give it the same name as the workflow
 your API key is bound to. If you leave it unset, the SDK generates one
 and the run carries no workflow policies.
 
@@ -197,6 +212,8 @@ alive between calls.
 ### Nested spans
 
 ```python title="nested_span.py"
+import nullrun
+
 with nullrun.workflow("my-agent"):
     with nullrun.span("plan-generation"):
         plan = my_agent(user_input)
@@ -207,6 +224,8 @@ with nullrun.workflow("my-agent"):
 ## `set_call_context()` — per-call data for the gate
 
 ```python title="set_call_context.py"
+import nullrun
+
 nullrun.set_call_context(
     model="claude-sonnet-4-6",
     tools=["send_email", "refund_customer"],
@@ -279,7 +298,8 @@ gateway refuses.
 
 ## See also
 
-- [SDK API](sdk-api.md) — the symbol table, exceptions, manual tracking
+- [SDK API](sdk-api.md) — the symbol table and manual tracking
+- [Errors](errors.md) — the exception hierarchy and the error-code catalog
 - [Human approval](../concepts/human-approval.md) — typed predicates and the action digest
 - [Workflow context](../concepts/workflow.md) — chains, soft mode, and the workflow scope
 - [Custom tracking](../how-to/custom-tracking.md) — when to track by hand

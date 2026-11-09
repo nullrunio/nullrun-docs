@@ -178,9 +178,10 @@ nav:
       - 7.1. SDK API: reference/sdk-api.md
       - 7.2. Decorators & context managers: reference/decorators.md
       - 7.3. HTTP API: reference/http-api.md
-      - 7.4. Error codes: reference/errors.md
-      - 7.5. Tool catalog: reference/llm-tool-catalog.md
-      - 7.6. Glossary: glossary.md
+      - 7.4. Error lookup: errors.md
+      - 7.5. Error codes: reference/errors.md
+      - 7.6. Tool catalog: reference/llm-tool-catalog.md
+      - 7.7. Glossary: glossary.md
   - 8. Compliance:
       - 8.1. Overview: compliance/index.md
       - 8.2. Data handling & vendor review: compliance/data-handling.md

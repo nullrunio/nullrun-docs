@@ -1,14 +1,16 @@
 ---
 title: LLM frameworks
-description: Which LLM providers and agent frameworks the SDK instruments on its own, and what to do when it misses a call.
+description: Which LLM providers and agent frameworks the SDK instruments on its own, and how to report an LLM call the SDK does not see.
 maturity: stable
 ---
 
 # LLM frameworks
 
 The SDK attaches to the HTTP client and to the agent frameworks it
-finds installed. The attachment happens once per process: on `init()`
-and on the first `@protect` call.
+finds installed. The attachment is installed once per process: at
+`init()`, or at the first `@protect` call if you never call `init()`.
+Import the framework before that point — a package that arrives later
+is never patched.
 
 Two layers, and they do different work:
 
@@ -49,12 +51,12 @@ Each framework hook is a no-op when the package is not installed.
 |---|---|
 | `httpx` | Every HTTP client built on it, including the OpenAI and Anthropic SDKs |
 | `requests` | Every client built on the `requests` library |
-| `langchain` | Chat-model calls, including in-memory mock providers |
+| `langchain-core` (`langchain_core`) | Chat-model calls, including in-memory mock providers |
 | `langgraph` | Compiled graphs, on every run mode |
-| `openai-agents` | The runner, with the token counts of each model call |
-| `crewai` | Crew, agent, and task lifecycle events, plus the run's usage totals |
-| `llama-index` | LlamaIndex query and chat calls |
-| `autogen-agentchat` | AutoGen agent and team calls |
+| `openai-agents` (`agents`) | The runner, with the token counts of each model call |
+| `crewai` | Crew, agent, task, model, and tool lifecycle events, plus the run's usage totals |
+| `llama-index` (`llama_index`) | LLM chat completions and tool calls |
+| `autogen-agentchat` (`autogen_agentchat`) | Agent lifecycle events and the OpenAI client usage |
 
 Install the SDK once, then install the frameworks you use:
 

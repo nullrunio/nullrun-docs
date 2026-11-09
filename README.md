@@ -26,16 +26,23 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 | Debug 4xx / 5xx responses | [Error codes](https://docs.nullrun.io/reference/errors/) |
 | See the full SDK surface | [SDK API reference](https://docs.nullrun.io/reference/sdk-api/) |
 
-## Full page list
+## Page list
+
+The sidebar on [docs.nullrun.io](https://docs.nullrun.io) is the full list, in
+reading order. For a machine-readable index, see
+[`docs/llms.txt`](docs/llms.txt) and the concatenated corpus at
+`docs/llms-full.txt`.
+
+The pages a newcomer usually needs:
 
 **Getting started**
 - [Install](docs/getting-started/install.md) · `pip install nullrun`, API key, auto-instrumentation
 - [Quickstart](docs/getting-started/quickstart.md) · `@protect` in 30 lines
-- [Configuration](docs/getting-started/configuration.md) · env vars, transport options, gRPC status
+- [Configuration](docs/getting-started/configuration.md) · env vars, transport options
 
 **Concepts**
-- [Circuit breaker](docs/concepts/circuit-breaker.md) · CLOSED / OPEN / HALF_OPEN, `PERMISSIVE`/`STRICT`/`CACHED` fallback modes
-- [Budgets](docs/concepts/budgets.md) · `/gate` pre-flight + server-minted `reservation_id` + `/api/v1/track` single commit
+- [Circuit breaker](docs/concepts/circuit-breaker.md) · CLOSED / OPEN / HALF_OPEN, `STRICT` / `PERMISSIVE` fallback modes
+- [Budgets](docs/concepts/budgets.md) · `/gate` pre-flight + server-minted `execution_id` + `/api/v1/track` single commit
 - [Sensitive tools](docs/concepts/sensitive-tools.md) · fail-CLOSED, always
 - [Workflow context](docs/concepts/workflow.md) · `nullrun.workflow(...)` + `nullrun.chain(...)` + `parent_trace_id` multi-agent attachment
 - [Control plane (WebSocket)](docs/concepts/control-plane.md) · real-time kill / pause / `approval_resolved`
@@ -51,7 +58,7 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 - [Set a hard cost cap](docs/how-to/cost-cap.md)
 
 **Reference**
-- [SDK API](docs/reference/sdk-api.md) · `@protect` (canonical), `@sensitive(impact=...)` (advanced), `workflow`, exceptions
+- [SDK API](docs/reference/sdk-api.md) · `@protect`, `workflow`, `guard`, the exception hierarchy
 - [HTTP API](docs/reference/http-api.md) · `/track`, `/gate`, `/capabilities`, `/heartbeat`, WebSocket
 - [Error codes](docs/reference/errors.md) · `validation_error`, `RateLimitError`, kill contract
 
@@ -61,9 +68,9 @@ Source for the **[docs.nullrun.io](https://docs.nullrun.io)** site.
 
 ## What you need from us
 
-- **API key** — create one in [nullrun.io](https://nullrun.io) → Settings
-  → API keys. You get a `nr_live_…` public identifier. The SDK
-  transparently obtains the HMAC signing secret via
+- **API key** — create one in [nullrun.io](https://nullrun.io) → Control
+  center → Access → API keys. You get a `nr_live_…` public identifier. The
+  SDK transparently obtains the HMAC signing secret via
   `POST /api/v1/auth/verify` on first use.
 - **Python ≥ 3.10** for the SDK.
 - **Nothing else to read the docs** — the site is public.

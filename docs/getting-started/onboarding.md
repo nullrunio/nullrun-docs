@@ -40,53 +40,23 @@ You can create more keys later under **Access → API keys**. Each key is bound 
 pip install nullrun
 ```
 
-The plain `nullrun` package covers every provider built on `httpx` — OpenAI, Azure OpenAI, Anthropic, Gemini, Cohere, Mistral, Bedrock — and the framework hooks for LangGraph, LangChain, OpenAI Agents, LlamaIndex, CrewAI, and AutoGen. No vendor extra is needed. See [Install → optional extras](install.md#optional-extras).
+The plain `nullrun` package is enough. It depends on `httpx` and nothing else, and it hooks the providers and frameworks you already use. See [Install → What gets instrumented](install.md#what-gets-instrumented).
 
 ## 3. Wire NullRun into your code
 
 ### A. You call the provider SDK directly
 
-```python title="my_agent.py"
-import nullrun
-from openai import OpenAI
-from nullrun import protect
-
-client = OpenAI()
-
-
-@protect
-def answer(prompt: str) -> str:
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.choices[0].message.content
-
-
-if __name__ == "__main__":
-    with nullrun.guard():
-        print(answer("What does NullRun do?"))
-```
+Decorate the function that calls the provider. The [Quickstart](quickstart.md) has the full example.
 
 `@protect` is the gate: it asks the gateway for a decision, and it stops the call when the answer is no. Cost tracking is separate — the SDK instruments the HTTP client and books the tokens on its own.
 
 `with nullrun.guard():` catches the refusal, prints the message, and exits with code `1`. Use a plain `try` and `except` when your service has to stay up.
 
+`init()` is optional. The first `@protect` call creates the runtime from `NULLRUN_API_KEY`. Call it when you want a missing key to fail at startup. See [Quickstart → Start the runtime yourself](quickstart.md#start-the-runtime-yourself).
+
 ### B. You use a framework
 
 Auto-instrumentation covers the same ground. See [Use with LangGraph](../how-to/langgraph.md) and the other [framework how-tos](../how-to/llm-frameworks.md).
-
-### Start the runtime yourself
-
-`init()` is optional. The first `@protect` call creates the runtime from `NULLRUN_API_KEY`.
-
-```python title="my_agent.py"
-import nullrun
-
-nullrun.init()
-```
-
-Call it when you want a missing key to fail at startup rather than at the first request. A missing key raises `NullRunAuthenticationError` with the code `NR-C001`. `init()` also registers a clean shutdown on process exit, so the SDK closes its connection without an explicit call.
 
 ## 4. Set the budget
 
@@ -100,7 +70,7 @@ The wizard seeds a Budget Limit policy of `$10` for the new workflow. Open **Gov
 
 A Budget Limit policy has an **Enforcement mode**. `Hard` stops every call once the cap is reached. `Soft` lets calls through inside an overdraft cap.
 
-On a paid plan the period is your billing cycle. On a free workspace it is a rolling month that starts on the day the workspace is created. See [Budgets](../concepts/budgets.md).
+The period window differs by plan. See [Budgets → Periods](../concepts/budgets.md#periods).
 
 ## 5. Run it and watch the decisions
 
@@ -121,7 +91,7 @@ For the raw numbers, `GET /api/v1/orgs/{org_id}/status` returns the spend of the
 
 ## Next
 
-- [5-minute tour → the dashboard end to end](tour.md)
+- [5-minute tour → the control center end to end](tour.md)
 - [Concepts → Circuit breaker](../concepts/circuit-breaker.md)
 - [How-to → Run multiple agents](../how-to/multi-agent.md)
 - [How-to → Stream responses](../how-to/streaming.md)

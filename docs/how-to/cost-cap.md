@@ -1,6 +1,6 @@
 ---
 title: Hard cost cap
-description: Set a per-workflow budget cap, and see what the SDK raises when the cap is reached.
+description: Set a per-workflow budget cap with a BudgetLimit policy or the HTTP API, and see which SDK exception each refusal raises.
 maturity: stable
 ---
 
@@ -14,10 +14,15 @@ protected call and books the real cost after the call returns.
 
 ## Set the cap
 
-In the dashboard: open the workflow, choose **Settings**, set **Budget**
-in cents, and save. `$50.00` is `5000`.
+Two paths set the same cap. Use one or both — the gateway applies the
+lower of the two.
 
-Over the HTTP API, `PATCH` the workflow:
+**In the control center:** open **Governance → Policies**, choose **New
+policy**, set the type to **Budget**, set the scope to the workflow, and
+fill **Max cost (USD/month)**. The field takes dollars. `$50.00` is
+`5000` cents.
+
+**Over the HTTP API:** `PATCH` the workflow:
 
 ```bash title="shell"
 ORG_ID=8a3b1c7d-0000-4000-8000-000000000000
@@ -31,14 +36,20 @@ curl -sS -X PATCH \
   -d '{"budget_cents": 500}'
 ```
 
-`budget_cents` is the only field the request needs. A cap of `0` means
-no per-workflow cap — the call passes through to the organization cap.
+`budget_cents` is the only field the request needs. A cap of `0` on the
+workflow means no per-workflow cap — the call passes through to the
+organization cap.
 
-The key must belong to the organization in the path. The caller also
-needs the Admin role, and the key must be bound to a user. A dashboard
-session works too: replace the `X-API-Key` header with
-`Authorization: Bearer $SESSION_TOKEN`. See
+The key must belong to the organization in the path and must be bound to
+a user. The caller needs the Owner role, or the Admin role on a plan
+that includes role-based access control. A control center session works too:
+replace the `X-API-Key` header with `Authorization: Bearer
+$SESSION_TOKEN`. See
 [HTTP API → Authentication](../reference/http-api.md#authentication).
+
+See [Policies → BudgetLimit](../concepts/policies.md#budgetlimit-extra-fields)
+for the policy fields and
+[Budgets](../concepts/budgets.md) for the period and the counter.
 
 ## Run against the cap
 

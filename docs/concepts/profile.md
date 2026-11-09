@@ -14,7 +14,7 @@ This is not the [Organization](organization.md) page. The organization page edit
 
 | Field | What it does |
 |---|---|
-| **Display name** | How you appear in the dashboard and in audit rows. |
+| **Display name** | How you appear in the control center and in audit rows. |
 | **Email** | The address you sign in with and where notifications reach you. |
 | **Avatar** | Your initials on a colour tile, or the avatar from your identity provider when you signed in with one. |
 

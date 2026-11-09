@@ -1,6 +1,6 @@
 ---
 title: Manual cost and event tracking
-description: Report LLM cost, tool calls, and business events by hand with the runtime tracking methods.
+description: Report LLM cost, tool calls, and business events by hand with the runtime tracking methods, and pair every report with a budget check.
 maturity: stable
 ---
 
@@ -50,7 +50,7 @@ event type as the first argument.
 
 The gateway books a cost against a reservation. The SDK drops an
 `llm_call` event that has no reservation in scope, and logs a warning
-naming the event. Nothing is billed.
+that names the event type and the workflow. Nothing is billed.
 
 Two ways to get a reservation:
 
@@ -69,11 +69,10 @@ total stays too low, so the cap fires late.
 import nullrun
 from nullrun import protect
 
-runtime = nullrun.get_runtime()
-
 
 @protect
 def run_step(response, elapsed_ms: int):
+    runtime = nullrun.get_runtime()
     runtime.track_llm(
         input_tokens=response.usage.prompt_tokens,
         output_tokens=response.usage.completion_tokens,
@@ -81,14 +80,11 @@ def run_step(response, elapsed_ms: int):
         latency_ms=elapsed_ms,
         metadata={"vendor": "internal"},
     )
-    runtime.track_tool(
-        tool_name="send_email",
-        duration_ms=240,
-        is_retry=False,
-        metadata={"to": "user@example.com"},
-    )
     runtime.track_event("agent.milestone", step="research_complete")
 ```
+
+`@protect` reports the tool call itself, under the function name. Call
+`runtime.track_tool` only for a tool the SDK cannot see.
 
 `@protect` uses the function name as the tool name. Name the function
 after the tool the policy matches:
@@ -115,14 +111,16 @@ The policy engine runs on the gate, which `@protect` triggers.
 
 - **The model name is required.** The gateway prices the call from the
   model name and the token counts. An `llm_call` event with no `model`
-  field is refused.
+  field is tagged by the SDK, and the gateway refuses the report with
+  `422`.
 - **Buffering.** LLM events go to the gateway one at a time. Tool events
   and span events go out in batches, flushed on a timer or when the
   batch fills. `init()` registers a shutdown hook that drains the
   buffer, so a clean process exit never loses events.
-- **No dedupe.** Two manual calls with the same payload are two
-  events. The SDK only merges repeats that carry the same
-  auto-instrumentation fingerprint.
+- **Dedupe covers `track_event` only.** The SDK gives a `track_event` a
+  content fingerprint and drops a repeat of the same event.
+  `track_llm` and `track_tool` carry no fingerprint, so two calls with
+  the same payload are two events.
 - **Control-plane checks.** A tracking call reads the workflow state. A
   paused or killed workflow raises out of `track_llm` as well as out of
   `@protect`.

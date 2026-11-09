@@ -17,8 +17,8 @@ There are four roles. They are ranked: every role can do what the roles below it
 
 | Role | Can do |
 |---|---|
-| **Viewer** | Read the dashboard: workflows, executions, traces, the audit log, API keys, and the decision history. Export the audit log is not included — that needs Operator. |
-| **Operator** | Everything a Viewer can do, plus pause and kill workflows, decide approvals, simulate a policy, export the audit log, and run a decision-history replay. |
+| **Viewer** | Read the control center: workflows, executions, traces, the audit log, and API keys. Export the audit log is not included — that needs Operator. |
+| **Operator** | Everything a Viewer can do, plus pause and kill workflows, decide approvals, simulate a policy, and export the audit log. |
 | **Admin** | Everything an Operator can do, plus create and edit workflows, policies, API keys and approval rules, edit the organization, manage MCP servers, and invite and remove members. |
 | **Owner** | Everything an Admin can do, plus change a member's role, manage billing and SSO, and delete the organization. |
 
