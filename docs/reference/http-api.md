@@ -102,8 +102,10 @@ These are the endpoints the SDK calls. You do not normally call them by hand.
 
 ## The gate call
 
-`POST /api/v1/gate` is the entry point of the enforcement path. It checks the
-budget for one action, reserves the money, and answers with a decision.
+`POST /api/v1/gate` is the budget step of the enforcement path. It checks
+the budget for one action, reserves the money, and answers with a decision.
+The tool policy is evaluated at `POST /api/v1/execute`, which the SDK calls
+right after.
 
 ### Request
 
@@ -112,7 +114,7 @@ budget for one action, reserves the money, and answers with a decision.
 | `organization_id` | yes | The org the call runs for. |
 | `execution_id` | yes | The execution this call belongs to. |
 | `trace_id` | yes | The trace this call belongs to. |
-| `mode` | yes | `auto`, `inline`, or `strict`. |
+| `mode` | yes | `auto`, `inline`, or `strict`. The SDK sends `auto` and never sends `inline`. |
 | `tool` | no | One tool name. The gate reads `tool` or `tools`, never `tool_name`. |
 | `tools` | no | A list of tool names the caller intends to use. |
 | `model` | no | The model the call will use, for an LLM check. |
@@ -126,6 +128,8 @@ budget for one action, reserves the money, and answers with a decision.
 | `business_impact` | no | The value the call moves. Omit it when there is none. |
 | `action_digest` | no | Digest of the business impact, re-sent on the re-check. |
 | `tool_class` | no | `builtin`, `mcp`, `custom`, or `invalid`. |
+| `tool_arguments` | no | The tool-call arguments, as a JSON object. An approval rule that matches on arguments reads this bag. |
+| `tool_params` | no | The older name for the same bag. The gate reads `tool_arguments` first. |
 | `parent_execution_id` | no | The execution that spawned this one. |
 
 `business_impact` has two kinds. There is no `none` kind — omit the field

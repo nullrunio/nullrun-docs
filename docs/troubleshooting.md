@@ -11,10 +11,11 @@ Format: symptom → cause → fix. If your case is not here, see the
 control center's **Help → Send feedback** form with the `workflow_id` and
 the failing decision id.
 
-!!! info "The endpoint that enforces"
-    The enforcement endpoint is **`POST /api/v1/gate`**. The server
-    answers `410 Gone` on `POST /api/v1/check`, so a client that
-    calls `/check` never reaches enforcement. The SDK calls `/gate`.
+!!! info "The endpoints that enforce"
+    The server answers `410 Gone` on `POST /api/v1/check`, so a client
+    that calls `/check` never reaches enforcement. The SDK calls
+    **`POST /api/v1/gate`** for the budget and **`POST /api/v1/execute`**
+    for the tool policy. Both refuse the call when a rule says no.
 
 ## The gate refused the call
 
