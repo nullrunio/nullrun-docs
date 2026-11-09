@@ -1,127 +1,135 @@
 ---
-title: Streaming
-description: Use @protect on a stream iterator so the gate's Cancel decision can stop a live response the moment an overrun is detected.
+title: Streaming responses
+description: Gate a streamed LLM response, keep the chain alive while the stream runs, and report the cost of a stream.
+maturity: stable
 ---
 
 # Stream LLM responses
 
-The SDK tracks streaming responses correctly — every chunk is
-forwarded to your caller in real time, and the cost is reported from
-the final chunk (which carries the `usage` block).
+Two things make streaming different from a normal call: the response
+arrives in pieces, and the run can take longer than a single gate
+decision covers.
 
-## The pattern
+## Protect the call, not the generator
 
-```python title="streaming_agent.py"
-import nullrun
+`@protect` wraps a function call. A function that yields is not a call
+that finishes: the body runs later, when the caller iterates. The SDK
+has no generator support, so a protected generator runs its body
+outside the gate.
+
+Protect the function that opens the stream instead. The gate runs when
+the stream is created:
+
+```python title="stream_answer.py"
+import uuid
+
 from openai import AsyncOpenAI
-from nullrun import protect
+from nullrun import chain, protect
 
-# The first @protect call creates the runtime lazily.
 client = AsyncOpenAI()
 
 
 @protect
-async def stream_answer(prompt: str):
-    stream = await client.chat.completions.create(
+async def open_stream(prompt: str):
+    return await client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         stream=True,
     )
-    async for chunk in stream:
-        yield chunk.choices[0].delta.content or ""
-```
 
-The transport hook reads the final `usage` block before emitting
-`/track`, while forwarding chunks to your caller in real time.
 
-## Long streams and soft mode
-
-A long stream that exceeds the chain idle TTL (300s) will be killed
-mid-chunk. The SDK sends a wall-clock heartbeat every **30 seconds**
-per policy (configurable in `[10s, 120s]`) — not per chunk. For
-multi-minute responses, use a `chain` context to keep the gate
-alive:
-
-```python
-@protect
-def long_stream(prompt: str):
-    with chain("my-long-stream", op="start"):
-        stream = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            stream=True,
-        )
-        for chunk in stream:
+async def answer(prompt: str):
+    chain_id = str(uuid.uuid4())
+    with chain(chain_id, op="start"):
+        stream = await open_stream(prompt)
+        async for chunk in stream:
             yield chunk.choices[0].delta.content or ""
 ```
 
-For budget headroom, set `enforcement_mode = "Soft"` on the policy.
-See
-[Chain context](../concepts/workflow.md#chain-context).
+The alternative is to protect each step of the loop. That gives the
+gate one decision per chunk, which costs a round trip per chunk.
+
+## Keep the chain alive
+
+A chain closes after five minutes without a protected call, or when
+`max_chain_duration_seconds` is exceeded. It defaults to 3600 seconds.
+
+Send a heartbeat while the stream runs. `ping_chain` schedules them on
+a wall-clock timer and returns a callable that stops the schedule:
+
+```python title="stream_with_heartbeat.py"
+import uuid
+
+from openai import AsyncOpenAI
+from nullrun import chain, get_runtime, protect
+
+client = AsyncOpenAI()
+
+
+@protect
+async def open_stream(prompt: str):
+    return await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        stream=True,
+    )
+
+
+async def answer(prompt: str):
+    runtime = get_runtime()
+    chain_id = str(uuid.uuid4())
+    with chain(chain_id, op="start"):
+        stop = runtime.ping_chain(chain_id)
+        try:
+            stream = await open_stream(prompt)
+            async for chunk in stream:
+                yield chunk.choices[0].delta.content or ""
+        finally:
+            stop()
+```
+
+`ping_chain` sends a heartbeat every 30 seconds by default. The
+interval must stay between 10 and 120 seconds.
 
 ### Chain heartbeat
 
-The SDK keeps the chain alive with a wall-clock heartbeat every
-**30 seconds** by default (configurable per policy in `[10s, 120s]`).
-The interval is time-based, not chunk-based: a slow stream with one
-chunk per minute still gets a heartbeat; a fast stream does not spam
-them.
+The interval is wall-clock, not chunk-based. One chunk per minute still
+gets a heartbeat, and a fast stream does not flood the server.
 
-If the chain dies (idle TTL expired, max duration exceeded, or
-`op="end"`), the SDK raises `WorkflowKilledInterrupt` at the next
-`yield` boundary.
+A failed heartbeat is logged and ignored. The chain then closes when
+its idle window runs out.
 
-## Kill signal mid-stream
+## What the SDK does with the chunks
 
-An operator hit on **Kill** raises `WorkflowKilledInterrupt` (alias
-`NullRunWorkflowKilledError`) at the next `yield` boundary. It is a
-`NullRunError` subclass — caught by `except Exception:` like every
-other SDK error. If you want kill-specific handling (close the
-stream, flush state), catch the typed alias explicitly first and
-re-raise after.
+The HTTP client you use decides how the chunks reach your code.
 
-### Cancellation latency
+| HTTP client | When the chunks reach your code | Cost tracked for you |
+|---|---|---|
+| `httpx` | After the whole body has been read | Yes |
+| `requests` | As they arrive | No |
 
-The kill signal typically arrives at the SDK within ~100 ms of the
-operator clicking **Kill** (WebSocket push path). If the WebSocket
-is unavailable and polling fallback is active, latency rises to the
-poll interval (default **1 s**) plus the next `/gate` boundary.
-For long-running streams, keep the WS connection healthy and
-avoid restrictive outbound firewalls on the SDK host.
+The OpenAI and Anthropic SDKs are built on `httpx`. The SDK reads the
+body in full so it can read the usage block that arrives in the last
+chunk. The chunks then reach your code together.
 
-```python
-from nullrun import WorkflowKilledInterrupt
+The `requests` path leaves a streamed body alone, so the chunks arrive
+in real time. The SDK cannot read the usage block, so it reports the
+call as untracked and the cost stays at zero.
 
-@protect
-async def stream_kill_safe(prompt: str):
-    stream = await client.chat.completions.create(
-        model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}],
-        stream=True,
-    )
-    try:
-        async for chunk in stream:
-            yield chunk.choices[0].delta.content or ""
-    except WorkflowKilledInterrupt:
-        await stream.close()
-        raise
-```
+## Report a stream by hand
 
-## Tracking without auto-instrumentation
+Report the call yourself when the SDK does not see it. Use
+`stream_options={"include_usage": True}` so the last chunk carries the
+usage block:
 
-If the SDK's httpx transport hook can't see your custom streaming
-client (a vendor SDK that bypasses httpx), call `track_llm` manually
-after the stream ends. Use `stream_options={"include_usage": True}`
-so the final chunk carries the usage block; otherwise you have to
-estimate. See
-[OpenAI streaming reference](https://platform.openai.com/docs/api-reference/chat-streaming).
+```python title="track_stream.py"
+from openai import OpenAI
+from nullrun import get_runtime
 
-```python
-import nullrun
-from nullrun import protect
+client = OpenAI()
 
 
-@protect
-def custom_stream(prompt: str):
+def stream_with_cost(prompt: str):
     stream = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
@@ -132,28 +140,51 @@ def custom_stream(prompt: str):
     for chunk in stream:
         final = chunk
         yield chunk.choices[0].delta.content or ""
-    if final and getattr(final, "usage", None):
-        nullrun.get_runtime().track_llm(
-            input_tokens=final.usage.prompt_tokens,
-            output_tokens=final.usage.completion_tokens,
+
+    usage = getattr(final, "usage", None)
+    if usage:
+        get_runtime().track_llm(
+            input_tokens=usage.prompt_tokens,
+            output_tokens=usage.completion_tokens,
             model="gpt-4o-mini",
         )
 ```
 
-Without `track_llm()` the budget counter is never credited and the
-next `/gate` may reject the next call based on stale spend.
+A report the SDK already made adds the tokens a second time. Report a
+call once.
 
-## Common pitfalls
+## Kill during a stream
 
-| Pitfall | Symptom | Fix |
-|---|---|---|
-| Heartbeat every N chunks | Chain dies silently during slow streams | Heartbeat on a wall-clock timer (30s default) |
-| `await stream.close()` after kill | Half-written chunks can leak to the caller | Wrap the stream in `try/finally`, always close |
-| Catching only `Exception` around the loop with no kill handler | Kill still propagates but with no cleanup hook | Catch `NullRunWorkflowKilledError` explicitly first to close the stream |
-| Forgetting `track_llm()` after a manual stream | Dashboard shows zero cost, budget never decremented | Always report final usage, even via estimation |
+An operator kill reaches the SDK over the control-plane connection. It
+surfaces at the next protected call.
+
+| Protected function | What propagates |
+|---|---|
+| Async | `WorkflowKilledInterrupt` |
+| Sync | `NullRunBlockedException` with `error_code` `NR-W002` |
+
+A chunk loop over an open stream holds no protected call, so the kill
+lands on the next stream you open. Catch it by name and close the
+stream:
+
+```python title="kill_handling.py"
+from nullrun import WorkflowKilledInterrupt
+
+
+async def answer(prompt: str):
+    stream = None
+    try:
+        stream = await open_stream(prompt)
+        async for chunk in stream:
+            yield chunk.choices[0].delta.content or ""
+    except WorkflowKilledInterrupt:
+        if stream is not None:
+            await stream.close()
+        raise
+```
 
 ## See also
 
-- [Chain context → soft mode](../concepts/workflow.md#chain-context)
-- [Errors → kill contract](../reference/errors.md#sdk-exception-hierarchy-python)
-- [Use with FastAPI](../how-to/fastapi.md) — streaming inside ASGI handlers
+- [Chain context](../concepts/workflow.md#chain-context)
+- [Errors → SDK exception hierarchy](../reference/errors.md#sdk-exception-hierarchy)
+- [Manual cost and event tracking](custom-tracking.md)

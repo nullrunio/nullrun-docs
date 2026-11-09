@@ -1,361 +1,458 @@
 ---
-title: Http Api
-description: "Every NullRun HTTP endpoint: /api/v1/gate, /api/v1/track, /api/v1/capabilities, /api/v1/heartbeat, and the control-plane WebSocket protocol."
+title: HTTP API
+description: The NullRun HTTP surface: the endpoints the SDK calls, the protocol header, request signing, idempotency, and the control-plane endpoints.
+maturity: stable
 ---
 
 # HTTP API
 
-This page lists the endpoints a user — or their SDK — actually
-calls. Internal admin endpoints (pricing backfill, gateway operator
-APIs) are not exposed here; see the gateway repo for the full
-internal surface.
+Base URL: `https://api.nullrun.io`.
 
-Base URL:
+REST paths start with `/api/v1`. The WebSocket control plane path does not.
 
-- Production: `https://api.nullrun.io/api/v1`
-- WebSocket control plane: `wss://api.nullrun.io/ws/control/{org_id}`
+Every response body is JSON.
 
-The `{org_id}` for the WebSocket comes from the credential bundle
-returned by `POST /api/v1/auth/verify` (`organization_id` field).
-The SDK negotiates this automatically — only set the URL by hand
-when you are building a custom WebSocket client.
+## Protocol header
 
-Endpoint behaviour is defined by the gateway router; this page is
-the reader-facing summary of the routes a user or an SDK calls.
+Every request to a gateway endpoint carries the wire-protocol version:
+
+```http title="HTTP"
+X-NULLRUN-PROTOCOL: 4
+```
+
+The value is a bare integer. The gateway accepts 2 to 11, and its current
+version is 11. The SDK sends 4 on every call, so you never set the header by
+hand. A missing or unsupported version answers `400`.
 
 ## Authentication
 
-Two schemes — they are **not interchangeable**.
+Two schemes. They are not interchangeable.
 
-### `X-API-Key` + HMAC (SDK → gateway)
+| Caller | Headers | Credential |
+|---|---|---|
+| SDK | `X-API-Key` | The API key, for example `nr_live_...` |
+| SDK with request signing | `X-API-Key`, `X-Signature`, `X-Signature-Timestamp` | The API key plus the signing secret |
+| Dashboard | `Authorization: Bearer <session_token>` | A session token from `POST /api/v1/auth/login` |
 
-All SDK-traffic endpoints (`/track`, `/track/batch`, `/gate`,
-`/execute`, `/check`) require:
+The enforcement path reads `X-API-Key`. It does not read
+`Authorization: Bearer`, so a call that carries only the bearer token answers
+`401` with `API_KEY_MISSING`. The SDK sends both headers.
 
-| Header | Value |
-| --- | --- |
-| `X-API-Key` | API key (`nr_live_...`) |
-| `X-Signature` | hex(HMAC-SHA256(`secret_key`, `timestamp:api_key:body_sha256`)) |
-| `X-Signature-Timestamp` | Unix epoch seconds (rejected if older than `NULLRUN_HMAC_MAX_AGE_SECS`, default 300) |
-| `X-Workflow-Id` *(optional)* | binds the call to a workflow context |
+The signing secret is separate from the API key. It arrives in the
+`POST /api/v1/auth/verify` response as `secret_key`.
 
-The SDK computes and signs every request automatically once
-`NULLRUN_API_KEY` and `NULLRUN_SECRET_KEY` are set. The gateway
-default for `NULLRUN_HMAC_REQUIRED` is `false` — operators must set
-it explicitly to `true` in production. When
-`NULLRUN_HMAC_REQUIRED=true`, unsigned SDK requests are rejected
-with 401 and the SDK-auth middleware emits a per-request WARN so
-the gap is visible in logs.
+The signature is the hex-encoded HMAC-SHA256 of this string, keyed with the
+signing secret:
 
-> SDK requests to `/api/v1/orgs/{org_id}/*` are also checked for
-> org-mismatch: the org claimed in the URL must match the org the
-> API key was minted for. Mismatch → 403.
+```text title="Signature"
+<timestamp>:<api_key>:<sha256_hex_of_the_request_body>
+```
 
-### `Authorization: Bearer <session_token>` (dashboard / admin)
+`X-Signature-Timestamp` carries the Unix epoch seconds used in the signature.
+The gateway rejects a stale timestamp with `401`.
 
-Dashboard endpoints (`/orgs/...`, `/admin/...`) use session tokens
-obtained from `POST /api/v1/auth/login` or the OAuth flow
-(`/auth/oauth/register`). Pass as `Authorization: Bearer <token>`.
+The SDK computes the signature for every request on its own. A request body is
+signed as the exact bytes that go on the wire. Signing covers the enforcement
+calls: `POST /api/v1/gate`, `POST /api/v1/execute`, `POST /api/v1/track`, and
+`POST /api/v1/track/batch`.
 
 ## SDK endpoints
 
-These are the endpoints the SDK calls. You will not normally hit
-them by hand, but the contracts are stable and the OpenAPI spec
-documents every field.
+These are the endpoints the SDK calls. You do not normally call them by hand.
 
-| Method | Path | Called by |
-| --- | --- | --- |
-| `POST` | `/api/v1/auth/verify` | `init()` — verifies the API key and returns the full credential bundle (HMAC `secret_key`, org context, plan, `workflow_id`, `key_version`, etc.) |
-| `GET` | `/api/v1/capabilities` | `init()` — protocol negotiation |
-| `POST` | `/api/v1/gate` | Pre-flight + policy evaluation + budget reservation (called from `@protect` entry) |
-| `POST` | `/api/v1/track` | Single-event commit (`reservation_id` + `idempotency_key`) |
-| `POST` | `/api/v1/track/batch` | Batched events (≤ 100 per batch) — opt-in fallback when single-event is disabled |
-| `GET` | `/api/v1/orgs/{org_id}/policies` | Policy fetch (called from SDK on first `@protect` and on `policy_invalidated` WS push) |
-| `GET` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Workflow lookup (called from SDK on first gate per workflow) |
-| `GET` | `/api/v1/orgs/{org_id}/status` | Control-plane poll fallback (only used when WS is down) |
-| `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat |
-| `POST` | `/api/v1/cancel` | Cancel an in-flight execution. Idempotent; the reservation TTL cleans up even if the call doesn't reach the gateway. |
-| `POST` | `/api/v1/execute` | Per-tool invocation with gate pre-flight and budget reservation. Used by `MCPAdapter` so MCP tool calls pass the same policies as `@protect`-decorated functions. |
+| Method | Path | What it does |
+|---|---|---|
+| `POST` | `/api/v1/auth/verify` | Verifies the API key. Returns the credential bundle: `organization_id`, `workflow_id`, `secret_key`, `key_version`, plan, features, limits. |
+| `GET` | `/api/v1/capabilities` | Reports the supported wire-protocol range, the recommended SDK version, and the feature flags. |
+| `POST` | `/api/v1/gate` | Checks the budget for one action and reserves it. Returns the decision and a server-minted `execution_id`. Sending `chain_op: "end"` closes a chain. |
+| `POST` | `/api/v1/execute` | Evaluates the policy for one tool call. This is the primary enforcement point. |
+| `POST` | `/api/v1/track` | Commits one spend event against a reservation. |
+| `POST` | `/api/v1/track/batch` | Commits up to 100 spend events in one request. |
+| `POST` | `/api/v1/approvals/{approval_id}/consume` | Closes an approved grant without running the tool. Idempotent. |
+| `POST` | `/api/v1/heartbeat` | Reports that a long-running workflow is still alive. The body carries `chain_id`. |
+| `POST` | `/api/v1/cancel` | Cancels an in-flight execution. Idempotent. |
+| `GET` | `/api/v1/status/{workflow_id}` | Reads the state of one workflow. The SDK polls this when the WebSocket is unavailable. |
+| `GET` | `/api/v1/budget/approximate` | Returns the approximate budget view. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log` | Lists audit entries. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/verify` | Verifies the audit trail. |
+| `GET`, `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | Starts an export job and returns a job id. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/status` | Reports the export job status. |
+| `WS` | `/ws/control/{organization_id}` | Streams control-plane events: kill, pause, approval decisions, key rotation. |
 
-## Auth
+`POST /api/v1/check` is not served. It answers `410` and names
+`POST /api/v1/gate` as the path to use.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/auth/register` | Create account, returns API key + secret |
-| `POST` | `/api/v1/auth/login` | Dashboard session token |
-| `POST` | `/api/v1/auth/verify` | Verify API key + return full credential bundle |
-| `POST` | `/api/v1/auth/oauth/register` | OAuth signup (returns API key + secret) |
+### The credential bundle
 
-#### `POST /api/v1/auth/verify` response fields
+`POST /api/v1/auth/verify` answers with the fields the SDK needs to run.
 
 | Field | Type | Notes |
-| --- | --- | --- |
-| `organization_id` | string (UUID) | Canonical org identifier |
-| `organization_name` | string \| null | Canonical org display name |
-| `plan` | string | Plan tier (`lite`, `starter`, `growth`, `scale`, `enterprise_unlimited`, …) |
-| `features` | object | Plan-feature flags resolved for this org |
-| `limits` | object | Plan-limits block (workflows, seats, …) |
-| `role` | string \| null | Member role; `null` on API-key path — SDK treats `null` as "role unknown, escalate to session auth" |
-| `workflow_id` | string \| null | Workflow this API key is bound to; `null` on an unbound key |
-| `secret_key` | string \| null | HMAC secret the SDK uses to sign requests — distinct from the API key itself |
-| `key_version` | number \| null | Current active HMAC key version; SDK compares against its cached value to detect rotation |
+|---|---|---|
+| `organization_id` | string | The org the key belongs to. Required — a response without it is an error. |
+| `organization_name` | string \| null | The org display name. |
+| `plan` | string | The plan tier. |
+| `features` | object | The plan's feature flags. |
+| `limits` | object | The plan's limits. |
+| `role` | string \| null | The member role. `null` on the API-key path. |
+| `workflow_id` | string \| null | The workflow the key is bound to. `null` on an unbound key. |
+| `secret_key` | string \| null | The signing secret. `null` when the key does not sign. |
+| `key_version` | number \| null | The active signing-secret version. A change means the secret rotated. |
 
-## Workflows
+## The gate call
+
+`POST /api/v1/gate` is the entry point of the enforcement path. It checks the
+budget for one action, reserves the money, and answers with a decision.
+
+### Request
+
+| Field | Required | Notes |
+|---|---|---|
+| `organization_id` | yes | The org the call runs for. |
+| `execution_id` | yes | The execution this call belongs to. |
+| `trace_id` | yes | The trace this call belongs to. |
+| `mode` | yes | `auto`, `inline`, or `strict`. |
+| `tool` | no | One tool name. The gate reads `tool` or `tools`, never `tool_name`. |
+| `tools` | no | A list of tool names the caller intends to use. |
+| `model` | no | The model the call will use, for an LLM check. |
+| `estimated_tokens` | no | The input-token estimate, for an LLM check. |
+| `max_output_tokens` | no | The caller's own output-token ceiling. |
+| `check_type` | no | `llm` or `tool`. |
+| `workflow_id` | no | The workflow the call runs for. |
+| `chain_id` | no | The chain the call belongs to. |
+| `chain_op` | no | `start`, `continue`, or `end`. |
+| `approval_id` | no | The approval presented on the post-approval re-check. |
+| `business_impact` | no | The value the call moves. Omit it when there is none. |
+| `action_digest` | no | Digest of the business impact, re-sent on the re-check. |
+| `tool_class` | no | `builtin`, `mcp`, `custom`, or `invalid`. |
+| `parent_execution_id` | no | The execution that spawned this one. |
+
+`business_impact` has two kinds. There is no `none` kind — omit the field
+instead.
+
+| `kind` | Fields |
+|---|---|
+| `money` | `direction` (`outflow` or `inflow`), `amount_minor` in cents, `currency`. |
+| `tool_call` | `tool_name`, `params`. |
+
+### Decision values
+
+| Decision | Meaning |
+|---|---|
+| `allow` | The call may run. |
+| `block` | The call may not run. |
+| `require_approval` | The call may run after an operator approves it. The answer carries an `approval_id`. |
+| `soft_pass` | The call runs, and the event is recorded for review. |
+| `deny` | The call may not run, and the model may adapt and try something else. |
+
+### Response
+
+| Field | Notes |
+|---|---|
+| `decision` | One of the five values above. |
+| `decision_source` | Which rule produced the decision. |
+| `explanation` | The reason, in human text. |
+| `execution_id` | The server-minted id for this execution. |
+| `approval_id` | The approval to wait on. Present on `require_approval`. |
+| `remaining_budget_cents` | The budget left in the period, in cents. |
+| `projected_cost_cents` | The reserved cost, in cents. |
+| `retry_after_ms` | How long to wait, in milliseconds. |
+| `action_digest` | The digest the gateway recorded for the approval. |
+| `category` | `denied`, `budget`, `halt`, or `infra`. |
+| `budget_enforcement` | `enforced`, `not_configured`, or `unknown`. |
+| `user_message` | Text to show the user. |
+| `agent_message` | Text to show the model. |
+
+### Money units
+
+Three units appear on the wire. They are not interchangeable.
+
+| Unit | Where it appears |
+|---|---|
+| Cents, integer | The request wire: `cost_cents`, `reserved_cost_cents`, `budget_cents`, `threshold_cents`, `amount_minor`, `threshold_minor`, `projected_cost_cents`, `remaining_budget_cents`. |
+| Millicents, integer | The ledger and the lease responses: `cost_millicents`, `granted_millicents`, `spent_millicents`, `monthly_cost_millicents`. One millicent is 1/1000 of a cent. |
+| US dollars, float | The track response snapshot: `total_cost_usd`, `cost_usd`, `rate_per_minute`. |
+
+A field named `projected_cost_millicents` does not exist on the wire. The gate
+reports `projected_cost_cents`.
+
+## Idempotency
+
+Two body fields carry the idempotency key.
+
+| Field | Sent on | Value |
+|---|---|---|
+| `idempotency_key` | `/api/v1/gate`, `/api/v1/track` | A UUID v4 minted by the SDK for the logical action. |
+| `operation_id` | `/api/v1/gate`, `/api/v1/execute` | The SDK's name for the same value. |
+
+The gateway binds the reservation to the key, so a repeated call with the same
+key settles the same action instead of charging twice. The SDK reuses one
+`operation_id` for the whole gate-then-execute-then-track sequence of a single
+action.
+
+Two endpoints are idempotent by contract and need no key from you:
+
+- `POST /api/v1/cancel` — a second call on the same execution is a no-op.
+- `POST /api/v1/approvals/{approval_id}/consume` — an already-consumed grant
+  answers `200`.
+
+## Control-plane endpoints
+
+These endpoints drive the dashboard and the control plane. They are not part
+of the SDK's request path.
+
+### Workflows
 
 | Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/orgs/{org_id}/workflows` | Create workflow |
-| `GET` | `/api/v1/orgs/{org_id}/workflows` | List workflows |
-| `GET` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Get workflow |
-| `PATCH` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Update (budget, name, …) |
-| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/pause` | Pause (broadcasts `state_change` over WS) |
-| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/resume` | Resume |
-| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/kill` | Kill (broadcasts `state_change` over WS) |
+|---|---|---|
+| `POST` | `/api/v1/orgs/{org_id}/workflows` | Create a workflow. |
+| `GET` | `/api/v1/orgs/{org_id}/workflows` | List workflows. |
+| `GET` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Get one workflow. |
+| `PATCH` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Update the budget, the name, and other settings. |
+| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/pause` | Pause the workflow. |
+| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/resume` | Resume the workflow. |
+| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/kill` | Kill the workflow. |
 
-## Policies
+The create body carries `name`, `external_id`, and an optional `budget_cents`.
+The org-scope key is `external_id`: two workflows may share a `name`, and a
+repeated `external_id` matches the existing workflow.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/orgs/{org_id}/policies` | Create |
-| `GET` | `/api/v1/orgs/{org_id}/policies` | List (a single policy is not addressable by id — read it from the list response) |
-| `PATCH` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | Update |
-| `DELETE` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | Delete |
-| `POST` | `/api/v1/orgs/{org_id}/policies/{policy_id}/toggle` | Toggle a policy active/inactive (dashboard PATCH 404 fix) |
-| `GET` | `/api/v1/orgs/{org_id}/policies/templates` | List policy templates |
-| `POST` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}/enable` | Enable a template |
-| `DELETE` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}` | Disable a template |
-
-Most-restrictive-wins composition across applicable policies — see [Concepts → Policies](../concepts/policies.md).
-
-## Approvals
-
-Programmatic approval / denial — useful for on-call bots and CI
-runbooks. Dashboard uses the same endpoints internally. See
-[Concepts → Human approval](../concepts/human-approval.md) for the
-end-to-end flow.
+### Policies
 
 | Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/orgs/{org_id}/approvals/{approval_id}/approve` | Approve a pending approval. Idempotent — already-approved returns `409 approval_already_decided`. |
-| `POST` | `/api/v1/orgs/{org_id}/approvals/{approval_id}/deny` | Deny a pending approval. The SDK raises `WorkflowKilledInterrupt` for the parked agent. |
-| `POST` | `/api/v1/approvals/{approval_id}/consume` | Close an `APPROVED` approval row without invoking the approved tool. Called by the SDK on the success path after a `require_approval` round-trip resolves to `outcome=approved`, and on the operator-cancel path. Idempotent — `consumed` / `already_consumed` / `not_approved` all return 200. Org identity is derived from the API key (no `{org_id}` segment in the path). |
+|---|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/policies` | List policies. A single policy is not addressable by id — read it from the list. |
+| `POST` | `/api/v1/orgs/{org_id}/policies` | Create a policy. |
+| `PATCH` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | Update a policy. |
+| `DELETE` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | Delete a policy. |
+| `POST` | `/api/v1/orgs/{org_id}/policies/{policy_id}/toggle` | Switch a policy between active and inactive. |
+| `GET` | `/api/v1/orgs/{org_id}/policies/templates` | List policy templates. |
+| `POST` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}/enable` | Enable a template. |
+| `DELETE` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}` | Disable a template. |
 
-## Executions, audit, observability
+The most restrictive applicable policy wins. See
+[Concepts → Policies](../concepts/policies.md).
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/v1/orgs/{org_id}/executions` | List executions |
-| `GET` | `/api/v1/orgs/{org_id}/executions/{execution_id}` | One execution |
-| `GET` | `/api/v1/orgs/{org_id}/audit-log` | Audit trail |
-| `GET` | `/api/v1/orgs/{org_id}/audit-log/export` | Start an async audit-log export job (returns a job id) |
-| `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | Same — POST variant, useful from web forms |
-| `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/status` | Poll export job status (`pending` / `ready` / `failed`) |
-| `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/download` | Download the exported file once status is `ready` |
-| `GET` | `/api/v1/orgs/{org_id}/traces` | List trace spans |
-| `GET` | `/api/v1/orgs/{org_id}/traces/{trace_id}` | One trace (full span tree) |
-| `GET` | `/api/v1/orgs/{org_id}/incidents` | Active and recent incidents (rate-limit outages, budget overruns, etc.) |
-| `GET` | `/api/v1/orgs/{org_id}/dashboard` | Dashboard payload |
-| `GET` | `/api/v1/orgs/{org_id}/control-center` | Single-call control-center view (workflows + recent decisions + alerts) |
-| `GET` | `/api/v1/orgs/{org_id}/usage` | Per-key usage breakdown (canonical) |
-| `GET` | `/api/v1/orgs/{org_id}/quota` | Per-key usage breakdown — an alias of `/usage`, same payload |
-| `GET` | `/api/v1/budget/approximate` | Approximate budget view for UI display — see [Budgets → Approximate budget endpoint](../concepts/budgets.md#approximate-budget-endpoint) |
-| `GET` | `/api/v1/orgs/{org_id}/status` | Single-call dashboard status (budget + rate + plan limits + time-to-exhaustion) |
+A policy body carries:
 
-### Cancellations
+| Field | Values |
+|---|---|
+| `policy_type` | `rate_limit`, `budget_limit`, or `tool_block`. |
+| `scope` | `org` or `workflow`. |
+| `enforcement_mode` | `Hard` or `Soft`. |
 
-`POST /api/v1/cancel` cancels an in-flight execution. Cancellation is
-idempotent — calling it twice on the same execution is a no-op and
-releases the reservation by TTL even if the call never reaches the
-gateway. See [Control plane](../concepts/control-plane.md) for the
-related kill / pause endpoints.
+The config keys depend on `policy_type`.
 
-## Org management
+| `policy_type` | Config keys |
+|---|---|
+| `rate_limit` | `max_calls_per_minute`. An integer. `0` means no limit. |
+| `budget_limit` | `budget_cents`. An integer number of cents. |
+| `tool_block` | `tool_pattern` — one glob — plus `blocked_tools`, `tools`, and `parameter_conditions`. |
+
+The tool-block key is `tool_pattern`, singular. The plural `tool_patterns` is
+rejected with `422`.
+
+### Approvals
 
 | Method | Path | Purpose |
-| --- | --- | --- |
-| `GET/PATCH/DELETE` | `/api/v1/orgs/{org_id}` | Org settings, update, delete |
-| `GET` | `/api/v1/orgs/{org_id}/api-keys` | List keys |
-| `POST` | `/api/v1/orgs/{org_id}/api-keys` | Mint key |
-| `DELETE` | `/api/v1/orgs/{org_id}/api-keys/{key_id}` | Revoke key |
-| `POST` | `/api/v1/orgs/{org_id}/api-keys/{key_id}/rotate` | Rotate the HMAC secret in place |
-| `GET` | `/api/v1/workflows/{workflow_id}/api-keys` | Per-workflow key listing |
-| `GET` | `/api/v1/orgs/{org_id}/members` | Members |
-| `PATCH` | `/api/v1/orgs/{org_id}/members/{member_id}` | Update member role |
-| `DELETE` | `/api/v1/orgs/{org_id}/members/{member_id}` | Remove member |
-| `POST` | `/api/v1/orgs/{org_id}/invites` | Invite |
-| `DELETE` | `/api/v1/orgs/{org_id}/invites/{invite_id}` | Revoke invite |
-| `POST` | `/api/v1/orgs/{org_id}/invites/{invite_id}/resend` | Resend invite email |
-| `GET` | `/api/v1/invites/{token}` | Public invite info |
-| `POST` | `/api/v1/invites/{token}/accept` | Public invite accept |
-| `POST` | `/api/v1/invites/{token}/decline` | Public invite decline |
+|---|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/approvals` | List approvals. |
+| `POST` | `/api/v1/orgs/{org_id}/approvals/{approval_id}/approve` | Approve a pending approval. An already-decided approval answers `409`. |
+| `POST` | `/api/v1/orgs/{org_id}/approvals/{approval_id}/deny` | Deny a pending approval. |
+| `GET` | `/api/v1/orgs/{org_id}/approvals/history` | List decided approvals. |
 
-## Alerts
+### Executions, audit, and usage
 
 | Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/v1/orgs/{org_id}/alerts` | Active alerts |
-| `POST` | `/api/v1/orgs/{org_id}/alerts/{alert_id}/dismiss` | Dismiss |
-| `GET/POST` | `/api/v1/orgs/{org_id}/alert-channels` | Channels |
-| `GET/PATCH` | `/api/v1/orgs/{org_id}/notification-settings` | Per-user settings |
+|---|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/executions` | List executions. |
+| `GET` | `/api/v1/orgs/{org_id}/executions/{execution_id}` | Get one execution. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log` | List audit entries. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/verify` | Verify the audit trail. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export` | Start an export job. |
+| `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | Start an export job. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/status` | Poll the export job. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/download` | Download the exported file. |
+| `GET` | `/api/v1/orgs/{org_id}/traces` | List trace spans. |
+| `GET` | `/api/v1/orgs/{org_id}/traces/{trace_id}` | Get one trace with its full span tree. |
+| `GET` | `/api/v1/orgs/{org_id}/incidents` | List active and recent incidents. |
+| `GET` | `/api/v1/orgs/{org_id}/usage` | Usage breakdown. |
+| `GET` | `/api/v1/orgs/{org_id}/quota` | Usage breakdown. Same payload as `/usage`. |
+| `GET` | `/api/v1/orgs/{org_id}/dashboard` | Dashboard payload. |
+| `GET` | `/api/v1/orgs/{org_id}/control-center` | Workflows, recent decisions, and alerts in one call. |
 
-## Health
-
-Health endpoints are registered on the gateway's top-level router
-— they are **not** under `/api/v1`. They return `200 OK` when healthy,
-`503` otherwise, with a JSON body listing each dependency's status.
+### Budget and status
 
 | Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/health` | Alias for `/health/live` |
-| `GET` | `/healthz` | Alias for `/health/live` (Kubernetes convention) |
-| `GET` | `/health/live` | Liveness — process is up and accepting connections |
-| `GET` | `/health/ready` | Readiness — Postgres + Redis reachable |
-| `GET` | `/health/startup` | Startup — `200` after migrations complete, `503` while booting |
+|---|---|---|
+| `GET` | `/api/v1/budget/approximate` | Approximate budget view for display. See [Budgets](../concepts/budgets.md#approximate-budget-endpoint). |
+| `GET` | `/api/v1/orgs/{org_id}/status` | One call with the spend, the budget, the rate usage, the plan limits, and the plan. |
+
+`GET /api/v1/budget/approximate` answers with the estimate and its
+provenance.
+
+| Field | Notes |
+|---|---|
+| `org_id` | The org the estimate belongs to. |
+| `current_spend_cents_estimate` | The estimated spend. |
+| `is_approximate` | Always `true`. The endpoint is advisory only. |
+| `source` | Where the number came from. |
+| `confidence` | How stale the number may be. |
+| `last_updated_at` | ISO-8601 UTC of the read. |
+
+The endpoint answers `503` when it cannot produce an estimate. The body
+carries `error_code`, `error_message`, and `retry_after_ms`. Render a retry
+prompt, not a zero spend.
+
+`GET /api/v1/orgs/{org_id}/status` answers with the org's money and limits.
+
+| Field | Notes |
+|---|---|
+| `usage_today_cents` | Spend over the last 24 hours. |
+| `usage_month_cents` | Spend over the current billing period. |
+| `budget_used_cents` | Org budget used in the period. |
+| `budget_remaining_cents` | `null` when the plan sets no org budget. |
+| `budget_limit_cents` | `null` when the plan budget is unlimited. |
+| `budget_pct_used` | `null` when there is no cap. |
+| `time_to_limit` | `null` when no exhaustion is projected in the period. |
+| `rate` | Rate-limit status for the org. |
+| `per_key_rate` | Per-key rate visibility. Absent when not available. |
+| `limits` | Plan limits and the current usage against them. |
+| `plan`, `plan_name` | The plan tier and its display name. |
+| `subscription_status` | `active`, `past_due`, `cancelled`, or `expired`. |
+| `period_window` | The period the month counters are read from. |
+
+### Organization
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET`, `PATCH`, `DELETE` | `/api/v1/orgs/{org_id}` | Read, update, or delete the organization. |
+| `GET` | `/api/v1/orgs/{org_id}/members` | List members. |
+| `PATCH` | `/api/v1/orgs/{org_id}/members/{member_id}` | Change a member's role. |
+| `DELETE` | `/api/v1/orgs/{org_id}/members/{member_id}` | Remove a member. |
+| `GET` | `/api/v1/orgs/{org_id}/invites` | List invites. |
+| `POST` | `/api/v1/orgs/{org_id}/invites` | Invite a member. |
+| `DELETE` | `/api/v1/orgs/{org_id}/invites/{invite_id}` | Revoke an invite. |
+| `POST` | `/api/v1/orgs/{org_id}/invites/{invite_id}/resend` | Resend the invite email. |
+| `GET` | `/api/v1/invites/{token}` | Public invite details. |
+| `POST` | `/api/v1/invites/{token}/accept` | Accept an invite. |
+| `POST` | `/api/v1/invites/{token}/decline` | Decline an invite. |
+
+### API keys
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/api-keys` | List keys. |
+| `POST` | `/api/v1/orgs/{org_id}/api-keys` | Mint a key. |
+| `DELETE` | `/api/v1/orgs/{org_id}/api-keys/{key_id}` | Revoke a key. |
+| `POST` | `/api/v1/orgs/{org_id}/api-keys/{key_id}/rotate` | Rotate the signing secret in place. |
+| `GET` | `/api/v1/workflows/{workflow_id}/api-keys` | List the keys bound to one workflow. |
+
+The raw key and the signing secret are returned once, at mint time. Store
+them at once.
+
+### Alerts
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/alerts` | List active alerts. |
+| `POST` | `/api/v1/orgs/{org_id}/alerts/{alert_id}/dismiss` | Dismiss one alert. |
+| `POST` | `/api/v1/orgs/{org_id}/alerts/dismiss-all` | Dismiss every alert. |
+| `GET`, `POST` | `/api/v1/orgs/{org_id}/alert-channels` | List or create alert channels. |
+| `GET`, `PATCH` | `/api/v1/orgs/{org_id}/notification-settings` | Per-user notification settings. |
+
+### Auth
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/auth/register` | Create an account. Returns an API key and a signing secret. |
+| `POST` | `/api/v1/auth/login` | Exchange email and password for a session token. |
+| `POST` | `/api/v1/auth/verify` | Verify an API key and return the credential bundle. |
+| `POST` | `/api/v1/auth/verify-email` | Confirm an email address. |
+| `POST` | `/api/v1/auth/forgot-password` | Start a password reset. |
+| `POST` | `/api/v1/auth/reset-password` | Finish a password reset. |
+| `GET` | `/api/v1/auth/me` | The signed-in user. |
+| `DELETE` | `/api/v1/auth/session` | Revoke the session. |
+
+### Health
+
+The health endpoints sit on the gateway's top-level router. They are not
+under `/api/v1`. They answer `200` when healthy and `503` otherwise, with a
+body listing each dependency.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health/live` | Liveness — the process accepts connections. |
+| `GET` | `/health/ready` | Readiness — the dependencies are reachable. |
+| `GET` | `/health/startup` | Startup — `200` once migrations finish, `503` while booting. |
+| `GET` | `/health` | Alias for `/health/live`. |
+| `GET` | `/healthz` | Alias for `/health/live`. |
 
 ## Capabilities
 
-The capabilities endpoint reports the wire-contract version the
-gateway supports. The SDK calls this on `init()` to negotiate
-the protocol version and to surface a startup warning if the SDK
-is older than what the gateway requires.
+`GET /api/v1/capabilities` reports the wire contract the gateway supports.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/v1/capabilities` | Report `min_protocol_version` / `max_protocol_version`, `sdk_min_version`, server version + build timestamp, and the `capabilities.*` feature flags |
+| Field | Type | Notes |
+|---|---|---|
+| `min_protocol_version` | number | The oldest protocol version the gateway accepts. |
+| `max_protocol_version` | number | The newest protocol version the gateway accepts. |
+| `sdk_min_version` | string | The SDK version the gateway recommends. |
+| `server_version` | string | The gateway release tag. |
+| `capabilities` | object | The feature flags, nested under this key. |
 
-When `init()` detects that the SDK is older than the gateway's
-required minimum version, it emits a warning so the operator sees
-the gap before the first `/gate` call fails with `400 PROTOCOL_TOO_OLD`.
-
-The current wire-protocol version is **4** (min supported: **2**).
-`init()` negotiates the version automatically via `/capabilities`; you
-do not need to set anything by hand.
-
-## Heartbeat
-
-Long-running workflows post a time-based cadence heartbeat so the
-gateway can detect an orphaned workflow whose agent process has
-crashed without sending a kill / pause signal. The recommended
-cadence is advertised in `capabilities.heartbeat_interval_seconds`
-(default 30s).
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat; body is `{ chain_id }` only. `workflow_id` is derived from the API key, not passed in the body. |
-
-The SDK posts heartbeats automatically inside the
-`NullRunRuntime` background thread once `init()` has run; operators
-do not need to call it manually.
+The SDK probes this endpoint during `init()` and logs a warning when the
+version the SDK sends falls outside the range the gateway accepts. The probe is
+advisory: `init()` does not fail on a version mismatch.
 
 ## WebSocket control plane
 
-| Path | Purpose |
-| --- | --- |
-| `WS /ws/control/{org_id}` | Real-time kill/pause/policy-invalidated/key-rotated events (HMAC-signed on connect) |
+`WS /ws/control/{organization_id}` streams control-plane events to a
+connected SDK. The `{organization_id}` comes from the credential bundle, so the
+SDK derives the URL on its own.
 
 Server → client message types: `initial_state`, `state_change`,
-`policy_invalidated`, `key_rotated`, `resync_required`, `error`,
-`pong`, `approval_resolved`, `subscribed`.
+`policy_invalidated`, `key_rotated`, `resync_required`, `error`, `pong`,
+`approval_resolved`, `subscribed`.
 
 Client → server message types: `ack`.
 
-See [Control plane](../concepts/control-plane.md) for the full
-protocol and the SDK reaction matrix.
+The SDK reads the workflow state from the socket. When the socket is
+unavailable, the SDK falls back to polling `GET /api/v1/status/{workflow_id}`.
 
-## Common request patterns
+See [Control plane](../concepts/control-plane.md) for the reaction matrix.
 
-The examples below use the dashboard's `Authorization: Bearer <session-token>`
-header (the token comes from `POST /api/v1/auth/login`). For SDK-traffic
-endpoints substitute `X-API-Key` + HMAC headers — see the
-[Authentication](#authentication) section above.
+## Example
+
+The dashboard endpoints take a session token. The SDK endpoints take an API
+key.
 
 ```bash title="shell"
 TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ORG_ID=8a3b1c7d-...
-```
 
-!!! note "Compute the HMAC signature"
-    For SDK endpoints the `X-Signature` and `X-Signature-Timestamp`
-    headers are required. The signature is
-    `HMAC-SHA256(secret_key, "<timestamp>:<api_key>:<sha256(body)>")`.
-    See [Authentication → X-API-Key + HMAC](#x-api-key-hmac-sdk-gateway).
-
-### Create a workflow
-
-```bash title="shell"
 curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "production-bot",
-    "description": "Customer-facing assistant",
-    "budget_cents": 5000,
-    "human_approvals_enabled": false
+    "external_id": "production-bot",
+    "budget_cents": 5000
   }'
-
-# → 201 { "id": "wf_abc...", "name": "production-bot", ... }
 ```
-
-### Mint an API key bound to a workflow
-
-```bash title="shell"
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../api-keys" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "prod-bot-key",
-    "scopes": ["gate", "track", "verify"]
-  }'
-
-# → 201 {
-#     "id": "key_...",
-#     "key": "nr_live_xxxxxxxxxxxx",   ← shown ONCE, store it
-#     "secret_key": "sk_...",          ← shown ONCE, store it
-#     "workflow_id": "wf_abc...",
-#     "key_prefix": "nr_live_xxxxxx"
-#   }
-```
-
-The raw `key` and `secret_key` are **never returned again** —
-losing them means rotating the key. See
-[API keys → How to create a key](../concepts/api-keys.md#how-to-create-a-key).
-
-### Kill / pause / resume a running workflow
-
-```bash title="shell"
-# Kill — broadcasts state_change(killed) over WS to every connected SDK
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../kill" \
-  -H "Authorization: Bearer $TOKEN"
-
-# Pause
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../pause" \
-  -H "Authorization: Bearer $TOKEN"
-
-# Resume
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../resume" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-### Single-call status (current spend / budget / time-to-exhaustion)
 
 ```bash title="shell"
 curl "https://api.nullrun.io/api/v1/orgs/$ORG_ID/status" \
   -H "Authorization: Bearer $TOKEN"
-
-# → 200 {
-#     "current_spend_cents": 2340,
-#     "budget_cents": 5000,
-#     "time_to_exhaustion_secs": 86400,
-#     "rate_used": 12,
-#     "rate_limit_per_min": 60,
-#     "plan_caps": { ... }
-#   }
 ```
 
-Useful for dashboards and alerts — one call returns everything
-you need to show "you've used X of Y".
+## Errors
+
+Every error response carries a machine-readable code. See
+[Error codes](errors.md) for the gateway slugs, the enforcement codes, and the
+SDK exception hierarchy.
 
 ## See also
 
-- [Errors](errors.md)
+- [Error codes](errors.md)
+- [SDK API](sdk-api.md)
 - [Control plane](../concepts/control-plane.md)
+- [Budgets](../concepts/budgets.md)

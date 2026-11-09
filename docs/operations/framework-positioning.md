@@ -1,470 +1,146 @@
 ---
 title: Framework & ecosystem positioning
 maturity: stable
-description: How NullRun overlaps (and doesn't) with framework-native HITL patterns in LangGraph, LangChain, CrewAI, AutoGen, and OpenAI Agents — and how the runtime-authorization category compares to adjacent vendors.
+description: How NullRun overlaps with framework-native human-in-the-loop patterns in LangGraph, LangChain, CrewAI, AutoGen, and OpenAI Agents — where it sits beside them, and what NullRun does not cover.
 ---
 
 # Framework & ecosystem positioning
 
-This page is the **architectural companion** to the how-to guides in
-section 3 (`Protect a LangGraph agent`, `Use with OpenAI Agents`,
-`Use CrewAI`, `LLM frameworks`). Those pages show the wiring; this
-page answers the question teams actually ask first:
+Teams that already run an agent framework ask two questions: what
+does NullRun add, and where does it collide with what I have.
 
-> "We already use *X*. Why would we add NullRun on top, and where will
-> it collide with what we have?"
+This page answers both. The short version: the frameworks own
+**flow control**, NullRun owns **authorization**. The two layers
+answer different questions, and exactly one of them — approval for a
+sensitive tool — is a real overlap.
 
-Two perspectives are covered:
-
-1. **Framework overlap** — NullRun vs framework-native HITL / budget
-   patterns. Where there's overlap, when it bites, when it doesn't.
-2. **Category positioning** — NullRun vs other runtime-authorization
-   vendors in the same problem space.
-
-Both lenses are honest: the goal is not to claim more than the system
-delivers, but to make the trade-off legible to a buyer who already
-has tooling.
-
-> **Scope note.** NullRun self-claims are anchored to backend source
-> code; framework claims are cross-checked against official vendor
-> docs; competitor claims are cross-checked against vendor websites.
-> One competitor entry — *Microsoft AGT* — could not be verified to
-> a public product and is flagged below. The
-> [Verification log](#verification-log) at the bottom of the page
-> lists every claim and its source.
-
-## TL;DR — the overlap matrix
-
-The four layers the user is buying:
+## The overlap matrix
 
 | Layer | LangGraph | LangChain | CrewAI | AutoGen | OpenAI Agents | **NullRun** |
 |---|---|---|---|---|---|---|
-| **Flow-level HITL** (pause a graph step for input) | ✅ `interrupt()` + `Command(resume=...)` | ✅ `interrupt_before`/`_after` | ⚠️ `human_input=True` per-task | ⚠️ `HandoffMessage` v0.4 | ⚠️ `RunHooks` chain | 🟡 complement — sit *above* this layer, not instead of it |
-| **Hard budget gate** (block before invocation) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **atomic cost reservation**, period-bound, fail-CLOSED |
-| **Tool-call policy** (declarative block / allow) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **declarative policy list + pattern match** |
-| **Immutable audit trail** (refusal-as-evidence) | ⚠️ LangSmith — call trace, not gate decisions | ⚠️ LangSmith | ❌ | ❌ | ⚠️ Tracing only | ✅ **hash-chained audit log**, gate decisions kept separate from execution records |
-| **Cross-org RBAC + policy as data** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ per-org / per-team / per-policy |
+| **Flow-level HITL** — pause a graph step for input | `interrupt()` + `Command(resume=...)` | `interrupt_before` / `interrupt_after` | `human_input=True` per task | `HandoffMessage` | `RunHooks` | Sits **above** this layer, not instead of it |
+| **Hard budget gate** — block before the call runs | — | — | — | — | — | Atomic cost reservation, period-bound, fail-closed |
+| **Tool-call policy** — declarative block or allow | — | — | — | — | — | Policy list with pattern matching |
+| **Immutable audit trail** — refusals included | Call trace only | Call trace only | — | — | Tracing only | Hash-chained log of gate decisions, kept separate from execution records |
+| **Policy as data** — per organization, per workflow | — | — | — | — | — | Scopes and versions in the dashboard |
 
-The single-column answer:
+Two layers have no framework equivalent:
 
-- **Budget + tool policy + audit + RBAC** — NullRun only. No framework has these as enforcement.
-- **Flow-level HITL** — frameworks only. NullRun doesn't replace it; it sits beside it.
-- The only real overlap zone is **action-level approval** (LangGraph `interrupt()` on a sensitive tool, vs NullRun approval for the same tool). See [LangGraph HITL coexistence](#langgraph-hitl-coexistence-the-real-adoption-question) below.
+- **Budget and tool policy as enforcement.** A framework callback can
+  observe a tool call. It cannot hold the call frame while a server
+  decides.
+- **An audit log of decisions.** A trace records what happened. It
+  does not record that the call was *refused*, and it is not a
+  tamper-evident chain.
 
-## What NullRun actually does (re-grounding)
+One layer belongs to the frameworks alone:
 
-The headline capabilities, anchored to the wire contract and the
-SDK README:
+- **Flow-level HITL.** NullRun does not manage graph state, and it
+  does not decide whether the agent's plan is a good plan.
 
-- **Hard budget gate.** The server reserves cost atomically against
-  the period-bound budget counter (in cent precision, with a
-  parallel millicents counter — 1 cent = 1 000 millicents) before the
-  LLM/tool call. If the budget store is unavailable the server
-  fails-CLOSED, returning `402` and blocking the call — never the
-  client.
-  ([Performance & limits → Budget store failure](performance.md#budget-store-failure))
-- **Tool policy.** Declarative tool patterns, with per-pattern
-  approval rules. Block / allow / require_approval are server-side
-  decisions; the SDK has no veto.
-- **Approval flow.** Pauses the SDK on a `threading.Event` until the
-  operator clicks Approve or Deny on the dashboard, or the approval
-  times out (default 300 s, clamp 30–3600 s). Bound to a SHA-256
-  `action_digest` so the grant refuses if the payload drifts.
-  ([Human approval](../concepts/human-approval.md))
-- **Audit trail.** Every gate decision, approval resolution, and
-  execution-lifecycle event lands in an immutable, hash-chained audit
-  log. Refusal is recorded too — refusal-as-evidence.
-  ([Tracing](../concepts/tracing.md))
-- **Zero-code instrumentation.** `nullrun.init()` patches `httpx` once
-  for any vendor; framework-specific callbacks register on the first
-  `@protect` call. No opt-in list to maintain.
+## The one real overlap: action-level approval
 
-## Framework HITL — what each framework actually gives you
+Both layers can ask a human about the same sensitive tool. They ask
+different questions, and the people who answer them are usually
+different.
 
-### LangGraph (most mature)
-
-Per the [official LangGraph interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts):
-
-- `interrupt(value)` inside a node — pauses execution, emits the
-  value to the caller, suspends graph state.
-- `Command(resume=...)` — caller resumes with same `thread_id`.
-- Static `interrupt_before` / `interrupt_after` are **not the HITL
-  mechanism**; use `interrupt()` inside a node instead.
-- Best-practice trio: a durable checkpointer (any LangGraph-supported
-  store, or the built-in in-memory saver), stable `thread_id`,
-  decision-order matching.
-- Decision payload is arbitrary JSON the reviewer can act on
-  (approve / edit / reject / redirect).
-
-What LangGraph does **not** give:
-
-- No hard budget enforcement. LangSmith is observability, not gate.
-- No tool-policy DSL. The only "block dangerous tools" path is to
-  write it into graph code.
-- No cross-org audit hash chain.
-
-### LangChain
-
-- `interrupt_before` / `interrupt_after` on `AgentExecutor`.
-- LangSmith for trace + observability — same gap as above.
-
-### CrewAI
-
-- `human_input=True` flag on a `Task`. The crew pauses on that task
-  and prompts the operator. Per-task, not declarative, not composable
-  with other tools.
-- No budget gate, no policy.
-- *Caveat:* flow-level breakpoints and `Flow` runtime HITL could not
-  be confirmed against the public docs. Cross-check
-  [docs.crewai.com](https://docs.crewai.com/) when you are
-  evaluating against the latest release.
-
-### AutoGen
-
-- `UserProxyAgent` and `HandoffMessage` / `InputRequest` in the
-  v0.4 Core API. Conversational HITL (user = participant in
-  the dialog), not action-gated approval.
-
-### OpenAI Agents SDK
-
-- `RunHooks` (non-streaming `Runner.run`) and `RunStreamedHooks`
-  (`Runner.run_streamed`) for lifecycle events: `on_agent_start` /
-  `on_agent_end`, `on_llm_start` / `on_llm_end`, `on_tool_start` /
-  `on_tool_end`, `on_handoff`. There is **no `on_run_start` /
-  `on_run_end` / `on_run_abort`** — aborting is *cooperative*: raise
-  from inside a hook (or from inside a `@function_tool`), rely on
-  `input_guardrails` / `output_guardrails` for the canonical abort
-  path, or call `RunResultStreaming.cancel()` on the streaming path.
-- No built-in approval UI — you wire one yourself.
-
-## Where overlap is real vs imagined
-
-| Capability | Real overlap? | Notes |
-|---|---|---|
-| **Budget cap on LLM spend** | ❌ No framework overlap | Killer feature. Lead with this. |
-| **Block a dangerous tool before it runs** | ❌ No framework overlap | Framework callbacks can observe; they don't block the call frame. |
-| **Hash-chained audit log of gate decisions** | ❌ No framework overlap | LangSmith trace ≠ enforcement audit. Different shape, different consumer. |
-| **Approval for a sensitive tool** | ✅ **Real overlap** | Both layers can fire for the same tool. UX design required — see below. |
-| **Pause a step in the graph to ask the human a question** | 🟡 Partial — different abstraction | LangGraph `interrupt()` asks "is the plan right?", NullRun asks "is this action allowed?". Different question. |
-| **Streaming / async agent control flow** | ❌ Framework-only | NullRun doesn't manage graph state. |
-| **Streaming response truncation / redaction** | ❌ Framework-only | LangGraph / LangChain stream handling is outside NullRun's surface. |
-
-The honest summary: there is exactly **one zone** of real overlap —
-*action-level approval for sensitive tools*. Everywhere else, the
-layers are orthogonal.
-
-## LangGraph HITL coexistence (the real adoption question)
-
-This is the question we get most often from teams who already use
-LangGraph. Short answer:
-
-> NullRun `interrupt()` and NullRun approval **don't conflict** —
-> they fire at different points and answer different questions. They
-> *can* both fire on the same tool call; the UX must distinguish them.
-
-### The mental model
-
-| Layer | Question | Where it fires | Who answers |
+| Layer | Question | When it fires | Who answers |
 |---|---|---|---|
-| LangGraph `interrupt()` | "Did the agent understand the problem? Is this step right? Continue?" | Inside a node, before/after LLM call or tool call | The flow's operator (Slack, UI, IDE) |
-| NullRun approval | "Is this tool allowed for this team / under this policy / within this budget?" | Pre-invocation, before the function body runs | The governance team (Approvals UI, Slack channel per rule) |
+| Framework `interrupt()` | "Is this step right?" | Inside a node, around the model or tool call | The flow's operator, in Slack, a UI, or an IDE |
+| NullRun approval | "Is this action allowed under this policy?" | Before the tool function body runs | The governance team, in the Approvals view |
 
-These are *different questions*, owned by *different people*, surfaced
-in *different UIs*. The pattern is:
+Both can fire on one tool call. That is the design point, not a
+conflict — a run can need both an operator who confirms the plan and
+a governance team that authorizes the action.
 
-```mermaid
-%%{init: {'theme': 'neutral'}}%%
-flowchart TD
-  A["LangGraph node executes"] --> B{"interrupt()<br/>flow check?"}
-  B -- "no" --> C
-  B -- "yes" --> D["Operator reviews plan<br/>Command(resume=...)"]
-  D --> C["Tool call (@protect)"]
-  C --> E{"NullRun gate<br/>policy check?"}
-  E -- "allow" --> F["Tool executes"]
-  E -- "block" --> G["403 BUDGET_ORG_CEILING_BLOCKED<br/>or policy block"]
-  E -- "require_approval" --> H["Operator reviews action<br/>(different person)"]
-  H -- "approved" --> F
-  H -- "denied" --> I["403 APPROVAL_DENIED"]
-  F --> J["Next node"]
-```
+### Where it bites
 
-The two interruptions are independent and stackable. Both surface
-in their own UI; neither blocks the other.
+**Latency.** Every protected call adds one round trip to the gateway.
+For batch agents this is invisible. For a latency-sensitive chat UI it
+may matter. Two ways to reduce it:
 
-### Where it *can* bite
+- Protect only the calls that carry policy weight.
+- Use the framework's own HITL for planning steps and NullRun
+  approval for sensitive tool calls only.
 
-1. **Latency overhead.** Every `@protect`-decorated call adds a
-   round-trip to `/api/v1/gate`. Healthy-path budget is **<60 ms p99**
-   ([Performance & limits → Hot-path latency](performance.md#hot-path-latency)).
-   For long-running batch agents this is invisible. For
-   latency-sensitive chat UIs it may matter; mitigate with conditional
-   `@protect` (only enforce on paths that hit sensitive tools or
-   exceed a cost threshold) or per-policy `consume_epsilon_cents`.
+**Two approval surfaces.** If both layers fire on the same tool, the
+operator can see two prompts. Ways out:
 
-2. **Double approval UX.** If both layers fire for the same sensitive
-   tool, the operator may see two approval surfaces. Mitigations:
-   - Surface a single dashboard view that joins LangGraph thread_id
-     ↔ NullRun execution_id
-   - Suppress the framework `interrupt()` when NullRun's policy is the
-     binding gate
-   - Use the framework HITL for non-sensitive planning steps and
-     NullRun approval for sensitive tool invocations only
+- Join the framework's thread id and the NullRun `execution_id` in one
+  dashboard view.
+- Use framework HITL for planning and NullRun approval for sensitive
+  invocations only.
 
-3. **Conceptual confusion.** "We already have HITL, why do we need
-   another?" The answer is governance: framework HITL is *flow
-   control*, NullRun is *organizational policy*. A team can have a
-   perfect LangGraph `interrupt()` workflow and still overspend, fire
-   unapproved production writes, or fail a SOC 2 audit because
-   LangSmith isn't an enforcement log.
+**Conceptual confusion.** A team can have a complete framework HITL
+setup and still overspend, still write to production without a
+decision, and still have no enforcement log to show an auditor.
 
-### What the migration looks like
+## Coexistence guidance
 
-For an existing LangGraph team, the realistic adoption is **half a
-day**, not a sprint:
+### LangGraph and LangChain
 
-1. `pip install nullrun` and `export NULLRUN_API_KEY` (one line).
-2. Add `@protect` on the LLM/tool calls that touch
-   production, money, or PII. The decorator replaces no existing
-   code; it wraps the call.
-3. Configure policies in the dashboard — sensitive tool list, budget
-   cap, approval rule for production writes.
-4. (Optional) Map `thread_id` → `execution_id` in your observability
-   stack so the team gets one trace instead of two.
-
-LangGraph `interrupt()` nodes are not touched. The framework patch is
-auto-attached on the first `@protect` call (see
-[Protect a LangGraph agent](../how-to/langgraph.md)).
-
-## Coexistence patterns by framework
-
-### LangChain / LangGraph (recommended)
-
-- Keep your existing `interrupt()` nodes untouched.
-- Add `@protect` on tool functions and on the LLM call site
-  (typically inside the node that invokes the model).
-- For multi-agent setups: one policy per workflow; the SDK tags
-  calls automatically via the runtime context.
+Keep your `interrupt()` nodes as they are. Add `@protect` on the tool
+functions and on the model call site inside the node. The SDK attaches
+to the framework on the first `@protect` call, so there is no patch to
+install and no opt-in list to maintain.
 
 ### CrewAI
 
-- `human_input=True` on `Task` stays — use it for "is the task
-  framing right?" questions.
-- Add `@protect` on tool calls that have policy weight (DB writes,
-  outbound email, payments). Crew doesn't have a budget gate, so
-  this is purely additive value.
-- See [Use CrewAI](../how-to/crewai.md) for wiring.
+`human_input=True` on a task stays — it answers "is the framing
+right?". Add `@protect` on tool calls that carry policy weight:
+database writes, outbound email, payments. CrewAI has no budget gate,
+so this is additive.
 
 ### AutoGen
 
-- `UserProxyAgent` / `HandoffMessage` stays — conversational HITL is
-  outside NullRun's scope.
-- Wrap each `Agent.run` / `a_run` invocation site with `@protect`.
-- For v0.4 streams, the SDK patches message-streaming hooks on first
-  `@protect` call.
+Conversational HITL stays outside NullRun's scope. Wrap the agent
+invocation site with `@protect`.
 
 ### OpenAI Agents
 
-- `RunHooks` stays — use for run-level lifecycle (start, end, error).
-- Add `@protect` on the actual tool function. The nullrun SDK
-  instruments `Runner.run` / `run_streamed` automatically.
-- See [Use with OpenAI Agents](../how-to/openai-agents.md).
+`RunHooks` stays for run-level lifecycle events. Add `@protect` on
+the tool function itself. The SDK instruments `Runner.run` and
+`Runner.run_streamed` automatically.
 
-## Category positioning — runtime-authorization vendors
+## What NullRun does not claim
 
-The [/compare page](https://nullrun.io/compare) scores vendors on the
-same four axes we care about: **gate**, **approval**, **spend**,
-**audit**. The cells reflect publicly documented capability, not
-roadmap promises.
+These are outside the product by design, not gaps in the roadmap.
 
-### Direct decision-layer competitors
+1. **Output moderation.** Content safety, PII redaction, prompt
+   injection blocking. Use a model-side guardrail.
+2. **Orchestration.** Graph state, DAG execution, and scheduling.
+3. **Retrieval governance.** Vector store and retrieval quality.
+4. **Network egress policy.** NullRun decides on call metadata. It
+   does not inspect a tool payload for exfiltration.
+5. **Provider-side cost reconciliation.** NullRun computes cost from
+   the response it sees. The upstream webhook is the authority for
+   what the provider billed.
 
-| Vendor | Gate | Approval | Spend | Audit |
-|---|---|---|---|---|
-| **NullRun** | ✓ | ✓ | ✓ | ✓ |
-| Microsoft AGT | ✓ | ~ | — | ✓ |
-| APort | ✓ | ~ | ~ | ✓ |
-| Credo AI | ~ | ✓ | — | ✓ |
-| Straiker | ~ | — | — | ✓ |
-| Isonapse | ✓ | ~ | ~ | ✓ |
+If your evaluation includes one of these, NullRun is a complement.
 
-**Legend:** ✓ Yes · ~ Partial / complements · — Not supported
+## Gaps
 
-**Notes on each vendor** (against the public vendor sites):
-
-- **Microsoft AGT** — Microsoft's open-source [Agent Governance
-  Toolkit](https://github.com/microsoft/agent-governance-toolkit)
-  (MIT, 6.3k stars, Public Preview). Tagline: *"Policy enforcement,
-  zero-trust identity, execution sandboxing, and reliability
-  engineering for autonomous AI agents. Covers 10/10 OWASP Agentic
-  Top 10."* Runtime gate is deterministic at the **application
-  middleware layer**, not OS-kernel — the policy engine and agents
-  share the same process boundary; the README's own recommendation
-  is to run each agent in a separate container for OS-level
-  isolation. Approval is `require_approval` as policy-as-data
-  (YAML approvers list); there is **no built-in human-approval UI**.
-  Audit is Merkle-based and tamper-evident ("Audit and Compliance
-  1.0" spec, 157 conformance tests). Spend/budget management is not
-  advertised — the scorecard's "—" is correct.
-- **APort** — Pre-execution authorization ("Open Agent Passport"
-  spec at [aport.io/spec](https://aport.io/spec/)). Enforces policy
-  in the platform hook (`before_tool_call`), bypass-resistant to
-  prompt injection. Native approval UI: not surfaced — the grant is
-  policy-driven.
-- **Credo AI** — "Govern, approve, monitor" AI agents. Agent
-  registry + "registry-only-approve" pattern + policy automation
-  ([credo.ai/product/agent-governance](https://www.credo.ai/product/agent-governance)).
-  Strong on approval + audit, weaker on tool-call enforcement.
-- **Straiker** — "Agentic AI Security Company"; Defend AI platform
-  with runtime protection + "agentic kill switch"
-  ([straiker.ai/blog/agentic-kill-switch-for-ai-agents](https://www.straiker.ai/blog/agentic-kill-switch-for-ai-agents)).
-  Detection-oriented; no human-approval flow.
-- **Isonapse** — Runtime governance layer positioned *between* agent
-  and external systems ([isonapse.com](https://isonapse.com/)).
-  "Control what AI agents can do — before they do it." Spend column
-  is a best-effort mapping; the public site emphasises governance,
-  not budget.
-
-### Adjacent — gateways, security, advisory
-
-| Vendor | Gate | Approval | Spend | Audit |
-|---|---|---|---|---|
-| Portkey | ✓ | ~ | ✓ | ✓ |
-| Noma Security | ✓ | ~ | — | ✓ |
-| Prisma / Palo Alto | ~ | — | ~ | ~ |
-| Advisory shops | — | — | — | — |
-
-**Notes:**
-
-- **Portkey** — AI gateway with budget controls, configurable
-  approval policies, and observability across providers. Closest
-  adjacent to NullRun on the Spend column.
-- **Noma Security** — AI Detection & Response (AI-DR); runtime
-  protection with deterministic authorization and Segregation of
-  Duties. Delivered via Kong Gateway integration
-  ([noma.security](https://noma.security/)). No budget enforcement
-  visible on the public site.
-- **Prisma / Palo Alto** — Prisma AIRS
-  ([paloaltonetworks.com/prisma/airs](https://www.paloaltonetworks.com/prisma/airs))
-  — runtime agent policy governance + AI-SPM posture management.
-  No human-approval UI; spend handling unclear from public docs.
-- **Advisory shops** — Not a software product. Listed for
-  completeness against the `/compare` table.
-
-### How NullRun frames the category
-
-The differentiator language NullRun uses on `/compare` (paraphrased
-from the page):
-
-> "The runtime decision point is the product. Everything else is
-> plumbing."
-
-The question NullRun claims to be uniquely answering:
-
-> "Is this action authorized, right now, by the policy that exists
-> today, before it runs?"
-
-The categories that **don't** answer this question, per the same
-page, and the reason:
-
-- **Prompt recorders** observe after the fact.
-- **Model guardrails** check the output, not the action.
-- **Observability dashboards** visualize; they don't enforce.
-- **Advisory decks** describe; they don't run.
-
-This is a positioning claim, not a benchmark. Verify it against your
-own procurement criteria — particularly around fail-CLOSED semantics
-on enforcement paths and what happens when the budget store is
-unavailable on the gate hot path. The mechanical answer for NullRun is
-in
-[Performance & limits → Budget store failure](performance.md#budget-store-failure)
-(402, never 200).
-
-## What NullRun *doesn't* claim
-
-This page is intentionally honest about scope. The following are not
-covered, by design:
-
-1. **LLM-call output moderation** — content safety, PII redaction,
-   prompt-injection blocking. Use a model-side guardrail for that.
-2. **Workflow orchestration / DAG** — LangGraph's job, not ours.
-3. **Vector store / retrieval governance** — outside the gate.
-4. **Network egress policy (egress firewall)** — NullRun decides on
-   call metadata but doesn't inspect LLM tool payloads for
-   exfiltration.
-5. **Provider-side cost visibility** — NullRun computes cost from
-   response bodies via the `httpx` patch; for exact reconciliation
-   the upstream webhook is the source of truth.
-
-If your evaluation includes one of these, NullRun is a complement,
-not a substitute.
-
-## Honest gaps and caveats
-
-- **Framework drift.** Features in LangGraph Studio, CrewAI
-  flow-level HITL, and AutoGen governance hooks move quickly. Cross-check
-  the current docs at the links in each subsection.
-- **No benchmark against `interrupt()` latency.** LangGraph's
-  in-memory pause is sub-millisecond; NullRun's gate round-trip is
-  the 50–200 ms figure from
-  [Performance & limits](performance.md#hot-path-latency). Apples
-  and oranges — one is a process-local suspension, the other is a
-  network authorization call. Choose based on whether you need
-  governance or just flow control.
-- **No empirical study of approval-UX friction.** The double-approval
-  mitigation strategies above are design guidance, not measured
-  results. Teams adopting both layers should A/B the UI surface
-  before committing.
-- **No automatic LangGraph-thread ↔ NullRun-execution mapping.**
-  The two IDs are different shapes (LangGraph string `thread_id`
-  from your code, NullRun server-minted UUIDv7 from
-  `/api/v1/gate`). Wiring them in your observability stack is on
-  the adopter; we don't auto-bind them.
-
-## Verification log
-
-Every load-bearing claim on this page was verified against the listed
-source. Future maintainers: when editing, add or amend a row below.
-
-| Claim | Source | Status |
-|---|---|---|
-| Budget reservation is atomic and period-bound | Reservation script + integration tests | ✅ verified |
-| Millicents precision counter (1¢ = 1 000 millicents) | Reservation script | ✅ verified |
-| 402 on budget-store outage during reservation | Gate handler + integration tests | ✅ verified |
-| `expires_in_seconds` clamp `30..=3600`, stored default 300 s | Approval-rule service | ✅ verified |
-| `action_digest = sha256(canonical(...))`, VARCHAR(64) | Approval repository + schema | ✅ verified |
-| Hash chain applied to audit events only (gate decisions kept separate from execution records) | Governance audit model | ✅ verified |
-| Refusal-as-evidence (every gate decision leaves a row) | Audit-chain end-to-end tests | ✅ verified |
-| httpx transport hook covers ~95% of LLM traffic | SDK auto-instrumentation | ✅ verified |
-| LangGraph auto-patch on first `@protect` | SDK auto-instrumentation (`patch_openai_agents`, `patch_langgraph_compiled`, `patch_crewai`, `patch_autogen`) | ✅ verified |
-| LangGraph `interrupt()` + `Command(resume=...)` | [LangGraph Interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts); [skakarh.com](https://www.skakarh.com/blog/langgraph-human-in-the-loop) | ✅ verified |
-| Static `interrupt_before`/`interrupt_after` are not the HITL mechanism | [LangGraph Interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts) ("Static interrupts … are not recommended for HITL workflows") | ✅ verified |
-| LangChain AgentExecutor → LangGraph migration recommended | [LangChain v1.0 blog](https://www.langchain.com/blog/langchain-langgraph-1dot0); [Migrating Classic LangChain Agents](https://dev.to/focused_dot_io/migrating-classic-langchain-agents-to-langgraph-a-how-to-nea) | ✅ verified |
-| AutoGen v0.4 — `HandoffMessage` + `InputRequest` | AutoGen v0.4 release notes (microsoft/autogen) | ✅ verified |
-| OpenAI Agents — no `on_run_abort`; abort via throw from hook / guardrail / `.cancel()` | [OpenAI Agents SDK reference](https://openai.github.io/openai-agents-python/ref/) | ✅ verified |
-| CrewAI `human_input=True` flag on `Task` | Stable pattern; flow-level HITL not confirmed in public docs | ⚠️ softened |
-| APort — Open Agent Passport, pre-execution authorization | [aport.io/spec](https://aport.io/spec/); [aporthq/aport-spec](https://github.com/aporthq/aport-spec) | ✅ verified |
-| Credo AI — Agent Governance Platform, registry-only-approve | [credo.ai/product/agent-governance](https://www.credo.ai/product/agent-governance) | ✅ verified |
-| Straiker — Defend AI, agentic kill switch | [straiker.ai](https://www.straiker.ai/); [Agentic Kill Switch blog](https://www.straiker.ai/blog/agentic-kill-switch-for-ai-agents) | ✅ verified |
-| Noma Security — AI-DR via Kong | [noma.security](https://noma.security/); [Kong × Noma](https://konghq.com/blog/enterprise/agentic-ai-security-runtime-protection-kong-noma) | ✅ verified |
-| Portkey — gateway with budget / approval / observability | portkey.ai docs | ✅ verified |
-| Prisma AIRS — runtime agent policy governance | [paloaltonetworks.com/prisma/airs](https://www.paloaltonetworks.com/prisma/airs) | ✅ verified |
-| Isonapse — runtime governance layer between agent and systems | [isonapse.com](https://isonapse.com/) | ✅ verified |
-| **Microsoft AGT** — Microsoft's Agent Governance Toolkit | [github.com/microsoft/agent-governance-toolkit](https://github.com/microsoft/agent-governance-toolkit); MIT; 6.3k stars; deterministic middleware gate; YAML `require_approval` approvers; Merkle tamper-evident audit; **no spend/budget management** | ✅ verified |
-| NullRun hot-path latency <60 ms p99 | `docs/operations/performance.md` §"Healthy-path budget" | ✅ verified |
+- **Framework drift.** Framework HITL features move quickly. Check
+  the vendor's current documentation for the framework you run.
+- **No latency benchmark against framework HITL.** A framework pause
+  is a process-local suspension. A NullRun decision is a network
+  authorization call. The two numbers are not comparable, and
+  NullRun's own p99 at production scale is not measured.
+- **No empirical study of approval friction.** The mitigations above
+  are design guidance. Teams running both layers should compare the
+  two surfaces before committing.
+- **No automatic link between a framework thread id and a NullRun
+  `execution_id`.** The two ids have different shapes, and joining
+  them is on the adopter.
 
 ## See also
 
-- [Performance & limits](performance.md) — gate hot-path latency,
-  fail-CLOSED semantics, idempotency surfaces
-- [Protect a LangGraph agent](../how-to/langgraph.md) — wiring code
+- [Performance & limits](performance.md) — timeouts, rate limits, and
+  the fail-closed posture
+- [Protect a LangGraph agent](../how-to/langgraph.md)
 - [Use with OpenAI Agents](../how-to/openai-agents.md)
 - [Use CrewAI](../how-to/crewai.md)
-- [LLM frameworks](../how-to/llm-frameworks.md) — multi-framework matrix
-- [Human approval](../concepts/human-approval.md) — approval rule shape
-- [Sensitive tools](../concepts/sensitive-tools.md) — policy DSL
-- [Budgets](../concepts/budgets.md) — reserve / consume semantics
-- [Tracing](../concepts/tracing.md) — audit + log surfaces
-- External: [LangGraph Interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts) ·
-  [NullRun `/compare`](https://nullrun.io/compare) ·
-  [NullRun `/security`](https://nullrun.io/security) ·
-  [NullRun `/trust`](https://nullrun.io/trust)
+- [LLM frameworks](../how-to/llm-frameworks.md)
+- [Human approval](../concepts/human-approval.md)
+- [Sensitive tools](../concepts/sensitive-tools.md)
+- [Budgets](../concepts/budgets.md)

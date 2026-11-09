@@ -1,79 +1,105 @@
 ---
-title: Cost Cap
-description: Set a per-workflow hard cost cap with alert thresholds, and use Soft mode with an active chain to allow a controlled overdraft.
+title: Hard cost cap
+description: Set a per-workflow budget cap, and see what the SDK raises when the cap is reached.
+maturity: stable
 ---
 
 # Set a hard cost cap
 
-A cost cap is the simplest way to make sure an agent can't blow past
-your budget. It works at two levels:
+A cost cap stops an agent from spending past a number you chose. The cap
+is per workflow and per billing period.
 
-1. **Per-workflow** — set on a workflow, halts the run when cumulative
-   cost exceeds the cap.
-2. **Per-call** — projected cost from the SDK, rejects any single call
-   that would exceed the cap.
+The gateway enforces the cap. The SDK asks the gateway before every
+protected call and books the real cost after the call returns.
 
-## Per-workflow
+## Set the cap
 
-In the dashboard, open the workflow and set the budget. Or via the
-HTTP API:
+In the dashboard: open the workflow, choose **Settings**, set **Budget**
+in cents, and save. `$50.00` is `5000`.
 
-```bash title="set_budget.sh"
-curl -X PATCH https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/$WORKFLOW_ID \
-  -H "X-API-Key: *** \
-  -H "X-Signature: $(compute_hmac)" \
-  -H "X-Signature-Timestamp: $(date +%s)" \
+Over the HTTP API, `PATCH` the workflow:
+
+```bash title="shell"
+ORG_ID=8a3b1c7d-0000-4000-8000-000000000000
+WORKFLOW_ID=1f2e3d4c-0000-4000-8000-000000000000
+API_KEY=nr_live_replace_me
+
+curl -sS -X PATCH \
+  "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/$WORKFLOW_ID" \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"budget_cents": 500}'
 ```
 
-> Auth uses `X-API-Key` plus an HMAC-SHA256 signature over
-> `timestamp:api_key:body_hash` (see the
-> [HTTP API reference](../reference/http-api.md#authentication))
-> and the SDK's `NULLRUN_SECRET_KEY`. Bearer session tokens are for
-> dashboard / admin endpoints only.
+`budget_cents` is the only field the request needs. A cap of `0` means
+no per-workflow cap — the call passes through to the organization cap.
 
-Then in the SDK:
+The key must belong to the organization in the path. The caller also
+needs the Admin role, and the key must be bound to a user. A dashboard
+session works too: replace the `X-API-Key` header with
+`Authorization: Bearer $SESSION_TOKEN`. See
+[HTTP API → Authentication](../reference/http-api.md#authentication).
+
+## Run against the cap
 
 ```python title="budgeted_run.py"
 import nullrun
 from nullrun import init, protect
 
-init(api_key="nr_live_...")
+init(api_key="nr_live_replace_me")
 
-with nullrun.workflow("my-workflow"):
-    @protect
-    def run(): ...
+
+def call_model(question: str) -> str:
+    """Your model call goes here."""
+    return question
+
+
+@protect
+def answer(question: str) -> str:
+    return call_model(question)
 ```
 
-Cumulative cost > 500¢ → `NullRunBudgetError` raised on the next
-gate call with `error_code = "NR-B004"` (wire `BUDGET_HARD_BLOCKED`).
-For tool-block policy hits, `NullRunToolBlockedError` is raised with
-`error_code = "NR-T001"` (wire `TOOL_BLOCKED`). Both are subclasses of
-`NullRunBlockedException`, so a broad `except NullRunBlockedException`
-still catches both — but the typed subclass carries the more specific
-`error_code`. See [Errors](../reference/errors.md) for the full catalog
-and the recommended `except` pattern.
+| Refusal | Exception | `error_code` |
+|---|---|---|
+| Budget cap reached | `NullRunBudgetError` | `NR-B004` |
+| Tool blocked by policy | `NullRunToolBlockedError` | `NR-T001` |
 
-`max_budget_cents == 0` means **"no per-key budget configured"**, not
-"block everything" — the gate passes through to the org-level plan
-cap. See [Budgets → How to set the budget](../concepts/budgets.md#how-to-set-the-budget).
+Both are subclasses of `NullRunBlockedException`, so one
+`except NullRunBlockedException` clause catches both. The typed subclass
+carries the specific `error_code`. See [Errors](../reference/errors.md).
 
-## Per-call
+## How the cap is checked
 
-The SDK does not project per-call cost on its own — the per-call
-cap is enforced by the workspace policy on the gateway. When the
-policy carries a per-call threshold, the `/gate` call rejects any
-single call whose projected cost would exceed the cap *before* the
-model is invoked. The SDK raises `NullRunBlockedException` with
-`error_code = "NR-B004"` (wire `BUDGET_HARD_BLOCKED`).
+Each protected call runs the gate first:
 
-If you need to skip pre-flight in tests, use a workflow with a low
-budget instead.
+1. The gateway reserves the projected cost of the call.
+2. If the reservation crosses the cap, the call is refused and nothing
+   is reserved.
+3. After the call returns, the gateway books the real cost against the
+   reservation.
+
+The real cost may exceed the reservation by a small fixed amount. A
+booking above the reservation plus that amount is rejected. The commit
+answers `422` with the wire code `CONSUME_OVERBUDGET`, and the SDK
+raises `NullRunConsumeOverbudgetError` (`NR-O001`). See
+[Budgets → Reserve and consume](../concepts/budgets.md#reserve-and-consume).
+
+The SDK does not compute the cost. It sends the model and a token
+estimate to the gate. After the call it sends the token counts the
+provider reported. The gateway prices the call.
+
+## Soft mode
+
+A policy set to **Soft** lets the agent run past the cap while a chain
+is active, up to an overdraft limit. Soft mode needs all three of: the
+policy sets `enforcement_mode` to `Soft`, an active chain exists, and
+the projected cost stays inside the overdraft limits. When one of them
+is missing, the budget behaves as Hard. See
+[Policies → BudgetLimit extra fields](../concepts/policies.md#budgetlimit-extra-fields)
+and [Policies → Soft mode requirements](../concepts/policies.md#soft-mode-requirements).
 
 ## See also
 
-- [Budgets](../concepts/budgets.md) — reservation lifecycle and the
-  pre-flight `/gate` end-to-end
-- [Errors](../reference/errors.md)
+- [Budgets](../concepts/budgets.md) — periods, spend, and the reserve
+- [Errors](../reference/errors.md) — the full exception catalog
 - [Examples → cost cap demo](https://github.com/nullrunio/nullrun-examples/blob/master/examples/cost_cap_demo.py)

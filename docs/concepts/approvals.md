@@ -1,201 +1,113 @@
 ---
-title: Approvals (UI surface)
+title: Approvals
 maturity: stable
-description: The terminal-feed approvals dashboard — pending rows, friction-level buttons, the click-to-Dialog detail, and the history tab.
+description: The operator-facing side of approvals — what a pending request shows, how to approve or deny it, what expiry does, and how a grant binds to the exact payload.
 ---
 
-# Approvals (UI surface)
+# Approvals
 
-The **Approvals** page is where a human reviews and decides every
-`require_approval` decision the gate returns. It lives at
-`/control-center/approvals` (sidebar badge counts pending requests)
-and is gated by the `approvals` plan feature — Growth and above.
+An **approval** is a tool call that an agent wants to make and a human has to authorise. The call parks until an operator decides, and the operator sees it on the **Approvals** page.
 
-This page covers the **UI surface** — terminal-feed rows, the
-friction-level approve flow, the click-to-Dialog detail panel, and
-the history tab. The wire contract (action_digest, typed
-predicates, plan-tier gating) lives in [Human approval](human-approval.md).
-Programmatic decision-making (REST endpoints, idempotency, retry
-semantics) is at the bottom of this page; the API reference is in
-[HTTP API → approvals](../reference/http-api.md#approvals).
+The approvals feature is on Growth and above. On a lower plan the sidebar entry carries a lock, and the page shows an upgrade prompt.
 
-## Page layout — terminal feed
+This page covers the review surface: what a request shows, how to decide, and what the agent sees afterwards. The rule format, the typed predicates, and the wire contract live in [Human approval](human-approval.md).
 
-The pending queue renders as a **terminal feed**: hairline-divided
-rows in the spirit of the audit log + terminal-window vocabulary,
-not bordered cards. Each row reads as a continuous log line; the
-operator's eye locks onto the icon-prefix marker before parsing the
-rest of the row.
+## What a pending request shows
 
-### Status prefix markers
+Each pending row carries:
 
-The first character of every row is a marker that encodes status
-and tone:
+| Field | What it tells you |
+|---|---|
+| **Tool and arguments** | The exact tool the agent wants to call and the arguments it wants to pass. |
+| **Why it needs approval** | The rule that matched, in plain language. |
+| **Risk** | `LOW`, `MEDIUM`, or `HIGH`. |
+| **Time left** | How long the operator has to decide. |
+| **Workflow** | The workflow that raised the request. |
 
-| Marker | Tone | Status |
-|---|---|---|
-| `●` | state-block | `pending` |
-| `✓` | state-allow | `approved` (history tab) |
-| `✗` | state-flag | `denied` (history tab) |
-| `⌧` | fg-muted | `expired` / `consumed` (history tab) |
+The pending feed refreshes every 30 seconds, and the badge next to **Approvals** in the sidebar carries the pending count.
 
-### Row anatomy
+Click a row to open the full detail: the action fingerprint, the execution id, the rule, the tool patterns, the threshold, the review window, and the rendered predicate.
 
-From left to right:
+## Approving
 
-1. **Prefix marker + workflow name + actor label** ("requested by X").
-2. **Hero amount** — for money-kind approvals, the spend line is
-   on the row with the ▲ N× above $X limit relationship encoder
-   so the operator sees both the value and why it's over the
-   limit in one glance. Tabular-nums at 28px semibold.
-3. **Why this needs approval** — the rule label, deep-linkable to
-   the rule's config page.
-4. **Inline live countdown** — a colour-shifting bar + pipe +
-   tabular `mm:ss` label that shrinks as the review window runs
-   out. Colour flips green → amber → coral at 40% / 15% of the
-   remaining window.
-5. **Action button(s)** — see below.
+The approve button names the amount or the action, so nobody approves a value they cannot see.
 
-For **tool-call approvals** (money kind = `tool_call`), the hero
-amount is replaced by the operator-approved tool name + the raw
-parameter bag, so the operator sees exactly what the SDK is about
-to run. The `action_digest` is the tamper-evident binding, not a
-display artefact — the dashboard shows the bag verbatim, never
-reconstructed from the digest.
+| Risk | What the operator does |
+|---|---|
+| **LOW** | Click **Approve**. |
+| **MEDIUM** | Click **Approve**, then type the amount. |
+| **HIGH** | Click **Approve**, then type the amount, then type the action label. |
 
-When the SDK forwarded `tool_class="mcp"` annotations, the row
-also renders a class badge (`MCP tool` / `builtin` / `custom` /
-`unknown`) plus a chip row for `destructive`, `read-only`,
-`open-world` (each chip shows `yes` / `no` / `unknown`).
+A request with no money amount has no amount to type. MEDIUM and HIGH requests then confirm on the action label alone. The action label is the tool name, or the action when the request carries no tool.
 
-## Friction-level approve flow
+On approve, the grant is released and the agent resumes.
 
-The action button label encodes the friction level — operators
-never fire an action without seeing the value they are approving:
+## Denying
 
-- **Low risk** → single-click `[ approve ]`.
-- **Medium risk** → `[ approve ]` → `[ type 499.00 to confirm ]`.
-- **High risk** → `[ approve ]` → `[ type 1,000.00 ]` →
-  `[ type refund_customer to confirm ]`.
+Deny takes the same path at every risk level. The operator types a reason for the denial, then confirms it.
 
-The amount being approved is surfaced inside the button label
-itself, not only in the confirmation step. The deny path is a
-single click on every risk level — see the human-approval page for
-why deny is unconditional.
+The agent raises `NullRunApprovalDeniedError` (`NR-A011`) and the call does not run.
 
-## Click-to-Dialog
+## Expiry
 
-Clicking anywhere on a row (outside the action button) opens a
-Dialog with the full detail panel:
+Every approval carries a review window, set by the rule that fired. When the window closes with no decision, the request expires and the agent raises `NullRunApprovalExpiredError` (`NR-A012`).
 
-- Hero summary (amount / tool name + parameter bag).
-- **Why this needs approval** — the matched rule's human-readable
-  predicate (`amount ≥ $50 USD`, `ANY(amount ≥ 5000, region IN [EU,US])`).
-- **Technical details** accordion — open by default. Rows:
-  Action fingerprint, Execution ID, Rule + rule label, Tool
-  patterns, Per-call threshold, Rule priority (lower = higher),
-  Review window, Trust level chip (`typed impact` /
-  `LLM-cost only`), Rule created, and the rendered Action
-  predicate.
+An approval never resolves silently. The operator has to click.
 
-The Dialog intentionally has **no Approve / Deny controls** — the
-friction-level flow lives on the row, and the Dialog is for
-review, not decision.
+## How the grant binds to the payload
 
-## History tab
+An approval is a grant for one exact action, not for a tool name.
 
-The history view is the same page at `?tab=history` — a tab strip
-in the page header switches between **Pending** (default) and
-**History**.
+When the request is raised, the gate computes a SHA-256 digest of the action's impact payload and stores it on the approval row. On the call that follows an approval, the gate recomputes the digest from the live payload and compares it with the approved one. The comparison is atomic, so two concurrent re-checks cannot both spend the same grant.
 
-History rows are filtered to the last 30 days by default and
-support the same search / status filters as the pending feed.
-Resolved rows are grouped by outcome (`approved`, `denied`,
-`expired`, `consumed`) with the same prefix-marker vocabulary
-(✓ / ✗ / ⌧) so an operator can scan a week of decisions in one
-glance.
+| Situation | Result |
+|---|---|
+| The payload matches | The grant is consumed and the call proceeds |
+| The impact payload changed | Refused, `NR-A013` |
+| The tool digest changed | Refused, `NR-A014` |
+| The grant was already consumed | Refused, `NR-A015` |
 
-### Bulk toolbar
+A changed amount, a changed argument, or a changed tool name all break the digest. The operator approved that amount and those arguments, and nothing else.
 
-A hairline-divided toolbar above the feed exposes **Approve all**
-and **Deny all** when more than one row is selected. Both bulk
-actions require the same friction-level confirmations as the
-single-row flow.
+## History
 
-## Page chrome
+The **History** tab holds the whole approval record. It has two sections:
 
-- **Plan gate** — the page itself renders a `TierGate` upgrade
-  prompt for plans without the `approvals` feature. The sidebar
-  link is also hidden for those plans.
-- **SSE live update** — every new approval request lands in the
-  feed within a few seconds without refresh; the badge count in
-  the sidebar updates in lockstep.
-- **Audit trail** — every approve / deny decision is recorded in
-  the audit log (`Audit log` under **Governance**) with the
-  decided_by UUID, decided_at timestamp, and the operator label
-  (or `System` for server-side expiry).
+| Section | Rows |
+|---|---|
+| Awaiting decision | Requests with no decision yet. |
+| Decided | Requests that were approved, denied, expired, or consumed. |
+
+The search box filters the rows by workflow, action, tool, reason, actor, or comment. The filter is part of the URL, so a filtered history can be shared as a link.
+
+## Deciding in bulk
+
+The toolbar above the pending queue counts the low-risk pending requests that are eligible for a bulk action. **Approve all N** opens a confirmation that lists each request. Nothing is sent until the operator confirms.
+
+Medium- and high-risk requests are not eligible for a bulk approval. Each one takes its own type-to-confirm step.
 
 ## Programmatic approval
 
-For CI bots and on-call rotations, the same endpoints are exposed
-via REST and the page chrome has no opinion:
+A CI bot or an on-call rotation can decide through the same endpoints:
 
 ```bash title="approve_via_api.sh"
 curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/approve" \
-  -H "Authorization: Bearer ***"
+  -H "Authorization: Bearer $NULLRUN_API_KEY"
 
 # Or deny explicitly
 curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/deny" \
-  -H "Authorization: Bearer ***"
+  -H "Authorization: Bearer $NULLRUN_API_KEY"
 ```
 
-The full endpoint catalog — idempotency rules (`409
-approval_already_decided`), the post-approval `/execute`
-binding, and digest-mismatch drift cases — is in
-[HTTP API → approvals](../reference/http-api.md#approvals).
+Deciding twice is not an error. Approving a decided request returns `409 APPROVAL_ALREADY_DECIDED`.
 
-## Where to read next
+## Audit trail
 
-- [Human approval](human-approval.md) — wire contract, action
-  digest, typed predicates, plan-tier gating.
-- [HTTP API → approvals](../reference/http-api.md#approvals) —
-  REST endpoints for programmatic decision-making.
-- [Audit log](error-handling.md#audit-trail) — every decision
-  lands in the hash-chained audit log; the operator + `decided_by`
-  UUID + `decided_at` are searchable.
+Every approve and deny lands in the audit log with the operator, the timestamp, and the outcome. The action digest on the row proves which payload the operator approved.
 
-!!! info "Deep dive"
+## See also
 
-    The approval flow is two-phase. The gate returns
-    `require_approval`, the operator decides, and the waiting SDK is
-    resumed by a push once the decision lands. Each approval row is
-    bound to a digest of the action payload it was raised for, and the
-    post-approval execute re-check recomputes that digest and refuses
-    any call that does not match. An approved grant therefore cannot be
-    redirected at a different action before it is spent.
-
-    A decision is applied atomically: the outcome and the consumption
-    stamp move together, so no reader can observe a half-decided row.
-    Approving releases the pending reservation and decrements the
-    outstanding-approval count as part of the same operation. Rows are
-    scoped to the organization when they are read, so an identifier
-    belonging to another organization reads as absent rather than
-    forbidden, and the response gives away nothing about whether it
-    exists.
-
-    Expiry runs on a sweep rather than on the reader clock. Pending
-    rows past their window become expired and are attributed to the
-    system; approved rows that are no longer usable are closed
-    separately, and closing them preserves the original decider and
-    timestamp so a later automated transition cannot overwrite an
-    explicit human decision.
-
-    The push to the waiting SDK is best-effort, and a missed push is
-    recovered by a periodic reconciliation pass. Audit emission is
-    also best-effort: a transient failure there never blocks the
-    decision itself. The stored decision is a typed value rather than
-    free text, and the friction level the operator had to clear is
-    recorded alongside it. Denial is terminal, and the SDK raises
-    `WorkflowKilledInterrupt`. The auto-consume path reports consumed,
-    already-consumed, and not-approved distinctly, and the SDK treats
-    all three as success.
+- [Human approval](human-approval.md) — approval rules, typed predicates, and the wire contract
+- [Tool policies](tool-policies.md) — blocking a tool outright
+- [Notifications](notifications.md) — where an approval request is announced
+- [HTTP API → approvals](../reference/http-api.md#approvals) — the REST endpoints

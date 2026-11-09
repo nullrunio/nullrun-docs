@@ -1,27 +1,25 @@
+---
 title: Tracing
 maturity: stable
-description: OpenTelemetry-style spans for every gate decision, with parent_trace_id propagation so the dashboard renders a true waterfall.
+description: Every protected call becomes a span, every run becomes a trace, and the dashboard renders the tree as a waterfall.
+---
+
 # Tracing
 
-A **trace** is everything that happened during one run of your agent.
-In the dashboard they live under **Executions** and **Traces** in the
-sidebar. Each execution is one agent run; the trace view shows the
-nested structure of every LLM call, every tool call, and how long
-each took.
+A **trace** is one run of your agent. A **span** is one step inside
+it. The dashboard puts traces under **Executions** and **Traces** in
+the sidebar.
 
-If a user reports "the agent did something weird at 14:30", the
-tracing tab is where you go to see exactly what happened.
+When a user reports "the agent did something odd at 14:30", the trace
+is where you look.
 
 ## What you see in the dashboard
 
-The **Executions** page lists every agent run. Each row shows:
-
-- **Workflow** — which workflow ran this
-- **Started at** — timestamp
-- **Duration** — total run time
-- **Status** — completed / failed / killed
-- **Cost** — total cost for this run
-- **LLM calls** — how many LLM invocations
+The **Executions** page lists every gate decision your organization
+made. Each row shows the execution id, the action, the agent, the
+workflow, the model, the tool, the cost and the time. Four counters
+above the table count the outcomes: **Allow**, **Block**, **Pending**
+and **Denied**. The **Export** button downloads the loaded rows.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/executions-light.png"
@@ -33,6 +31,11 @@ The **Executions** page lists every agent run. Each row shows:
   <figcaption class="nr-shot__caption">Executions</figcaption>
 </figure>
 
+The **Traces** page lists the runs. Open one and you get a header with
+the workflow, the start and end times, the total duration and the
+number of spans. Under it, a counter strip shows how many spans loaded
+and how many of them were errors, plus the median duration.
+
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/traces-light.png"
        alt="Traces page with the waterfall of LLM and tool calls for a single execution."
@@ -43,201 +46,125 @@ The **Executions** page lists every agent run. Each row shows:
   <figcaption class="nr-shot__caption">Traces · Waterfall</figcaption>
 </figure>
 
-Click an execution to open the **Trace** view. The trace is a
-hierarchical tree:
+The waterfall is the trace. Each row is one span:
 
+- The **name** of the protected function
+- A **duration bar**, positioned against the longest span in the trace
+- A **status** — ok or error
+- The **policy verdict** for that call, when the gate recorded one
+- The **span id**, so you can correlate it with the audit log
+
+Nested calls sit under their parent, so a supervisor that calls
+sub-agents renders as one tree rather than several.
+
+## How spans are created
+
+The SDK emits a span for every protected call. You do not add
+instrumentation yourself.
+
+```python
+import nullrun
+
+@nullrun.protect
+def research(question):
+    return call_llm(question)
 ```
-Run "user-123-research"     2m 14s   $0.42
-├─ Step 1: plan             0.3s    $0.01
-│  └─ llm.call (claude-sonnet-4-5)    0.3s    $0.01
-├─ Step 2: research         45s     $0.18
-│  ├─ llm.call (claude-sonnet-4-5)    12s     $0.06
-│  ├─ tool.call (tavily_search)       8s      —
-│  └─ llm.call (claude-sonnet-4-5)    22s     $0.12
-├─ Step 3: write             30s     $0.12
-│  └─ llm.call (claude-sonnet-4-5)    30s     $0.12
-└─ Step 4: review            17s     $0.11
-   └─ llm.call (claude-sonnet-4-5)    17s     $0.11
-```
 
-Three things you can read off this tree at a glance:
+A call to `research` opens a span and closes it when the call returns.
+A protected call inside another protected call becomes a child span.
 
-- **Where the time went** — the longest step is where to optimise.
-- **Where the money went** — same, but for cost.
-- **What the agent did** — each tool call and LLM call is
-  clickable, showing the full request/response.
+The context managers set the parent, so you control the shape of the
+tree:
 
-## How a trace is built
-
-When you use the SDK's `@protect` decorator or `with workflow(...)`
-context manager, the SDK automatically creates spans:
-
-| Action | What gets a span |
+| Context manager | What it does |
 |---|---|
-| `@protect` decorator | One span per gate call |
-| `with workflow("name"):` | One span for the whole workflow run |
-| `with chain("id"):` | One span for the chain |
-| `with span("phase"):` | One span for the named phase |
+| `with nullrun.workflow("name"):` | Sets the workflow for every call inside the block |
+| `with nullrun.span("phase"):` | Names the phase; calls inside become its children |
+| `with nullrun.agent("name"):` | Attributes the calls to one agent |
 
-You don't have to add tracing manually — it comes from the
-decorators and context managers you already use. The SDK sends
-trace metadata alongside every `/gate` and `/track` call.
+```python
+import nullrun
 
-For nested agent orchestrations (a supervisor calling sub-agents),
-each sub-agent's spans are nested under the supervisor's. The trace
-view shows the tree; the **Cost** column rolls up automatically.
+with nullrun.workflow("support-bot"):
+    with nullrun.span("research"):
+        research(question)
+```
 
-## What each span contains
+LLM calls are reported separately from spans. The SDK sends the token
+counts your provider reports, and the gateway prices them. The call
+is attached to the span that was active when it happened.
 
-Click any span in the trace tree to see:
+## Identifiers
 
-- **Span ID** — unique identifier (UUID)
-- **Parent span ID** — for nesting
-- **Started at** / **Duration** — timing
-- **Status** — completed / failed / killed
-- **Inputs** — the prompt metadata sent to the LLM (truncated if
-  huge). **Prompt content is NOT stored** — NullRun never persists
-  raw prompt text or LLM response bodies. See
-  [Audit records → What is NOT stored](../concepts/error-handling.md#what-is-not-stored).
-- **Outputs** — the LLM's response metadata (token counts, model,
-  finish reason). **Raw completions are NOT stored.**
-- **Cost** — input + output tokens × model rate
-- **Tool calls** — every tool the span invoked (with arguments)
-- **Decision** — the gate verdict (`allow` / `block` /
-  `require_approval`) and which policy triggered it
+| Field | What it identifies |
+|---|---|
+| `trace_id` | One run. The same on every span in that run. |
+| `span_id` | One protected call |
+| `parent_span_id` | The span this one sits under |
 
-For blocked calls, the **Decision** row is the most useful — it
-links to the policy that matched and shows the rule.
+Search the dashboard by `trace_id` to pull the whole run, and the same
+value to find its rows in the audit log.
+
+## What is not stored
+
+NullRun never persists prompt content or LLM response bodies. A span
+carries the function name, the timing, the status and the verdict —
+not the text you sent or the text you got back. See
+[Error handling → What is NOT stored](error-handling.md#what-is-not-stored).
 
 ## How long traces are kept
 
-Trace retention follows your plan's `history_days` window:
+Traces follow your plan's retention window:
 
-| Plan | Trace retention |
+| Plan | Retention |
 |---|---|
 | Lite | 3 days |
 | Starter | 7 days |
 | Growth | 30 days |
 | Scale | 90 days |
-| Enterprise | unlimited |
+| Enterprise | Unlimited |
 
-After the retention window expires, the trace is removed from the
-dashboard; the aggregated cost information stays (it's summarised
-per workflow per period).
+When a trace expires, the aggregated spend survives, summarised per
+workflow per period.
 
-The retention window is independent of the trace *generation* caps
-— Lite also throttles to **10 000 tokens/hour** and **75 000
-executions/month** (see [Billing & Plan → Per-tier caps](billing.md#per-tier-caps)),
-so a Lite workflow's traces stop accumulating well before the 3-day
-window applies.
+Retention is separate from the volume caps. Lite also throttles to
+**10 000 tokens per hour** and **75 000 executions per month**, so a
+Lite workflow stops producing traces inside the 3-day window. See
+[Billing & Plan → Caps](billing.md#caps).
 
-If you need longer retention for compliance, you can export traces
-from the dashboard as JSON via the **Export** button on the
-Executions page. The exported shape matches the wire format.
-
-## Span identifiers and correlation
-
-Each span has three identifiers:
-
-| Field | Purpose |
-|---|---|
-| `trace_id` | The whole agent run — same across every span in one execution |
-| `span_id` | One call — unique per `@protect` invocation |
-| `parent_trace_id` | For sub-agents — the orchestration trace they belong to |
-
-You can search the dashboard by any of these. If a customer reports
-a problem with `trace_id = abc-123`, you can pull the full trace and
-every decision tied to it from the audit log.
-
-## How to use tracing during development
-
-When you're building a new agent, traces tell you:
-
-- **Is the agent slow?** — sort by duration, see which LLM call
-  takes the most time.
-- **Is the agent hitting the budget?** — look for spans with
-  `decision = block / NR-B004`.
-- **Is the agent calling tools you didn't expect?** — the trace
-  shows every tool call with arguments.
-
-When you're debugging a production issue, traces answer:
-
-- **What did the agent do at 14:30 yesterday?** — filter by time
-  range, click each execution, walk the trace.
-- **Why did the call to `send_email` fail?** — the trace shows
-  the call's status and decision. If it was blocked, the linked
-  policy explains why.
-- **How much did this single run cost?** — the top of the trace
-  shows the total; the leaves show the per-call breakdown.
+Export the rows you need; the retention window removes them. The
+**Export** button on the Executions page writes the loaded rows as
+JSON.
 
 ## Common questions
 
 ### "My trace shows nothing"
 
-If the runtime was never created (the first `@protect` call never
-fired) or the API key is missing, the SDK runs in error mode and no
-spans are recorded. Check the SDK logs for
-`NullRunAuthenticationError`.
+The runtime was never created, so no span was ever emitted. Check that
+`NULLRUN_API_KEY` is set and that the first protected call actually
+ran.
 
-### "My trace is incomplete — only some spans show up"
+### "My trace is incomplete"
 
-The SDK buffers events and flushes on a timer. If your process
-crashes before the flush, the in-flight spans are lost. `init()`
-auto-registers `nullrun.shutdown(flush=True)` via `atexit`, so a
-clean process exit always reaches the gateway; the explicit call
-only matters when you need an early teardown or a
-`shutdown(flush=False)` flush cancel between tests.
+The SDK buffers events and flushes them on a timer. A process that
+dies with the buffer unflushed loses the spans still in flight.
+`init()` registers a clean shutdown at exit, so a normal exit reaches
+the gateway.
 
-### "Why are some spans duplicated?"
+### "One LLM call is counted twice"
 
-The SDK's auto-instrumentation emits one span per LLM call. If you
-also call `track_llm` manually for the same call, you'll see two
-spans. Pick one or the other — the auto-instrumentation is enough for
-the standard OpenAI / Anthropic / Gemini / Cohere clients.
+The SDK's auto-instrumentation already reports the token counts for
+the LLM clients it supports. If you also report the same call with
+`get_runtime().track_llm(...)`, the call is booked twice. Pick one.
+
+### "Why is my trace missing a step?"
+
+The dashboard shows one span per protected call. A helper function
+that is not decorated with `@protect` produces no span. Decorate every
+call you want to see in the tree.
 
 ## See also
 
-- [Workflow context](workflow.md) — how `workflow()` scopes spans
-- [Error handling](error-handling.md) — errors that span blocks
-- [Reference → SDK API → track_*](../reference/sdk-api.md) — manual
-  span creation
-
-!!! info "Deep dive"
-
-    Every inbound request is inspected for a W3C `traceparent` header
-    in the usual
-    `version-trace_id-span_id-flags` shape. Extraction is best-effort:
-    a missing or malformed header never blocks ingest, it simply
-    leaves the trace without an external identifier. The
-    SDK-minted identifier remains the canonical identity of a trace
-    and of its audit chain in every case, so a client that does not
-    propagate W3C context is fully supported and still queryable by
-    the id the SDK reports.
-
-    Spans arrive in batches rather than one request at a time. A trace
-    is read as a summary plus a span batch, and a per-trace span cap
-    applies; when a trace exceeds it the response marks the trace as
-    truncated so the dashboard can show that more spans exist. The
-    same cap means a run that emits a very large number of spans
-    displays only the leading part of the tree. Because ingest is
-    buffered, back-pressure during heavy traffic can drop spans
-    rather than slow ingest down, and spans still in flight when a
-    process dies without a clean shutdown are lost.
-
-    Span context nests structurally. The context managers emit the
-    parent span and each protected call emits a child under it, so a
-    supervisor that calls sub-agents shows one tree rather than
-    several. Redaction is applied at the read boundary, before
-    anything is returned: identifier fields needed to reconstruct the
-    tree pass through intact, while names, metadata and error text are
-    filtered. Each span carries a single typed decision drawn from
-    `allow`, `flag`, `block` and `chain`, and that value is what the
-    dashboard and the audit log both display.
-
-    Retention is per plan and independent of the caps that limit how
-    much traffic a plan may generate — a workflow that is throttled
-    stops producing traces well before its retention window elapses.
-    When a trace does expire, the aggregated cost figures survive,
-    summarised per workflow per period, so spend stays reportable after
-    the detail is gone. Exporting before expiry produces JSON in the
-    same shape as the wire format.
+- [Workflows](workflow.md) — the `workflow()` context manager
+- [Error handling](error-handling.md) — how errors map to spans
+- [Budgets](budgets.md) — where the cost in a trace comes from

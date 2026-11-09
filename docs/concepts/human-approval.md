@@ -1,6 +1,9 @@
+---
 title: Human approval
 maturity: beta
-description: Bind approvals to a typed BusinessImpact predicate and a SHA-256 action_digest so the grant refuses if the action payload drifts.
+description: Bind approvals to a typed BusinessImpact predicate and a SHA-256 action_digest, so a grant is refused when the action payload changes.
+---
+
 # Human approval
 
 Some operations need a human to click **Approve** before they run.
@@ -8,145 +11,137 @@ Sending an email to a customer, moving money, deleting a record —
 operations where you want a paper trail and a conscious decision.
 
 In the dashboard, pending approvals live under **Approvals** in the
-sidebar. When the agent hits an approval rule, the call pauses. The
-agent stays paused until a human clicks **Approve** or **Deny**, or
+sidebar. When the agent hits an approval rule, the call parks. The
+agent stays parked until a human clicks **Approve** or **Deny**, or
 the approval times out.
 
 ## Approval rules — separate from ToolBlock
 
-Approval rules are **not** `ToolBlock` policies with an `action =
-require_approval` field. They are a separate concept with these
-fields:
+Approval rules are not `ToolBlock` policies with an `action =
+require_approval` field. They are a separate rule object:
 
 | Field | Purpose |
 |---|---|
 | `name` | Display name for the rule |
 | `tool_patterns` | Glob patterns matching the tool name |
-| `per_call_threshold_cents` | Projected-cost threshold (estimated tokens × model rate) |
+| `per_call_threshold_cents` | Projected-cost threshold |
 | `action_predicate` | Typed `BusinessImpact` predicate |
 | `priority` | Ordering for tied rules |
 | `expires_in_seconds` | How long the operator has to decide |
 | `action_label` | Display label shown in the dashboard |
+| `risk_level` | `LOW`, `MEDIUM` or `HIGH` |
 
-When an SDK calls a tool that matches an approval rule, the gate
-returns `decision = "require_approval"` and parks the SDK on a
-`threading.Event` until the operator clicks Approve / Deny.
+When a protected call matches an approval rule, the gate returns
+`decision = "require_approval"` and the SDK parks until the operator
+decides.
 
 ## Predicate kinds
 
 Two predicate fields can fire the same approval rule:
 
-- **`per_call_threshold_cents`** — projected execution cost in
-  cents, evaluated against the SDK-reported `estimated_tokens`.
+- **`per_call_threshold_cents`** — projected execution cost in cents,
+  evaluated against the estimated tokens the SDK reports.
 - **`action_predicate`** — a typed condition over a structured
-  `BusinessImpact` extracted from the live function call.
+  `BusinessImpact` extracted from the live call.
 
-When both are set, the rule fires only when **both** pass. Either
-may be `None`, in which case it does not contribute. A rule with
-both `None` matches every call.
+When both are set, the rule fires only when **both** pass. Either may
+be absent, in which case it does not contribute. A rule with neither
+matches every call.
 
 ### Typed predicates
 
-Two predicate kinds are supported on `action_predicate`:
+Two predicate kinds are supported on `action_predicate`.
 
-1. **`money_amount`** — per-call monetary threshold.
-   ```json
-   {
-     "kind": "money_amount",
-     "direction": "outflow",
-     "operator": "gt",
-     "threshold_minor": 5000,
-     "currency": "USD"
-   }
-   ```
+**`money_amount`** — a per-call monetary threshold:
 
-2. **`tool_parameters`** — DNF over up to 5 named
-   parameters with Equals / OneOf / NumericRange / Regex / Exists
-   matchers.
+```json
+{
+  "kind": "money_amount",
+  "direction": "outflow",
+  "operator": "gt",
+  "threshold_minor": 5000,
+  "currency": "USD"
+}
+```
 
-   ```json
-   {
-     "kind": "tool_parameters",
-     "trigger_logic": "any",
-     "conditions": [
-       {"param_name": "refund_amount", "matcher": {"kind": "numeric_range", "min": 500, "max": null}},
-       {"param_name": "recipient", "matcher": {"kind": "regex", "pattern": "^(?!internal@).*"}}
-     ]
-   }
-   ```
+**`tool_parameters`** — a disjunction over up to 5 named parameters,
+with `equals`, `one_of`, `numeric_range`, `regex` and `exists`
+matchers:
 
-The `tool_parameters` predicate reads values out of `kwargs` the
-SDK ships on `/execute`. Every `@protect`-decorated function ships
-`tool_name + args + kwargs` on the wire — the predicate references
-the value by `param_name` in the dashboard rule editor and the
-gate evaluates it directly. Positional args are dropped; `float` /
-`set` / custom objects are filtered; PII-masked sentinels like
-`"***"` for `password` / `token` / `api_key` keys are stripped
-before wire. No second decorator is needed to make a tool
-eligible for `tool_parameters` rules.
+```json
+{
+  "kind": "tool_parameters",
+  "trigger_logic": {"logic": "any"},
+  "conditions": [
+    {"param_name": "refund_amount", "matcher": {"type": "numeric_range", "min": 500}},
+    {"param_name": "recipient", "matcher": {"type": "regex", "pattern": "^(?!internal@).*"}}
+  ]
+}
+```
 
-## `action_digest` — tamper-evident binding
+`trigger_logic` takes `{"logic": "any"}`, `{"logic": "all"}` or
+`{"logic": "groups", "groups": [[0, 1], [2]]}`. The groups form lists
+AND-groups of condition indices joined by OR. The default is `any`.
 
-When the gate fires an approval rule with a typed `BusinessImpact`,
-it computes a SHA-256 digest of the canonical-JSON
-`{"kind":"money_amount", direction, operator, threshold_minor,
-currency, extractor_id, extractor_version}` (Money variant) or the
-`ToolCallParams` envelope (ToolCall variant). The digest is stored
-on the approval row.
+The `tool_parameters` predicate reads values out of the arguments the
+SDK ships with every `@protect`-decorated function. The rule
+references a value by `param_name`, and the gate evaluates it
+directly. No extra decorator is needed to make a tool eligible for
+`tool_parameters` rules.
 
-After the operator clicks Approve, the SDK's post-approval `/execute`
-re-check sends the live `business_impact` and `action_digest` back
-to the gate. The grant consume is atomic — concurrent re-checks are
-serialized, and the gate surfaces `Allow` / `DigestMismatch` /
-`NotFound` / `Expired` / `ReplayRejected` outcomes.
+## `action_digest` — the binding
+
+The gate computes a SHA-256 digest of the action's impact payload
+and stores it on the approval row.
+
+After the operator clicks Approve, the SDK sends the live payload and
+its digest back to the gateway on the post-approval call. The gateway
+recomputes the digest from that payload and compares it with the one
+the operator approved. The comparison is atomic, so two concurrent
+re-checks cannot both spend the same grant.
+
+**The digest binds the approval to the exact payload.** A changed
+amount, a changed argument, or a changed tool name makes the digest
+differ from the approved one, and the call is refused:
+
+| Situation | Result |
+|---|---|
+| The payload matches the approved one | The grant is consumed and the call proceeds |
+| The impact payload drifted | Refused, `error_code = "NR-A013"` |
+| The tool digest drifted | Refused, `error_code = "NR-A014"` |
+| The grant was already consumed | Refused, `error_code = "NR-A015"` |
 
 ## Approval resume flow
 
-The complete flow, end-to-end:
+1. The SDK sends the gate request with the live impact payload. The
+   gate evaluates the approval rules and one matches.
+2. The gate creates a pending approval row with the payload, its
+   digest, and an expiry set server-side. It notifies the configured
+   channels.
+3. The gate returns `decision = "require_approval"` with the
+   approval id and the timeout.
+4. The SDK parks until the operator decides.
+5. The operator clicks Approve or Deny in the dashboard.
+6. The gateway publishes the resolution on the WebSocket channel.
+7. The SDK wakes up and resumes with the operator's outcome.
 
-1. SDK sends `/api/v1/gate` with the live `BusinessImpact`. Gate
-   evaluates rules. Match fires.
-2. Gate creates a pending approval record with the `business_impact`,
-   `action_digest`, and an `expires_at` set server-side
-   (clamped `[1, 3600]` s from `expires_in_seconds`). The gateway
-   then emits an `approval_required` alert to configured channels.
-3. Gate returns `decision = "require_approval"` plus `approval_id`,
-   `approval_timeout_seconds`, `approval_expires_at`.
-4. SDK parks on `threading.Event.wait(timeout=approval_timeout_seconds)`.
-5. Operator clicks Approve / Deny in the dashboard (or auto-deny
-   timer fires).
-6. Backend publishes `ApprovalResolved` event on the WS push
-   channel.
-7. SDK wakes the parked thread; agent resumes with the operator's
-   outcome.
-8. SDK auto-consumes the approval row via
-   `POST /api/v1/approvals/{approval_id}/consume` so the row
-   closes on the success path (the prior behaviour left
-   `mode="inline"` rows at `status=APPROVED` past `expires_at`
-   because the consume SQL was only reachable from the
-   `/execute` orchestrator Step 6, which `inline` tools bypass).
-   On the operator-cancel path the row closes via the spawned
-   cancel step instead.
-
-If the WS push is silent for `approval_timeout_seconds`, the SDK
-**fails CLOSED**: `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`)
-is raised and the agent dies. A silent network must not silently
-approve a privileged action. There is no `/status` HTTP-poll
-fallback for approvals — deliberate, the operator's word is final.
+If no decision arrives within the timeout, the SDK **fails closed**
+and raises `NullRunApprovalExpiredError` (`NR-A012`). There is no
+HTTP polling fallback for approvals: a silent network must not
+silently approve a privileged action.
 
 ## What you see in the dashboard
 
-The **Approvals** page lists every pending, approved, denied, and
+The **Approvals** page lists every pending, approved, denied and
 expired request. Each row shows:
 
-- The tool the agent wanted to call (e.g. `send_email`)
+- The tool the agent wanted to call
 - The workflow that requested it
-- The action digest (first 16 hex chars — full digest in tooltip)
-- For typed predicates: the rendered impact summary
-  - `Money`: `Spend $499.00 USD · 4.99× above the $100.00 limit`
-  - `ToolCall`: `tool:stripe.charge` + raw `params` key/value block
+- The action digest — the first 16 hex characters, the full digest in
+  the tooltip
+- For typed predicates, the rendered impact summary
 - How long ago it was created
-- How long until `expires_at`
+- How long until it expires
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/approvals-light.png"
@@ -158,47 +153,36 @@ expired request. Each row shows:
   <figcaption class="nr-shot__caption">Approvals</figcaption>
 </figure>
 
-Click an approval to see the full context — what the agent was
-trying to do, the tool's arguments, and any notes you attached.
+Click an approval to see the full context: what the agent was trying
+to do, the tool's arguments, and any notes you attached.
 
 ## How to approve or deny
 
-In the **Approvals** page, click an open request. You see:
-
-1. The agent's goal (what it was trying to accomplish)
-2. The tool it wants to call (e.g. `send_email`)
-3. The typed impact summary or the projected cost
-4. The action digest (the SHA-256 binding)
-5. How long the approval has been pending
+Open a request in the **Approvals** page. You see the agent's goal,
+the tool, the typed impact summary or the projected cost, the action
+digest, and how long the request has been pending.
 
 Two buttons:
 
-- **Approve** — the gate releases the reservation, the agent's
-  call resumes. On `/execute`, the gate re-checks the
-  `action_digest` against the live payload and refuses on mismatch
-  (returns `DigestMismatch`).
-- **Deny** — the gate rejects, the agent sees `WorkflowKilledInterrupt`
-  (alias `NullRunWorkflowKilledError`). The agent can catch it and
-  clean up; most agents don't.
+- **Approve** — the grant is released and the agent resumes. The
+  gateway re-checks the digest against the live payload on the way
+  out and refuses on a mismatch.
+- **Deny** — the gateway rejects and the agent raises
+  `NullRunApprovalDeniedError` (`NR-A011`).
 
-If you don't click either within the approval's `expires_at` window,
-the request expires. The SDK raises `WorkflowKilledInterrupt`
-(alias `NullRunWorkflowKilledError`) after `approval_timeout_seconds`
-(server-clamped `[1, 3600]` s). The agent can retry or give up.
+If neither button is clicked within the request's window, it expires
+and the SDK raises `NullRunApprovalExpiredError` (`NR-A012`).
 
 ## Notification channels
 
-When an approval is created, the gateway notifies every active
-channel configured on your org:
+When an approval is created, the gateway notifies every active channel
+configured on your organization:
 
-- **Slack** — uses your org's installed Slack OAuth.
-- **Webhook** — generic HTTPS POST with HMAC-SHA256 signature
-  (`X-NullRun-Signature`, 5-minute clock-skew tolerance, 10-minute
-  nonce replay defence).
+- **Slack** — through your organization's installed Slack app.
+- **Webhook** — a generic HTTPS POST with an HMAC-SHA256 signature.
 
-Disable a channel per-user or per-channel under
-**Notifications** in the sidebar (the page has Channels, Alert rules,
-and an Event subscriptions matrix).
+Disable a channel under **Notifications** in the sidebar (Channels,
+Alert rules, and an Event subscriptions matrix).
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/approval-rules-light.png"
@@ -210,91 +194,57 @@ and an Event subscriptions matrix).
   <figcaption class="nr-shot__caption">Governance · Approval rules · New rule</figcaption>
 </figure>
 
-## Programmatic approval (for automations)
+## Programmatic approval
 
-The dashboard is for humans. If you want a CI bot or on-call rotation
-to approve requests programmatically, the same endpoints are
-exposed via REST:
+The dashboard is for humans. A CI bot or an on-call rotation can
+decide through the same endpoints:
 
 ```bash title="approve_via_api.sh"
 curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/approve" \
-  -H "Authorization: Bearer ***"
+  -H "Authorization: Bearer $NULLRUN_API_KEY"
 
 # Or deny explicitly
 curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/deny" \
-  -H "Authorization: Bearer ***"
+  -H "Authorization: Bearer $NULLRUN_API_KEY"
 ```
 
-Both endpoints are idempotent — calling approve on an already-approved
-request returns `409 approval_already_decided`; calling deny twice on
-the same request is a no-op. Use these in your incident-response
-automation: an approval surfaces in Slack, your bot detects the
-`risk_level = high`, and approves or denies based on your runbook.
+Deciding twice is not an error. Approving an already-decided request
+returns `409 APPROVAL_ALREADY_DECIDED`.
 
 ## When to use approval instead of blocking
 
-Approval makes sense when:
+Approval fits when:
 
-- The operation is sensitive but **you want the agent to be able to
-  do it** under human review (sending customer emails, creating
-  invoices, deploying builds).
-- The blast radius is bounded (a single email vs. an entire
-  database drop).
-- You have someone on-call who can review within minutes.
+- The operation is sensitive but you want the agent to be able to do
+  it under human review.
+- The blast radius is bounded — one email against a whole database
+  drop.
+- Someone is on call and can review within minutes.
 
-Blocking (not approval) makes more sense when:
+Blocking fits when:
 
-- The operation is never legitimate (`db.drop` in a read-only
-  workflow).
-- The blast radius is unbounded (admin operations, mass deletes).
-- No one is on-call to review approvals in time.
+- The operation is never legitimate, such as `db.drop` in a
+  read-only workflow.
+- The blast radius is unbounded.
+- No one can review approvals in time.
 
-Approval is a feature, not a default. Most teams should default to
-blocking and switch specific patterns to approval as the need
-arises.
+Approval is a feature, not a default. Start by blocking, and move
+specific patterns to approval as the need arises.
 
 ## What's logged
 
-Every approval decision is in **Governance → Audit log**. You can
-filter by:
+Every approval decision lands in **Governance → Audit log**. Filter by
+actor (the approver), decision (`approved` or `denied`) and time
+window. The row carries the action digest and the tool name.
 
-- Approver (which user clicked Approve/Deny)
-- Workflow
-- Tool name
-- Time window
-- Outcome (approved / denied / expired)
-
-The audit log is the source of truth for "who approved this?" —
-both for compliance and for incident review. The action digest is the
-immutable anchor that proves the operator approved the exact payload
-the SDK sent on `/gate` (not "any refund" — the exact amount and
-arguments).
-
-## SDK-side envelope
-
-The `action_digest` is **produced** by the SDK on every `@protect`
-call. The envelope is the canonical NoImpact payload
-(`BusinessImpact.no_impact()` — `{"kind": "none"}`); the SDK
-canonicalises it (compact JSON, `nullrun/v1/business_impact:`
-prefix) and SHA-256-hashes it. The digest flows onto the wire on
-both `/gate` and `/execute`, and the backend re-computes the
-digest from the live payload to verify the grant.
-
-The NoImpact envelope is the same for every `@protect` call — the
-SDK is policy-blind and ships only `tool_name + args + kwargs`.
-Approval rules reference `param_name` in the dashboard to read
-argument values for typed predicates (`money_amount` /
-`tool_parameters`). No SDK-side extractor or factory is needed.
-
-A drift between SDK and backend canonicalisation is a P0 security
-regression covered by the SDK's source-pin tests.
+The action digest is the anchor that proves the operator approved the
+exact payload the agent sent — not "any refund", but that amount and
+those arguments.
 
 ## See also
 
-- [Tool policies](tool-policies.md) — `ToolBlock` rules (no
-  `require_approval` action; that's a separate entity)
-- [Sensitive tools](sensitive-tools.md) — when blocking is
-  enough
-- [Workflows → operator controls](workflow.md#how-to-control-one) —
-  Pause / Kill work the same way as approval
+- [Tool policies](tool-policies.md) — `ToolBlock` rules
+- [Sensitive tools](sensitive-tools.md) — when blocking is enough
+- [Workflows → How to control one](workflow.md#how-to-control-one) —
+  Pause and Kill work the same way
 - [API keys](api-keys.md) — how to mint a key bound to a workflow

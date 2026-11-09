@@ -176,7 +176,7 @@ nav:
       - 6.11. CI / CD integration: how-to/ci-cd.md
   - 7. Reference:
       - 7.1. SDK API: reference/sdk-api.md
-      - 7.2. Decorators & extractors: reference/decorators.md
+      - 7.2. Decorators & context managers: reference/decorators.md
       - 7.3. HTTP API: reference/http-api.md
       - 7.4. Error codes: reference/errors.md
       - 7.5. Tool catalog: reference/llm-tool-catalog.md

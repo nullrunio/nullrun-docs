@@ -1,35 +1,18 @@
+---
 title: Tool policies
 maturity: stable
-description: Glob patterns for tool names with a 4 KB cap per pattern, union semantics across applicable scopes, and validation traps to avoid.
+description: The ToolBlock pattern language — the glob syntax that decides which tools an agent may call, and how patterns combine across scopes.
+---
+
 # Tool policies
 
-A `ToolBlock` policy decides which tools the agent is allowed to call
-and which it can't. In the dashboard these rules live under a policy
-of type **ToolBlock** — see [Policies](policies.md) for the general
-overview. This page covers how to write the patterns inside the
-policy.
-
-## Where you see it in the dashboard
-
-When you create or edit a policy and pick **ToolBlock** as the
-type, the dashboard shows a JSON editor for the `tool_pattern`,
-`blocked_tools`, or `tools` array. The "Test pattern" preview at the
-bottom lets you paste a tool name and see whether any pattern
-matches — useful for debugging.
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../../assets/images/screenshots/policies-list-light.png"
-       alt="Policies list with the New policy button highlighted in the top right."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../../assets/images/screenshots/policies-list-dark.png"
-       alt="Policies list with the New policy button highlighted in the top right."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">Governance · Policies · New policy</figcaption>
-</figure>
+A `ToolBlock` policy decides which tools the agent may call. It lives
+under a policy of type **ToolBlock** — see [Policies](policies.md)
+for the general overview. This page covers the pattern syntax.
 
 ## What a tool name looks like
 
-The agent calls tools by name. The canonical tool name format:
+The agent calls tools by name. The canonical name format:
 
 | Type | Format | Example |
 |---|---|---|
@@ -37,45 +20,65 @@ The agent calls tools by name. The canonical tool name format:
 | MCP tool | `mcp://{server}/{tool}` | `mcp://filesystem/read` |
 | Custom tool | `custom:{name}` | `custom:my_tool` |
 
-The policy matcher is name-based. The SDK sends the tool name to the
-gate, the gate checks it against every active ToolBlock policy, and
-the verdict comes back as `allow`, `block`, or `require_approval`.
+The matcher sees the tool name and nothing else. A rule is about
+which tool runs, not what it is called with.
 
-## How to write the patterns
+## Pattern syntax
 
-Each entry in a ToolBlock policy is one of:
+`*` is the only metacharacter. `|` separates alternatives.
 
-- **Exact name** — `"stripe.charge"` blocks only that one tool.
-- **Glob** — `"send_*"` blocks anything starting with `send_`.
-- **`*` alone** — blocks everything.
+| Pattern | Matches | Does not match |
+|---|---|---|
+| `stripe.charge` | exactly `stripe.charge` | `execute_stripe.charge` |
+| `send_*` | every name starting with `send_` | `resend_email` |
+| `bash.*` | `bash`, `bash.foo`, `bash.foo.bar` | `bashful` |
+| `*.drop_*` | `s3.drop_table` | `s3.execute_drop` |
+| `bash\|sh` | `bash` or `sh` | `bashful` |
+| `*` | every tool | — |
 
-Each entry is capped at **4096 bytes**. The cap exists because the
-matcher scans every pattern on every gate call — a 10 MB pattern
-would burn CPU on each call.
+The rules behind the table:
 
-The matcher runs case-insensitively against the canonical tool name.
+- A pattern with no `*` is an **exact match**. It is never a
+  substring match.
+- A pattern with **one** `*` is an anchored prefix and/or suffix.
+  `db.drop_*` matches `db.drop_table` and nothing else.
+- A pattern with **two or more** `*` matches when every literal
+  segment appears in the name, in order.
+- `prefix.*` matches the bare prefix as well as its dotted
+  continuations, so one pattern covers a whole namespace.
+- `|` splits a pattern into alternatives. Each alternative is
+  evaluated on its own.
+- `**` matches nothing. `?` is a literal character, not a
+  single-character wildcard.
+- An empty pattern matches nothing.
+- Matching is **case-sensitive**. Tool names are canonical lowercase,
+  so `BASH` does not match `bash`.
+
+Each entry is capped at **4096 bytes**. The cap bounds the work the
+matcher does on every gate call.
 
 ## What a ToolBlock policy does
 
-A ToolBlock policy **blocks** tool calls whose name matches one of
-its patterns. There is no `action = require_approval` field on a
-ToolBlock — for "I want a human to approve before this tool runs",
-create an **approval rule** instead (see
-[Human approval](human-approval.md)). The two are separate rule
-objects; ToolBlock and approval rules don't share a configuration
-schema.
+A `ToolBlock` policy **blocks** tool calls whose name matches one of
+its patterns.
 
-ToolBlock is **always Hard**: it never lets through, regardless of
-the budget's `enforcement_mode`. See
-[Reliability matrix](../concepts/circuit-breaker.md#when-the-gateway-is-unreachable).
-If the gate cannot evaluate the ToolBlock check (Redis or policy
-cache unavailable), it fails closed — `403 TOOL_BLOCKED` (SDK
-`error_code = "NR-T001"`). The agent never runs an unverified
-sensitive operation.
+ToolBlock is **always hard**. It never lets a call through, whatever
+the budget's `enforcement_mode` says, and it fails closed: if the
+gate cannot evaluate the check, the call is refused with HTTP 403
+`TOOL_BLOCKED` (SDK `error_code = "NR-T001"`). The agent never runs
+an unverified sensitive operation. See
+[Policies → Fail closed](policies.md#fail-closed).
 
-ToolBlock and approval rules are distinct rule objects — they don't
-share a configuration schema. A ToolBlock policy always *blocks*; to
-require human review first, use an approval rule instead.
+There is no `action = require_approval` field on a `ToolBlock`. To
+require human review first, create an **approval rule** instead —
+see [Human approval](human-approval.md). The two are separate rule
+objects and share no configuration schema.
+
+The pattern list lives under the `tool_pattern` key of the policy
+config. The `blocked_tools` and `tools` keys are also accepted, and
+their entries join the same list. A fourth key,
+`parameter_conditions`, adds argument-level conditions: such a row
+blocks only when the pattern matches **and** the condition holds.
 
 ## A worked example
 
@@ -87,19 +90,17 @@ You want to:
 - Allow read-only operations (`tavily_search`, `read_file`)
 - Block destructive operations (`db.drop`, `stripe.charge`)
 - Require approval for any outbound communication (`send_email`)
-- Allow normal DB writes (`db.write`) but block `db.drop`
+- Allow normal DB writes (`db.write`)
 
-Two ToolBlock policies and one approval rule:
-
-!!! info "The example below shows the request payload shape — what you POST to the dashboard / API. It's not the storage schema, just the public input format."
+One ToolBlock policy and one approval rule:
 
 ```json title="tool_block_policy.json"
 {
   "policies": [
     {
       "name": "Block destructive",
-      "type": "ToolBlock",
-      "scope": "Org",
+      "policy_type": "tool_block",
+      "scope": "org",
       "config": {
         "tool_pattern": ["db.drop", "stripe.*"]
       }
@@ -116,111 +117,64 @@ Two ToolBlock policies and one approval rule:
 }
 ```
 
-`send_email` now triggers the approval flow (a human clicks
-**Approve** in the dashboard before the call goes through). `db.drop`
-and `stripe.charge` are blocked outright. The two policies do not
-interact — ToolBlock checks and approval-rule checks are independent
-paths in the gate.
+`policy_type` takes `budget_limit`, `rate_limit` or `tool_block`.
+`scope` takes `org` or `workflow`. Note the two spellings: a ToolBlock
+policy config uses the singular `tool_pattern`, an approval rule uses
+the plural `tool_patterns`.
+
+`send_email` triggers the approval flow — a human clicks
+**Approve** in the dashboard and the call goes through. `db.drop` and
+`stripe.charge` are blocked outright. The two do not interact:
+ToolBlock checks and approval-rule checks are independent paths in
+the gate.
 
 ## Validation at policy creation
 
-The dashboard rejects invalid patterns at save time:
+The dashboard rejects a malformed ToolBlock config at save time with
+HTTP **422** and the wire code `INVALID_FIELD`:
 
-| Error | Cause | Fix |
-|---|---|---|
-| `400 bare_string_pattern` | `"pattern": "send_*"` instead of `"pattern": ["send_*"]` | Always use an array, even for one entry |
-| `400 pattern_too_long` | An entry longer than the per-pattern byte cap | Split into multiple patterns |
-| `400 invalid_glob` | Contains control characters | Remove `\n`, `\r`, `\t` |
+| Rejected | Why |
+|---|---|
+| A bare string instead of an array | `"tool_pattern": "send_*"` must be `"tool_pattern": ["send_*"]` |
+| The plural key `tool_patterns` | The canonical key is singular: `tool_pattern` |
+| An unknown key, such as `block_tools` | A typo would otherwise create a rule that blocks nothing |
+| An empty pattern, or an empty config | It would match nothing, or everything |
+| An entry over 4096 bytes | The per-entry byte cap |
+| A pattern containing control characters | Remove `\n`, `\r`, `\t` |
 
 ## Plan gating
 
-`ToolBlock` policies require the Custom Policies feature, which is
-on **Growth+** plans. Lite and Starter can have `BudgetLimit` and
+`ToolBlock` policies need the Custom Policies feature, which is on
+**Growth+** plans. Lite and Starter can have `BudgetLimit` and
 `RateLimit` policies, but not ToolBlock.
 
-**Approval rules** (separate from ToolBlock) are gated by the
-`approvals` plan feature. The per-tier cap matches:
-
-| Plan | Approval rules allowed | Why |
-|---|---|---|
-| Lite | 0 | `approvals` feature disabled |
-| Starter | 0 | `approvals` feature disabled (server-side invariant: `approval_rules > 0 ⇒ approvals == true`) |
-| Growth | 20 | `approvals` enabled |
-| Scale | unlimited | `approvals` enabled, no cap |
-| Enterprise | unlimited | `approvals` enabled, no cap |
-
-The gate enforces `approval_rules = 0` server-side on Lite and
-Starter — even if you mint a key on a higher tier and downgrade,
-existing rules are kept (for audit) but no new rule can be created
-until the plan is upgraded back.
-
-On Lite / Starter, the dashboard shows ToolBlock policy creation
-greyed out with an "Upgrade" link.
+**Approval rules** are gated by the Approvals feature, which is on
+Growth+ as well. On Lite and Starter the dashboard shows approval
+rule creation greyed out with an **Upgrade** link, and the server
+refuses the change.
 
 ## How to debug a block you didn't expect
 
-If your agent reports `error_code = "NR-T001"` (wire `TOOL_BLOCKED`) on
-a call you think should be allowed:
+If your agent reports `error_code = "NR-T001"` (wire `TOOL_BLOCKED`)
+on a call you think should be allowed:
 
 1. Open the workflow in the dashboard.
 2. Click **Effective policy**. The merged set shows every ToolBlock
    pattern that could match.
-3. Open the **Audit log** and filter by `decision = block` and
-   the tool name. The log shows which pattern matched.
-4. If a pattern is too broad (`*` matches everything), narrow it
-   in the policy editor.
-5. If the pattern is wrong entirely, deactivate the policy and
-   re-create it with the correct list.
+3. Open the **Audit log** and filter by `decision = deny`. The
+   **Matched rule** field names the pattern that matched.
+4. If a pattern is too broad (`*` matches everything), narrow it in
+   the policy editor.
+5. If the pattern is wrong, deactivate the policy and re-create it
+   with the correct list.
 
 ## See also
 
-- [Policies](policies.md) — the dashboard view, aggregation rules,
-  and most-restrictive-wins semantics
+- [Policies](policies.md) — the dashboard view and the aggregation
+  rules
 - [Sensitive tools](sensitive-tools.md) — the policy-driven way to
-  express "this tool needs review" (not a built-in SDK list)
+  express "this tool needs review"
 - [Tool catalog](../reference/llm-tool-catalog.md) — common tool
   names with risk ratings
 - [Human approval](human-approval.md) — the approval-rule path,
   distinct from ToolBlock
-
-!!! info "Deep dive"
-
-    A ToolBlock check operates on the canonical tool name and nothing
-    else. The gate resolves the effective tool list from the request
-    before evaluating anything, so a call carrying one tool and a call
-    carrying a list are treated alike. Patterns are collected from the
-    `tool_pattern`, `blocked_tools` and `tools` keys, trimmed and
-    de-duplicated, so `"bash"` and `"bash "` collapse into one entry.
-    Matching runs case-insensitively against the canonical name, and
-    control characters in either the incoming tool name or a pattern
-    are rejected before the check runs.
-
-    The pattern language is small. `*` is the only metacharacter: it
-    matches any run of characters, so `send_*` matches anything
-    starting with `send_` and `bash.*` matches the bare name `bash`
-    as well as dotted continuations like `bash.foo` and `bash.foo.bar`.
-    A pattern with several stars, such as `*.drop_*`, matches when
-    every literal segment appears in order, which is why `*.drop_*`
-    matches `s3.drop_table` but not `s3.execute_drop`. `|` collapses
-    several alternatives into a single entry. Neither `?` nor `**`
-    is supported — both are matched as ordinary characters — and a
-    bare literal matches only itself, never a substring. Each entry is
-    capped at 4096 bytes, bounding the work the matcher does on every
-    gate call.
-
-    ToolBlock is always hard, independent of a budget's enforcement
-    mode, and it is evaluated ahead of rate-limit and budget
-    accounting, so a blocked call never receives a budget envelope. If
-    the check cannot be evaluated at all, the gate fails closed. A
-    block reports the pattern that fired, which is what the audit log
-    records, so an unexpected block can always be traced to one entry.
-
-    Validation at creation time rejects the configurations that would
-    otherwise mean "block nothing": an empty string, an empty array,
-    an empty config object, and the plural `tool_patterns` key. A typo
-    such as `block_tools` or `blocked_tool` is an error rather than a
-    silently ignored rule. Because `*` on its own blocks everything,
-    narrowing a policy is the operator's responsibility, and the
-    merged effective set is what the dashboard shows before a change
-    ships. Matching never inspects tool arguments: a rule is about
-    which tool runs, not what it is called with.

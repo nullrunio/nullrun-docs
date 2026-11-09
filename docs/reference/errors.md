@@ -1,173 +1,301 @@
 ---
-title: Errors
-description: "Full NullRun error-code reference: NR-B004 budget blocks, NR-T001 transport errors, NR-R001 refusals, and decision vs infrastructure classes."
+title: Error codes
+description: NullRun error reference: the gateway error vocabulary, the SDK exception hierarchy, decision versus infrastructure handling, and the full NR-* error-code catalog.
+maturity: stable
 ---
 
 # Error codes
 
-The canonical `ApiErrorCode` enum is the source of truth for every
-non-2xx response the gateway returns. This page maps each code to:
+The gateway's error-code registry is the source of truth for what the gateway
+can refuse and what HTTP status it answers with. The SDK projects that registry
+onto its own catalog: every SDK exception carries an `error_code` such as
+`"NR-B004"`, and that value is the user-facing identifier to branch on.
 
-- the SDK exception the Python SDK raises when it sees that error
-- the HTTP status code the gateway returns
-- when it happens
+Three vocabularies meet on the wire.
 
-There are **two parallel taxonomies** you may see:
-
-- **Gateway error slugs** — short SCREAMING_SNAKE_CASE strings in the
-  `error` field of every non-2xx response. Listed below in
-  *Gateway error codes*.
-- **NR-* codes** — the SDK's user-facing `error_code` field on every
-  exception. The full catalog is below in *NR-* error code catalog*.
-
-For the **three-layer error model** (structured exceptions →
-`on_error` hook → `format_user_message` / `with nullrun.guard():`)
-and the boundary between developer-facing and end-user-facing
-wording, see [Concepts → Error handling](../concepts/error-handling.md).
-
-## Gateway error codes (`error` field on every non-2xx response)
-
-The canonical catalog lives in the gateway. The `error` slug is
-the stable, machine-readable identifier; `message` is human-safe;
-`code` carries the same value in SCREAMING_SNAKE_CASE.
-
-| `error` slug | HTTP | When | SDK exception |
-| --- | --- | --- | --- |
-| `bad_request` | 400 | Generic 400 — invalid input that isn't a validation failure | `NullRunConfigError` (or `NullRunError`) |
-| `invalid_json` | 400 | Request body could not be parsed as JSON (`JsonSyntaxError`). Surfaces as `INVALID_JSON` on `exc.error_code` | `NullRunBackendError` |
-| `unauthorized` | 401 | Missing or invalid `X-API-Key` / expired session / HMAC mismatch | `NullRunAuthenticationError` (`NullRunAuthError` for 401 specifically) |
-| `forbidden` | 403 | Authenticated but not allowed (incl. CSRF mismatch, org-mismatch on `/orgs/*`) | `NullRunAuthenticationError` |
-| `not_found` | 404 | Resource doesn't exist or isn't visible | (no exception — caller handles) |
-| `conflict` | 409 | Idempotency conflict, duplicate, "already a member", "invite already pending", "cannot demote last owner", etc. | `NullRunError` |
-| `validation_error` | **422** | Request body parsed but failed schema validation (`JsonDataError`). Surfaces as `INVALID_FIELD` on `exc.error_code` | `NullRunBackendError` |
-| `plan_limit_exceeded` | **422** | Generic plan cap hit (workflows, seats, api_keys). Body `details.resource` carries which dimension. | `NullRunBlockedException` |
-| `workflow_limit_reached` | **422** | Workflow-specific active-workflow cap hit | `NullRunBlockedException` |
-| `rate_limit_exceeded` | 429 | Per-minute / per-day rate cap. Body carries `retry_after` (seconds). | `RateLimitError` (carries `.retry_after`, `.upgrade_url`) |
-| `internal_error` | 500 | Server-side bug | `NullRunBackendError` (retryable) |
-| `not_implemented` | 501 | Feature not yet implemented | `NullRunError` |
-| (also `internal_error`) | 503 | `ApiError::ServiceUnavailable` — transient downstream failure on an enforcement path. Carries `retry_after`. | `NullRunBackendError` (retryable) |
-
-> **Plan limit slugs (api_keys / seats / policies / executions)** all
-> surface as `plan_limit_exceeded` with `details.resource` set to the
-> dimension name (`"api_keys"`, `"seats"`, `"workflows"`, …). There
-> is no separate slug per dimension — read `details.resource`.
-
-## SDK exception hierarchy (Python)
-
-Every public SDK exception inherits from `NullRunError` and carries
-four structured fields: `error_code` (machine-readable, e.g.
-`"NR-B004"`), `user_action` (imperative hint), `retryable`
-(bool), `docs_url`.
-
-Every exception below is raised from `nullrun.breaker.exceptions`.
-Only the names in `nullrun.__all__` are importable from the top-level
-`nullrun` package; the rest come from the module.
-
-```
-NullRunError                          (Exception)
-├── NullRunDecision                   (marker — expected policy outcomes)
-│   ├── NullRunBlockedException       (policy / budget / loop / sensitive block)
-│   │   ├── NullRunBudgetError        (budget exhausted — NR-B004)
-│   │   │   └── NullRunBudgetRecheckFailedError (NR-B006 — post-approval recheck)
-│   │   ├── NullRunToolBlockedError   (tool in block list — NR-T001)
-│   │   └── NullRunApprovalDbUnavailableError (approval DB unavailable — NR-A016)
-│   ├── NullRunConsumeOverbudgetError (actual cost > reservation + ε — NR-O001)
-│   ├── NullRunChainError             (chain-mode gate check failed — NR-CH001)
-│   ├── WorkflowPausedException       (paused via control plane — NR-W003)
-│   └── NullRunWorkflowInactiveError  (soft-deleted / inactive — NR-W004)
-├── WorkflowKilledInterrupt           (kill via control plane — NR-W002)
-│   └── NullRunWorkflowKilledError    (typed public name; same code NR-W002)
-└── NullRunInfrastructureError        (marker — system failures)
-    ├── NullRunConfigError            (misconfiguration, e.g. missing api_key)
-    ├── NullRunAuthenticationError   (401 / 403)
-    │   └── NullRunAuthError          (401 specifically)
-    ├── NullRunProtocolError          (wire-protocol version mismatch — NR-P001)
-    ├── NullRunRateLimitRedisError    (rate-limit Redis down — NR-R002)
-    └── NullRunTransportError         (transport failures)
-        ├── NullRunBackendError       (5xx — retryable; BREAKER_OPEN → NR-B005)
-        └── RateLimitError            (gateway 429 — carries .retry_after)
-```
-
-Two branches sit **outside** the marker split, and both matter when
-you write an `except` chain:
-
-- `WorkflowKilledInterrupt` inherits from `NullRunError` directly, not
-  from `NullRunDecision`. A kill is not a policy decision, so
-  `except NullRunDecision` does not catch it — catch it by name.
-- `NullRunApprovalDbUnavailableError` inherits from
-  `NullRunBlockedException`, so it lands in the **decision** branch
-  even though an unavailable approval database is a system failure.
-  Its `error_code` (`NR-A016`) is what distinguishes it.
-
-`NullRunDecision` and `NullRunInfrastructureError` are **marker
-classes**, not exception classes themselves. They exist so host code
-can `except NullRunDecision` to catch every expected policy outcome
-(budget, tool block, pause) and `except NullRunInfrastructureError` to
-catch every system failure (transport, backend 5xx, auth rejection,
-config error) — see [Decision vs. infrastructure](#decision-vs-infrastructure)
-below for the recommended handling pattern.
-
-`NullRunBlockedException` carries `.workflow_id`, `.reason`, `.action`
-(`"block"` / `"kill"` / `"pause"`), `.tool_name` (when the block is
-tool-scoped), `.status_code`, and `.details` (free-form). There is
-**no** `.message` attribute — use `str(exc)`.
-
-
-`WorkflowKilledInterrupt` (and its typed subclass `NullRunWorkflowKilledError`)
-both inherit from `NullRunError`, so a bare
-`except Exception:` catches the kill signal. For kill-specific
-handling — checkpointing state, notifying a supervisor, etc. —
-catch the typed exception explicitly.
-
-## The default path: zero lines of error handling
-
-For the common "run an agent and print a friendly message on failure"
-case, the three public helpers do the work — no `try/except NullRunError`
-required.
-
-| Helper | Catches | For |
+| Vocabulary | Where it appears | Shape |
 |---|---|---|
-| `init(api_key=..., fail_on_exit=True)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
-| `with nullrun.guard():` | Any `NullRunError` raised inside the block (kill signal re-raises) | Region of code (e.g. a graph `invoke`) — **recommended** form |
+| Gateway `error` slug | The `error` field of a generic API error | `snake_case`, e.g. `rate_limit_exceeded` |
+| Gateway `error_code` | The `error_code` field of a gate refusal | `SCREAMING_SNAKE_CASE`, e.g. `BUDGET_HARD_BLOCKED` |
+| SDK `error_code` | The `error_code` attribute of an SDK exception | `NR-*`, e.g. `NR-B004` |
 
-Both helpers propagate non-`NullRunError` exceptions (anything
-that isn't an SDK error) as honest tracebacks. `NullRunError`
-subclasses raised inside `with nullrun.guard():` are caught and
-rendered as the **structured four-line developer report**
-(catalog headline + `[error_code]` + `what` + `where` + `why` +
-`how to fix`), then the process exits 1. The kill signal
-(`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) is the
-one exception: `guard()` re-raises it unchanged so kill always
-reaches the top of the agent loop. Catch kill explicitly with
-`except NullRunWorkflowKilledError:` if you need to checkpoint
-state before exit. For the full design rationale and the
-boundary between "what NullRun tells the developer" and "what
-the developer tells their end users", see
+A generic API error carries three fields: `error` (the slug), `message` (human
+text), and `code` (a `SCREAMING_SNAKE_CASE` companion). Read `error` first.
+
+A gate refusal carries `error_code` (the enforcement code), `error_message`,
+and `details` (structured context). The SDK reads the code from the top level
+or from inside `details`.
+
+For the three-layer error model — structured exceptions → `on_error` hook →
+`format_user_message` and `with nullrun.guard():` — see
 [Concepts → Error handling](../concepts/error-handling.md).
+
+## Generic API errors
+
+A generic API error answers with a slug, a message, and a legacy code.
+
+| `error` slug | HTTP | `code` | When |
+|---|---|---|---|
+| `bad_request` | 400 | `INVALID_INPUT` | Generic invalid input. |
+| `invalid_json` | 400 | `INVALID_JSON` | The request body could not be parsed as JSON. |
+| `bad_request` | 415 | `INVALID_INPUT` | The request body has no `application/json` content type. |
+| `unauthorized` | 401 | `UNAUTHORIZED` | The key is missing, invalid, or expired. |
+| `forbidden` | 403 | `FORBIDDEN` | Authenticated, but not allowed. |
+| `not_found` | 404 | `NOT_FOUND` | The resource does not exist or is not visible to the caller. |
+| `conflict` | 409 | `CONFLICT` | A duplicate, or a race the caller lost. |
+| `conflict` | 409 | `APPROVAL_ALREADY_DECIDED` | The approval was already decided. |
+| `conflict` | 409 | `APPROVAL_EXPIRED` | The approval expired. |
+| `validation_error` | 422 | `VALIDATION_FAILED` | The body parsed but failed schema validation. |
+| `validation_error` | 422 | `INVALID_FIELD` | A field in the body has the wrong shape. |
+| `plan_limit_exceeded` | 422 | `PLAN_LIMIT_EXCEEDED` | A plan cap was hit. `details.resource` names the dimension. |
+| `workflow_limit_reached` | 422 | `WORKFLOW_LIMIT_REACHED` | The active-workflow cap was hit. |
+| `rate_limit_exceeded` | 429 | `RATE_LIMIT_EXCEEDED` | A rate cap was hit. The body carries `retry_after`. |
+| `internal_error` | 500 | `INTERNAL_ERROR` | A server-side fault. |
+| `internal_error` | 503 | `INTERNAL_ERROR` | A dependency was unavailable. The body carries `retry_after`. |
+| `not_implemented` | 501 | `NOT_IMPLEMENTED` | The endpoint is not implemented. |
+
+Plan caps all surface as `plan_limit_exceeded`. There is no slug per
+dimension — read `details.resource`.
+
+A generic API error becomes `NullRunBackendError` in the SDK, except on these
+statuses: `401` and `403` raise `NullRunAuthenticationError`, and `429` raises
+`RateLimitError`.
+
+## Gateway wire error codes
+
+A gate refusal carries one of the codes below in `error_code`. The `category`
+says what the caller may do about it.
+
+| Category | Meaning |
+|---|---|
+| `denied` | A rule judged this call unacceptable. Another call may pass, so the model may adapt and try something else. |
+| `budget` | A money or quota boundary is exhausted. Stop. Do not retry and do not re-plan. |
+| `halt` | The run is over. Retrying, adapting, and waiting all fail the same way. |
+| `infra` | A system fault. Retry with backoff. |
+
+Only a `denied` refusal is safe to turn into model-readable text. A model told
+that its budget is exhausted will go looking for another tool.
+
+The SDK maps a recognised code to a typed exception. An unrecognised code falls
+back to the HTTP status.
+
+| `error_code` | HTTP | Category | SDK exception |
+|---|---|---|---|
+| `WF_BUDGET_EXCEEDS_ORG_BUDGET` | 200 | `budget` | — |
+| `BUSINESS_IMPACT_INVALID` | 400 | `infra` | `NullRunBlockedException` |
+| `CHAIN_ID_INVALID` | 400 | `infra` | `NullRunChainError` |
+| `EXECUTION_ID_MALFORMED` | 400 | `infra` | `NullRunBackendError` |
+| `EXECUTION_ID_REQUIRED` | 400 | `infra` | `NullRunBackendError` |
+| `INVALID_EXECUTION_ID` | 400 | `infra` | `NullRunBackendError` |
+| `MODEL_REQUIRED` | 400 | `infra` | `NullRunBlockedException` |
+| `PROTOCOL_HEADER_INVALID` | 400 | `infra` | `NullRunProtocolError` |
+| `PROTOCOL_HEADER_REQUIRED` | 400 | `infra` | `NullRunProtocolError` |
+| `PROTOCOL_TOO_NEW` | 400 | `infra` | `NullRunProtocolError` |
+| `PROTOCOL_TOO_OLD` | 400 | `infra` | `NullRunProtocolError` |
+| `VALIDATION_FAILED` | 400 | `infra` | `NullRunBlockedException` |
+| `WORKFLOW_ID_BODY_MISMATCH` | 400 | `infra` | `NullRunBackendError` |
+| `API_KEY_DISABLED` | 401 | `infra` | `NullRunAuthError` |
+| `API_KEY_EXPIRED` | 401 | `infra` | `NullRunAuthError` |
+| `API_KEY_INVALID` | 401 | `infra` | `NullRunAuthError` |
+| `API_KEY_MALFORMED` | 401 | `infra` | `NullRunAuthError` |
+| `API_KEY_MISSING` | 401 | `infra` | `NullRunAuthError` |
+| `API_KEY_REVOKED` | 401 | `infra` | `NullRunAuthError` |
+| `BUDGET_ANTI_DOS_RESERVED_CAP` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_CACHE_EXCEEDED` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_HARD_BLOCKED` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_ORG_CEILING_BLOCKED` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_OVERDRAFT_EXCEEDED` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_PERIOD_NOT_STARTED` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_RECHECK_FAILED` | 402 | `infra` | `NullRunBudgetRecheckFailedError` |
+| `BUDGET_REDIS_UNAVAILABLE` | 402 | `infra` | `NullRunBudgetError` |
+| `BUDGET_SOFT_BLOCKED` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_WORKFLOW_BLOCKED` | 402 | `budget` | `NullRunBudgetError` |
+| `CHAIN_MAX_DURATION_EXCEEDED` | 402 | `halt` | `NullRunChainError` |
+| `EXECUTION_QUOTA_EXCEEDED` | 402 | `budget` | `NullRunBlockedException` |
+| `RESERVED_SCANNED_PARTIAL` | 402 | `budget` | `NullRunBudgetError` |
+| `APPROVAL_DENIED` | 403 | `denied` | `NullRunApprovalDeniedError` |
+| `APPROVAL_EXPIRED` | 403 | `denied` | `NullRunApprovalExpiredError` |
+| `APPROVAL_NOT_YET_APPROVED` | 403 | `denied` | `NullRunApprovalNotYetApprovedError` |
+| `APPROVAL_TOOL_ARGUMENT_MISMATCH` | 403 | `infra` | `NullRunApprovalDigestMismatchError` |
+| `APPROVAL_TOOL_ARGUMENT_UNAVAILABLE` | 403 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `CHAIN_CROSS_ORG` | 403 | `infra` | `NullRunChainError` |
+| `CHAIN_KEY_MISMATCH` | 403 | `infra` | `NullRunChainError` |
+| `CHAIN_ORG_MISMATCH` | 403 | `infra` | `NullRunChainError` |
+| `CIRCUIT_BREAKER_TRIPPED` | 403 | `halt` | `NullRunBlockedException` |
+| `EXECUTION_KEY_MISMATCH` | 403 | `infra` | `NullRunAuthError` |
+| `EXECUTION_ORG_MISMATCH` | 403 | `infra` | `NullRunAuthError` |
+| `INSUFFICIENT_SCOPE` | 403 | `infra` | `NullRunAuthError` |
+| `MCP_APPROVAL_REQUIRED` | 403 | `denied` | `NullRunMcpApprovalRequiredError` |
+| `MCP_DEFINITION_DRIFTED` | 403 | `denied` | `NullRunApprovalToolDigestMismatchError` |
+| `MCP_DESTRUCTIVE_BLOCKED` | 403 | `denied` | `NullRunMcpDestructiveBlockedError` |
+| `MCP_READONLY_BYPASS_BLOCKED` | 403 | `denied` | `NullRunMcpReadonlyBypassBlockedError` |
+| `MCP_TOOL_APPROVAL_REQUIRED` | 403 | `denied` | `NullRunMcpApprovalRequiredError` |
+| `MCP_TOOL_BLOCKED` | 403 | `denied` | `NullRunToolBlockedError` |
+| `MCP_TOOL_DECISION_REQUIRED` | 403 | `denied` | `NullRunMcpApprovalRequiredError` |
+| `MCP_TOOL_REMOVED` | 403 | `denied` | `NullRunToolBlockedError` |
+| `ORG_MISMATCH` | 403 | `infra` | `NullRunAuthError` |
+| `PARENT_EXECUTION_KEY_MISMATCH` | 403 | `infra` | `NullRunChainError` |
+| `PARENT_EXECUTION_ORG_MISMATCH` | 403 | `infra` | `NullRunChainError` |
+| `TOOL_BLOCKED` | 403 | `denied` | `NullRunToolBlockedError` |
+| `WORKFLOW_INACTIVE` | 403 | `halt` | `NullRunWorkflowInactiveError` |
+| `WORKFLOW_PAUSED` | 403 | `halt` | `NullRunBlockedException` |
+| `APPROVAL_NOT_FOUND` | 404 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `CHAIN_NOT_FOUND` | 404 | `halt` | `NullRunChainError` |
+| `EXECUTION_NOT_FOUND` | 404 | `infra` | `NullRunExecutionNotFoundError` |
+| `PARENT_EXECUTION_NOT_FOUND` | 404 | `infra` | `NullRunChainError` |
+| `SUBWORKFLOW_INVOKE_DISABLED` | 404 | `denied` | `NullRunChainError` |
+| `APPROVAL_ALREADY_DECIDED` | 409 | `infra` | `NullRunApprovalReplayRejectedError` |
+| `APPROVAL_CONFLICT` | 409 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `APPROVAL_DIGEST_MISMATCH` | 409 | `infra` | `NullRunApprovalDigestMismatchError` |
+| `APPROVAL_REPLAY_REJECTED` | 409 | `infra` | `NullRunApprovalReplayRejectedError` |
+| `APPROVAL_TOOL_DIGEST_MISMATCH` | 409 | `infra` | `NullRunApprovalToolDigestMismatchError` |
+| `APPROVAL_TOOL_MISMATCH` | 409 | `infra` | `NullRunApprovalToolMismatchError` |
+| `CHAIN_ENDED` | 409 | `halt` | `NullRunChainError` |
+| `IDEMPOTENCY_CONFLICT` | 409 | `infra` | `NullRunProtocolError` |
+| `IDEMPOTENCY_IN_FLIGHT` | 409 | `infra` | `NullRunBackendError` |
+| `IDEMPOTENCY_KEY_MISMATCH` | 409 | `infra` | `NullRunProtocolError` |
+| `BATCH_TOO_LARGE` | 413 | `infra` | `NullRunBackendError` |
+| `CONSUME_OVERBUDGET` | 422 | `budget` | `NullRunConsumeOverbudgetError` |
+| `CONTROL_CHARS_IN_FIELD` | 422 | `infra` | `NullRunBackendError` |
+| `EXECUTION_NOT_BOUND` | 422 | `infra` | `NullRunExecutionNotFoundError` |
+| `LEGACY_GRANT_REJECTED` | 422 | `infra` | `NullRunBlockedException` |
+| `WORKFLOW_CYCLE_DETECTED` | 422 | `infra` | `NullRunChainError` |
+| `WORKFLOW_DEPTH_EXCEEDED` | 422 | `infra` | `NullRunChainError` |
+| `WORKFLOW_PARENT_BINDING_EXPIRED` | 422 | `infra` | `NullRunChainError` |
+| `BUDGET_EXCEEDED` | 429 | `budget` | `NullRunBudgetError` |
+| `LOOP_DETECTED` | 429 | `denied` | `NullRunBlockedException` |
+| `RATE_LIMIT_EXCEEDED` | 429 | `budget` | `RateLimitError` |
+| `RATE_LIMIT_PLAN_TIER` | 429 | `budget` | `RateLimitError` |
+| `TOO_MANY_PENDING_APPROVALS` | 429 | `budget` | `NullRunBlockedException` |
+| `WAITLIST_RATE_LIMITED` | 429 | `denied` | `RateLimitError` |
+| `APPROVAL_CREATE_FAILED` | 500 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `APPROVAL_DIGEST_RECOMPUTE_FAILED` | 500 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `APPROVAL_PERSISTENCE_FAILED` | 500 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `APPROVAL_VALIDATION_FAILED` | 500 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `EXECUTION_BINDING_MISSING` | 500 | `infra` | `NullRunBackendError` |
+| `INTERNAL_ERROR` | 500 | `infra` | `NullRunBackendError` |
+| `WORKFLOW_BUDGET_CONFIG_INVALID` | 500 | `infra` | `NullRunBackendError` |
+| `APPROVAL_DB_UNAVAILABLE` | 503 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `APPROVAL_RULES_UNAVAILABLE` | 503 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `AUTH_BACKEND_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `BUDGET_DATA_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `BUDGET_PROJECTION_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `CIRCUIT_BREAKER_STATE_LOOKUP_FAILED` | 503 | `infra` | `NullRunBackendError` |
+| `EXECUTION_BINDING_READ_FAILED` | 503 | `infra` | `NullRunBackendError` |
+| `EXECUTION_BINDING_WRITE_FAILED` | 503 | `infra` | `NullRunBackendError` |
+| `EXECUTION_RESOLVE_REDIS_ERROR` | 503 | `infra` | `NullRunBackendError` |
+| `IDEMPOTENCY_REDIS_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `INGESTION_BACKPRESSURE` | 503 | `infra` | `NullRunBackendError` |
+| `INGESTION_CLOSED` | 503 | `infra` | `NullRunBackendError` |
+| `INVOKE_PERSIST_FAILED` | 503 | `infra` | `NullRunBackendError` |
+| `MCP_REGISTRY_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `ORG_CONTEXT_UNRESOLVED` | 503 | `infra` | `NullRunBackendError` |
+| `POLICY_UNCONFIGURED` | 503 | `infra` | `NullRunBlockedException` |
+| `RATE_LIMITER_UNAVAILABLE` | 503 | `infra` | `NullRunRateLimitRedisError` |
+| `RATE_LIMIT_PLAN_LOOKUP_FAILED` | 503 | `infra` | `NullRunRateLimitRedisError` |
+| `RATE_LIMIT_REDIS_UNAVAILABLE` | 503 | `infra` | `NullRunRateLimitRedisError` |
+| `REDIS_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `RESERVATION_NOT_FOUND` | 503 | `infra` | `NullRunBackendError` |
+| `RESERVE_DISABLED` | 503 | `infra` | `NullRunBackendError` |
+| `TOOL_BLOCKED_BACKSTOP_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `WORKFLOW_DEPTH_LOOKUP_FAILED` | 503 | `infra` | `NullRunChainError` |
+| `WORKFLOW_INACTIVE_LOOKUP_FAILED` | 503 | `infra` | `NullRunBackendError` |
+
+Three codes come from the request parser rather than the registry. They answer
+on the enforcement path with `error_code` set to `INVALID_JSON` (400),
+`INVALID_FIELD` (422), or `MISSING_CONTENT_TYPE` (415).
+
+## SDK exception hierarchy
+
+Every public SDK exception inherits from `NullRunError` and carries four
+structured fields: `error_code`, `user_action`, `retryable`, and `docs_url`.
+
+```
+Exception
+└── BreakerError
+    ├── BreakerTransportError           events could not be delivered
+    │   └── InsecureTransportError     HTTPS was required
+    └── NullRunError
+        ├── NullRunDecision                  marker — expected policy outcomes
+        │   ├── NullRunBlockedException      NR-X001
+        │   │   ├── NullRunDeniedError                        NR-D001
+        │   │   ├── NullRunBudgetError                        NR-B004
+        │   │   │   └── NullRunBudgetRecheckFailedError        NR-B006
+        │   │   ├── NullRunToolBlockedError                   NR-T001
+        │   │   ├── NullRunApprovalDbUnavailableError         NR-A016
+        │   │   ├── NullRunApprovalResponseMissingError       NR-A004
+        │   │   ├── NullRunApprovalNotYetApprovedError        NR-A010
+        │   │   ├── NullRunApprovalDeniedError                NR-A011
+        │   │   ├── NullRunApprovalExpiredError               NR-A012
+        │   │   ├── NullRunApprovalReplayRejectedError        NR-A015
+        │   │   ├── NullRunApprovalDigestMismatchError        NR-A013
+        │   │   ├── NullRunApprovalToolDigestMismatchError    NR-A014
+        │   │   ├── NullRunApprovalToolMismatchError          NR-A017
+        │   │   ├── NullRunMcpDestructiveBlockedError         NR-MCP01
+        │   │   ├── NullRunMcpReadonlyBypassBlockedError      NR-MCP02
+        │   │   └── NullRunMcpApprovalRequiredError           NR-MCP03
+        │   ├── NullRunConsumeOverbudgetError                 NR-O001
+        │   ├── NullRunChainError                             NR-CH001
+        │   ├── WorkflowPausedException                       NR-W003
+        │   └── NullRunWorkflowInactiveError                  NR-W004
+        ├── WorkflowKilledInterrupt          NR-W002 — not a NullRunDecision
+        │   └── NullRunWorkflowKilledError   NR-W002
+        └── NullRunInfrastructureError       marker — system failures
+            ├── NullRunConfigError                          NR-C000
+            ├── NullRunAuthenticationError                  NR-A001
+            │   └── NullRunAuthError                        NR-A003
+            ├── NullRunProtocolError                        NR-P001
+            │   └── NullRunMalformedGateResponseError       NR-P002
+            ├── NullRunGateIndeterminateError               NR-P004
+            ├── NullRunUnknownActionError                   NR-P005
+            ├── NullRunUnclassifiedRefusalError             NR-P003
+            ├── NullRunRateLimitRedisError                  NR-R002
+            └── NullRunTransportError                       NR-B001
+                ├── NullRunBackendError                     NR-B002
+                │   └── NullRunExecutionNotFoundError       NR-EX01
+                └── RateLimitError                          NR-R001
+```
+
+Three classes sit outside the marker split, and each one matters when you
+write an `except` chain.
+
+- `WorkflowKilledInterrupt` inherits from `NullRunError` directly, not from
+  `NullRunDecision`. A kill is not a policy decision, so
+  `except NullRunDecision` does not catch it. Catch it by name.
+- `NullRunApprovalDbUnavailableError` inherits from
+  `NullRunBlockedException`, so it lands in the decision branch even though an
+  unreachable approval store is a system failure. Its `error_code`
+  (`NR-A016`) is what distinguishes it.
+- `BreakerTransportError` and `InsecureTransportError` inherit from
+  `BreakerError`, not from `NullRunError`. `except NullRunError:` does not
+  catch them.
+
+`NullRunUnclassifiedRefusalError` lives in the SDK's category module, not the
+exception module. It is still importable from the package.
+
+`NullRunBlockedException` carries `.workflow_id`, `.reason`, `.action`,
+`.tool_name`, `.status_code`, and `.details`. It has **no** `.message`
+attribute — use `str(exc)`.
 
 ## Decision vs. infrastructure
 
-The public exception hierarchy splits `NullRunError` into two marker
-subclasses by **what kind of event** the exception represents. The
-split is additive — every existing `except NullRunError:` and
-`except NullRunBlockedException:` clause keeps matching. New code can
-use the marker classes to write a two-branch handler that captures
-the right behaviour for each category.
+The hierarchy splits `NullRunError` into two marker subclasses by what kind of
+event the exception represents. The split is additive: every existing
+`except NullRunError:` and `except NullRunBlockedException:` clause keeps
+matching.
 
 | Marker | What it covers | Why it matters |
-| --- | --- | --- |
-| `NullRunDecision` | Expected policy outcomes — budget cap, tool block, chain-gate rejection, loop detection, workflow pause, over-budget commit | The enforcement layer is doing its job. UX explains the decision and (where applicable) offers an upgrade or alternative action. |
-| `NullRunInfrastructureError` | System failures — network unreachable, gateway 5xx, gateway 429, auth rejection, config error, rate-limit Redis down | The SDK could not reach or query the policy engine. UX is a generic "service unavailable"; operators triage via `error_code`, `retryable`, and for transport errors, `source` / `endpoint`. |
+|---|---|---|
+| `NullRunDecision` | Expected policy outcomes — budget cap, tool block, chain rejection, loop detection, workflow pause, over-budget commit. | The enforcement layer did its job. UX explains the decision and, where it applies, offers an upgrade or an alternative action. |
+| `NullRunInfrastructureError` | System failures — network unreachable, gateway 5xx, gateway 429, auth rejection, config error, rate limiter down. | The SDK could not reach or query the policy engine. UX is a generic "service unavailable". Operators triage with `error_code`, `retryable`, and for transport errors `source` and `endpoint`. |
 
-Rate limits land on the **infrastructure** side, not the decision
-side: a 429 from the gateway arrives as `RateLimitError`, a subclass
-of `NullRunTransportError` → `NullRunInfrastructureError`. Handle it
-as a system failure with a retry, and surface `upgrade_url` if the
-user genuinely needs a higher plan.
+Rate limits land on the infrastructure side. A 429 arrives as `RateLimitError`,
+a subclass of `NullRunTransportError` → `NullRunInfrastructureError`. Handle it
+as a system failure with a retry, and surface `upgrade_url` when the user
+genuinely needs a higher plan.
 
-`WorkflowKilledInterrupt` belongs to neither marker — catch it by
-name ahead of both, as shown in the [exception
-hierarchy](#sdk-exception-hierarchy-python).
+`WorkflowKilledInterrupt` belongs to neither marker. Catch it by name ahead of
+both.
 
 ### Recommended handler shape
 
@@ -179,150 +307,143 @@ from nullrun.breaker.exceptions import (
 )
 
 try:
-    result = agent.run(message)
-except NullRunDecision as d:
-    # Expected — surface to the user, log to product analytics,
-    # tag the conversation with d.error_code for cohort analysis.
-    analytics.track("nullrun_decision", code=d.error_code)
-    return nullrun.format_user_message(d)
-except NullRunInfrastructureError as e:
-    # System failure — alert ops, retry with backoff, do NOT
-    # surface internal text to the end user. The catalog has a
-    # generic message for every infrastructure error code.
-    sentry.capture_exception(e)
-    return nullrun.format_user_message(e)
+    result = run_the_agent(message)
+except NullRunDecision as exc:
+    # Expected. Surface it to the user and tag it with the code.
+    logger.info("nullrun_decision code=%s", exc.error_code)
+    return nullrun.format_user_message(exc)
+except NullRunInfrastructureError as exc:
+    # System failure. Alert ops and retry with backoff.
+    logger.exception("nullrun_infrastructure code=%s", exc.error_code)
+    return nullrun.format_user_message(exc)
 ```
 
-### Mapping decision subclasses to HTTP
+### Mapping decisions to HTTP status
 
-When you build a server-framework integration (FastAPI, aiohttp,
-Telegram bot, Slack handler), map each category to the right HTTP
-status. The headline cases are below. Where the backend supplied a
-wire status, the exception carries it as `.status_code` and you can
-map the field directly instead of hard-coding.
+The gateway answers a refusal with its own status. A host that re-exposes the
+failure to its own clients picks its own status.
 
-| Category | HTTP status | Notes |
-| --- | --- | --- |
-| `NullRunDecision` — budget exhausted (`NR-B004`) | `402` | `NullRunBudgetError` carries `.status_code`. Read `.details` for any `retry_after` the backend supplied |
-| `NullRunDecision` — tool blocked (`NR-T001`) | `403` | User did nothing wrong, but the action is forbidden. Carries `.status_code` |
-| `NullRunDecision` — workflow paused (`NR-W003`) | `503` | `WorkflowPausedException` has no `.status_code`; it carries `.resume_after`, which you pass as the `Retry-After` header |
-| `NullRunDecision` — chain gate failed (`NR-CH001`) | `402` or `403` | `NullRunChainError`. One code covers both: `CHAIN_MAX_DURATION_EXCEEDED` → 402, `CHAIN_ORG_MISMATCH` / `CHAIN_CROSS_ORG` → 403. Read `.status_code` |
-| `NullRunInfrastructureError` — rate-limit Redis (`NR-R002`) | `503` | `NullRunRateLimitRedisError` — the rate limiter is degraded |
-| `NullRunInfrastructureError` — gateway 429 | `503` | `RateLimitError` carries `.retry_after` and `.upgrade_url` |
-| `WorkflowKilledInterrupt` (`NR-W002`) | `503` | Special ASGI middleware required — see [Use with FastAPI](../how-to/fastapi.md) |
+The SDK's FastAPI integration ships one mapping. It keys on the `error_code`,
+not on the exception class.
 
-Other decision categories (`CONSUME_OVERBUDGET` → 422,
-`WORKFLOW_INACTIVE` → 403) and infrastructure codes
-(`PROTOCOL_TOO_OLD` → 400, generic `NullRunInfrastructureError` → 503)
-follow the same pattern: read `exc.status_code` from the wire when the
-attribute is present and map it directly.
+| `error_code` | Status | Meaning |
+|---|---|---|
+| `NR-B004` | 429 | Budget exhausted. |
+| `NR-L001` | 429 | Loop detected. |
+| `NR-R001` | 429 | Rate limited. |
+| `NR-T001` | 403 | Tool blocked. |
+| `NR-X001` | 403 | Generic block. |
+| `NR-W003` | 503 | Workflow paused. |
+| `NR-W002` | 503 | Workflow killed. |
+| any other decision code | 429 | Default for a decision. |
+| any infrastructure code | 503 | Default for a system failure. |
 
-`.status_code` is **not** on every exception — it exists only where
-`__init__` accepts one, which today is the `NullRunBlockedException`
-family plus `NullRunConsumeOverbudgetError` and `NullRunChainError`.
-`WorkflowPausedException`, `WorkflowKilledInterrupt`,
-`NullRunApprovalDbUnavailableError` and the transport classes do not
-carry it, so read it with
-`getattr(exc, "status_code", None)` and fall back to your category
-default. The FastAPI integration applies this mapping for you; in
-custom integrations do the same rather than assuming the attribute is
-there.
+`NR-W003` surfaces `resume_after` as the `Retry-After` header. `NR-R001`
+surfaces `retry_after` the same way.
 
-The NullRun SDK ships a reference FastAPI integration that applies
-this mapping for you — see [Use with FastAPI](../how-to/fastapi.md)
-for a one-line setup.
+`.status_code` carries the gateway's own status on the exceptions that
+received one: the `NullRunBlockedException` family,
+`NullRunConsumeOverbudgetError`, and `NullRunChainError`. Read it with
+`getattr(exc, "status_code", None)` when you need the wire status.
+
+See [Use with FastAPI](../how-to/fastapi.md) for the reference integration.
 
 ## HTTP status summary
 
 | Status | Meaning | SDK action |
-| --- | --- | --- |
+|---|---|---|
 | 200 | OK | — |
-| 400 | Bad request | Inspect `message`, fix request |
-| 401 | Bad API key / HMAC | Refresh key / check `NULLRUN_SECRET_KEY` |
-| 403 | Forbidden | Check role / scope |
-| 404 | Not found | Caller handles (workflow/policy may have been deleted) |
-| 409 | Conflict | Inspect `message` (already-member, invite-already-pending, etc.) |
-| 422 | Validation / plan limit | Inspect `details` (for plan limits, `details.resource` + `details.current` + `details.limit`) |
-| 429 | Rate limit | Honour `Retry-After`; check `upgrade_url` |
-| 5xx | Gateway error | Retry with backoff; sensitive tools fail-closed |
+| 400 | Bad request | Inspect `message`, fix the request. |
+| 401 | Bad API key or signature | Refresh the key, check the signing secret. |
+| 402 | Budget refused | Stop. Do not retry. |
+| 403 | Forbidden | Check the role, scope, or org. |
+| 404 | Not found | The caller handles it. |
+| 409 | Conflict | Inspect `message` and `details`. |
+| 413 | Body too large | Split the batch. |
+| 415 | Unsupported media type | Send `Content-Type: application/json`. |
+| 422 | Validation or plan limit | Inspect `details`. |
+| 429 | Rate limit | Honour `Retry-After`; check `upgrade_url`. |
+| 5xx | Gateway error | Retry with backoff. |
 
-When the gateway is unreachable, the SDK raises
-`NullRunTransportError` with `source` set to one of `NETWORK_ERROR`,
-`GATEWAY_ERROR`, `AUTH_ERROR`.
+When the gateway is unreachable, the SDK raises `NullRunTransportError` with
+`source` set to one of `NETWORK_ERROR`, `GATEWAY_ERROR`, `AUTH_ERROR`, or
+`BREAKER_OPEN`.
 
 ## NR-* error code catalog
 
-Stable, machine-readable identifiers on every SDK exception. The
-catalog splits into two families:
+Stable, machine-readable identifiers on every SDK exception.
 
-- **decision / enforcement codes** — what the gate decided (block,
-  deny, require approval, …). Most are surfaced as `NullRunDecision`
-  subclasses in Python.
-- **infrastructure codes** — transport / backend / config failures.
+- **Decision and enforcement codes** — what the gate decided. Surfaced as
+  `NullRunDecision` subclasses.
+- **Infrastructure codes** — transport, backend, and config failures.
   Surfaced as `NullRunInfrastructureError` subclasses.
 
-The three-layer error model and the boundary between developer-facing
-and end-user-facing wording lives in
-[Concepts → Error handling](../concepts/error-handling.md).
+`—` in the HTTP column means the SDK raised the error locally, with no wire
+status attached.
 
-### Decision / enforcement codes
+### Decision and enforcement codes
 
 | `error_code` | When | HTTP | SDK class |
-| --- | --- | --- | --- |
-| `NR-B004` | Workflow budget exhausted | 402 | `NullRunBudgetError` |
-| `NR-B006` | Post-approval budget re-check failed on `/execute` (budget counter moved between `/gate` reserve and `/execute`) | 402 | `NullRunBudgetRecheckFailedError` |
-| `NR-L001` | Loop detected — the same tool repeated past the per-policy threshold. Wire slug `LOOP_DETECTED` | 429 | `NullRunBlockedException` |
-| `NR-O001` | Actual cost > reservation + ε | 422 | `NullRunConsumeOverbudgetError` |
-| `NR-T001` | Tool in block list | 403 | `NullRunToolBlockedError` |
-| `NR-T003` | An action-source (MCP) tool call was blocked by the gate before the client was invoked — raised only when `MCPAdapter` is constructed with an explicit `runtime=` | 403 | `NullRunBlockedException` |
-| `NR-CH001` | Chain context invalid (chain_id / parent_execution_id / max_duration exceeded) | 402 | `NullRunChainError` |
-| `NR-EX01` | `/execute` or `/cancel` called without a prior `/gate` that minted this `execution_id` (binding TTL expired or never bound) | 404 | `NullRunExecutionNotFoundError` |
-| `NR-W002` | Operator kill signal (via dashboard **Kill** button or WS push) | n/a (raised) | `NullRunWorkflowKilledError` (alias `WorkflowKilledInterrupt`) |
-| `NR-W003` | Workflow paused via dashboard or chain cooldown | 503 | `WorkflowPausedException` |
-| `NR-W004` | Workflow soft-deleted (inactive) — restore it to resume traffic | 403 | `NullRunWorkflowInactiveError` |
-| `NR-A003` | API key rejected | 401 | `NullRunAuthError` |
-| `NR-A004` | Approval response missing — gate returned `require_approval` but no row found on `/execute` | 403 | `NullRunApprovalResponseMissingError` |
-| `NR-A010` | Approval exists, status `PENDING` — operator has not decided yet | 403 | `NullRunApprovalNotYetApprovedError` |
-| `NR-A011` | Operator explicitly denied the approval | 403 | `NullRunApprovalDeniedError` |
-| `NR-A012` | Approval expired (`expires_at` in the past) | 403 | `NullRunApprovalExpiredError` |
-| `NR-A013` | Business-impact digest drifted since approval — re-approval required | 403 | `NullRunApprovalDigestMismatchError` |
-| `NR-A014` | Capability digest drifted since approval — re-approval required | 403 | `NullRunApprovalToolDigestMismatchError` |
-| `NR-A015` | Grant already consumed (replay rejected) | 403 | `NullRunApprovalReplayRejectedError` |
-| `NR-A016` | Approval database unavailable — transient 5xx on the approval row lookup | 503 | `NullRunApprovalDbUnavailableError` (fail-CLOSED — retry with backoff) |
-| `NR-MCP01` | Destructive MCP tool blocked by the `mcp_destructive_policy` umbrella. Wire slug `MCP_DESTRUCTIVE_BLOCKED` | 403 | `NullRunMcpDestructiveBlockedError` |
-| `NR-MCP02` | Read-only MCP tool blocked because the operator's bypass path is closed. Wire slug `MCP_READONLY_BYPASS_BLOCKED` | 403 | `NullRunMcpReadonlyBypassBlockedError` |
-| `NR-MCP03` | MCP tool requires operator approval — the MCP counterpart of `NR-A010`. Wire slug `MCP_APPROVAL_REQUIRED` | 403 | `NullRunMcpApprovalRequiredError` (retryable — the operator can still act) |
-| `NR-X001` | Generic policy block — no dedicated subclass | varies | `NullRunBlockedException` (default) |
+|---|---|---|---|
+| `NR-D001` | The operator refused this specific call. Only raised when `init(on_denied="message")` is set. | — | `NullRunDeniedError` |
+| `NR-X001` | A policy block with no more specific code. | — | `NullRunBlockedException` |
+| `NR-B004` | The workflow budget is exhausted. | 402 | `NullRunBudgetError` |
+| `NR-B006` | The budget moved between the gate call and the execute call. | 402 | `NullRunBudgetRecheckFailedError` |
+| `NR-L001` | The same tool repeated past the per-policy threshold. | 429 | `NullRunBlockedException` |
+| `NR-O001` | The actual cost exceeded the reservation. | 422 | `NullRunConsumeOverbudgetError` |
+| `NR-T001` | The tool is in the block list. | 403 | `NullRunToolBlockedError` |
+| `NR-T003` | An MCP tool call was blocked by the gate, and the client was not invoked. | — | `NullRunBlockedException` |
+| `NR-CH001` | The chain scope check failed — bad chain id, wrong parent, or the max duration exceeded. | 402 or 403 | `NullRunChainError` |
+| `NR-EX01` | The execution id is unknown or its binding expired. | 404 | `NullRunExecutionNotFoundError` |
+| `NR-W002` | The operator killed the workflow. | — | `NullRunWorkflowKilledError` (alias `WorkflowKilledInterrupt`) |
+| `NR-W003` | The workflow is paused. | — | `WorkflowPausedException` |
+| `NR-W004` | The workflow is inactive. | 403 | `NullRunWorkflowInactiveError` |
+| `NR-A004` | The gate asked for approval and returned no approval id. | — | `NullRunApprovalResponseMissingError` |
+| `NR-A010` | The operator has not decided yet. | 403 | `NullRunApprovalNotYetApprovedError` |
+| `NR-A011` | The operator denied the approval. | 403 | `NullRunApprovalDeniedError` |
+| `NR-A012` | The approval expired. | 403 | `NullRunApprovalExpiredError` |
+| `NR-A013` | The action changed since the approval. | 409 | `NullRunApprovalDigestMismatchError` |
+| `NR-A014` | The tool surface changed since the approval. | 409 | `NullRunApprovalToolDigestMismatchError` |
+| `NR-A015` | The grant was already consumed. | 409 | `NullRunApprovalReplayRejectedError` |
+| `NR-A016` | The approval store is unreachable. Fails closed. | 503 | `NullRunApprovalDbUnavailableError` |
+| `NR-A017` | The executing tool is outside the approved tool set. | 409 | `NullRunApprovalToolMismatchError` |
+| `NR-MCP01` | A destructive MCP tool was blocked. | 403 | `NullRunMcpDestructiveBlockedError` |
+| `NR-MCP02` | A read-only MCP tool was blocked. | 403 | `NullRunMcpReadonlyBypassBlockedError` |
+| `NR-MCP03` | An MCP tool needs operator approval. | 403 | `NullRunMcpApprovalRequiredError` |
 
-Approval grant-consume codes (NR-A010..NR-A015) are most often seen
-inside a running agent flow: the SDK has parked for human review and
-the operator has acted (or the grant aged out). Match on the
-specific subclass first; fall back to `NullRunBlockedException` if
-you don't care about the exact cause.
+The approval codes are most often seen inside a running agent flow: the SDK
+parked for human review, and the operator acted or the grant aged out. Match
+the specific subclass first, and fall back to `NullRunBlockedException` when
+the exact cause does not matter.
 
 ### Infrastructure codes
 
 | `error_code` | When | HTTP | SDK class |
-| --- | --- | --- | --- |
-| `NR-B001` | Transport-layer network error (timeout, ConnectError, DNS failure) | 500 | `NullRunTransportError` (default) |
-| `NR-B002` | Gateway 5xx | 500/503 | `NullRunBackendError` |
-| `NR-B005` | Local SDK circuit breaker tripped — short-circuits before the wire call | 503 | `NullRunBackendError` (with `source = BREAKER_OPEN`) |
-| `NR-R001` | Per-workflow rate limit hit (gateway returned 429 with `Retry-After`) | 429 | `RateLimitError` (subclass of `NullRunTransportError` — infrastructure class despite the 429 status) |
-| `NR-R002` | Rate-limit Redis unavailable (aggregate per-org rate-limit fail-CLOSED) | 503 | `NullRunRateLimitRedisError` |
-| `NR-C000` | Misconfiguration (missing api_key, invalid setup) | n/a (raised) | `NullRunConfigError` (default) |
-| `NR-C001` | No API key available — `NULLRUN_API_KEY` unset and none passed to `init()` | n/a (raised) | `NullRunAuthenticationError` via `init()`; `NullRunConfigError` via the runtime |
-| `NR-A001` | Auth rejected by backend (general) | 401/403 | `NullRunAuthenticationError` (default) |
-| `NR-A002` | `/auth/verify` returned 200 but the body carried no `organization_id` — a wire-shape mismatch between SDK and gateway | n/a (raised) | `NullRunAuthenticationError` |
-| `NR-S001` | `NULLRUN_SKIP_BUDGET_CHECK=1` is refused against the production gateway — the dev bypass is not available on production traffic | n/a (raised) | `NullRunConfigError` |
-| `NR-P001` | Wire-protocol version mismatch | 400 | `NullRunProtocolError` |
-| `NR-T-PARSE` | Gateway response body could not be parsed as JSON | 502 | `NullRunTransportError` |
-| `INVALID_JSON` | Request body failed JSON parsing (`JsonSyntaxError`) — `error` slug `invalid_json` | 400 | `NullRunBackendError` |
-| `INVALID_FIELD` | Request body parsed but failed schema validation (`JsonDataError`) — `error` slug `validation_error` | 422 | `NullRunBackendError` |
+|---|---|---|---|
+| `NR-B001` | The request never reached the gateway — timeout, connection error, or DNS failure. | — | `NullRunTransportError` |
+| `NR-B002` | The gateway returned 5xx. | 500 or 503 | `NullRunBackendError` |
+| `NR-B005` | The SDK's own circuit breaker is open, so the call short-circuits. | 503 | `NullRunBackendError` (with `source=BREAKER_OPEN`) |
+| `NR-R001` | The gateway returned 429 with a `Retry-After`. | 429 | `RateLimitError` |
+| `NR-R002` | The rate limiter is unavailable. Fails closed. | 503 | `NullRunRateLimitRedisError` |
+| `NR-C000` | The SDK is misconfigured. | — | `NullRunConfigError` |
+| `NR-C001` | No API key is available — `NULLRUN_API_KEY` is unset and none was passed to `init()`. | — | `NullRunAuthenticationError` |
+| `NR-A001` | The credentials were rejected. | 401 or 403 | `NullRunAuthenticationError` |
+| `NR-A002` | The key verification answered 200 but carried no organization id. | — | `NullRunAuthenticationError` |
+| `NR-A003` | The API key was rejected. | 401 | `NullRunAuthError` |
+| `NR-S001` | A development bypass or a removed execution mode was requested. | — | `NullRunConfigError` |
+| `NR-P001` | The wire-protocol version does not match the gateway's. | 400 | `NullRunProtocolError` |
+| `NR-P002` | The gate response is not a decision the SDK can act on. | — | `NullRunMalformedGateResponseError` |
+| `NR-P003` | The refusal carried a category the SDK does not understand, so the SDK cannot tell a policy outcome from a backend fault. | — | `NullRunUnclassifiedRefusalError` |
+| `NR-P004` | The SDK could not obtain a decision, and it did not assume one. | — | `NullRunGateIndeterminateError` |
+| `NR-P005` | The control plane sent an action type this SDK cannot run. | — | `NullRunUnknownActionError` |
+| `NR-T-PARSE` | The gateway response body could not be parsed as JSON. | — | `NullRunTransportError` |
+
+`NR-P003` and `NR-P004` are retryable. `NR-P002` is retryable once the
+connection path is fixed. `NR-P001` and `NR-P005` are not.
 
 ## See also
 
-- [Concepts → Error handling](../concepts/error-handling.md) — the
-  three-layer model, minimal-boilerplate helpers, dev/end-user boundary
+- [Concepts → Error handling](../concepts/error-handling.md)
 - [SDK API](sdk-api.md)
 - [SDK API → User-facing messages](sdk-api.md#user-facing-messages)
 - [Use with FastAPI](../how-to/fastapi.md)

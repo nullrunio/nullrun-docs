@@ -1,25 +1,24 @@
 ---
-title: Crewai
-description: Wrap CrewAI tools and tasks with @protect so the NullRun gate evaluates every crew action before it executes.
+title: CrewAI
+description: Gate a CrewAI crew run with @protect and let the SDK report the crew's cost.
+maturity: stable
 ---
 
-# CrewAI
+# Use with CrewAI
 
-Install (the SDK declares `crewai>=0.80,<2.0`; the guide targets
-**CrewAI 1.15+**, which exposes the EventBus subsystem used for
-lifecycle event tracking):
+Install CrewAI next to the SDK. There is no NullRun vendor extra for
+it.
 
 ```bash title="shell"
 pip install nullrun crewai
 ```
 
-The patch subscribes to the crewai `EventBus` and translates each
-lifecycle event into a `nullrun.get_runtime().track(...)` call. The
-runtime and the crewai EventBus hook are attached lazily on the
-first `@protect` call:
+The SDK attaches to CrewAI on its own. The attachment happens on
+`init()` and on the first `@protect` call.
+
+## The wiring
 
 ```python title="crewai_crew.py"
-import nullrun
 from crewai import Agent, Crew, Task
 from nullrun import protect
 
@@ -46,17 +45,25 @@ def run_crew() -> str:
 print(run_crew())
 ```
 
-The CrewAI integration automatically tracks crew / agent / task /
-tool lifecycle events. Token totals still come from the crew's usage
-metrics after kickoff — the SDK reports the canonical
-`(model, prompt_tokens, completion_tokens)` tuple on every billable
-row.
+`@protect` runs the gate once, at the start of the crew run. The run
+is refused if the workflow is out of budget, if the policy rate-limits
+the call, or if the workflow is paused or killed.
 
-When crewai's events module is not importable (a stripped-down
-third-party build), only the per-event span bridge is
-skipped; the post-run cost attribution still works.
+Individual CrewAI tool executions are reported as events. They are not
+evaluated against the tool policy on their own.
+
+## What the SDK reports
+
+| Source | What it reports |
+|---|---|
+| The CrewAI event bus | Crew, agent, and task lifecycle events |
+| `crew.usage_metrics` | One LLM cost row per model, read after the run returns |
+
+The event bus path needs CrewAI 1.15 or newer. On an older release the
+lifecycle events are skipped and the usage totals still arrive.
 
 ## See also
 
 - [LLM frameworks](llm-frameworks.md)
+- [Multi-agent orchestration](multi-agent-orchestration.md)
 - [Quickstart](../getting-started/quickstart.md)

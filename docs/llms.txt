@@ -1,12 +1,17 @@
 # NullRun Docs
 
 > Runtime decision layer for tool-using AI agents. The SDK gates every
-> tool/model call through `/api/v1/gate` before execution. The gate
-> returns `allow`, `block`, or `require_approval`; the SDK or calling
-> application must honor that decision.
+> tool/model call before execution — a budget pre-flight on
+> `/api/v1/gate` and a tool-policy check on `/api/v1/execute`. The
+> gate returns `allow`, `block`, or `require_approval`; the SDK or
+> calling application must honor that decision.
 
 The Python SDK is the only runtime SDK — TypeScript, JavaScript and Go
 have no equivalent.
+
+> **Setting an agent up?** The Home page carries a copy-paste prompt
+> that hands the whole job to a coding agent:
+> https://docs.nullrun.io/#let-llm-do-all-the-heavy-work
 
 ## Getting started
 
@@ -58,7 +63,7 @@ have no equivalent.
 - [Decorators & context managers](https://docs.nullrun.io/reference/decorators/): `@protect`, `with nullrun.guard():`, `set_call_context`, context managers, order of application
 - [HTTP API](https://docs.nullrun.io/reference/http-api/): `/api/v1/gate`, `/api/v1/track`, `/api/v1/capabilities`, `/api/v1/heartbeat`, control-plane WebSocket
 - [Error codes](https://docs.nullrun.io/reference/errors/): `NR-B004`, `NR-T001`, `NR-R001`, full hierarchy + decision vs infrastructure
-- [LLM tool catalog](https://docs.nullrun.io/reference/llm-tool-catalog/): per-model pricing + capability flags
+- [LLM tool catalog](https://docs.nullrun.io/reference/llm-tool-catalog/): the tool names agents expose, their risk rating, and the ToolBlock patterns that cover them
 
 ## Compliance
 

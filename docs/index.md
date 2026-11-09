@@ -110,10 +110,9 @@ flowchart LR
 <div class="nr-feature__title">Budget gate</div>
 <div class="nr-feature__body">
 Set a per-workflow cap in cents. The SDK asks the gateway
-"any budget left?" before every <code>@protect</code>
-call — no round-trip cost when the answer is "yes". Hard
-blocks on overrun; soft mode allows a bounded overrun
-when an active chain is present.
+"any budget left?" before every <code>@protect</code> call.
+Hard blocks on overrun; soft mode allows a bounded
+overrun when an active chain is present.
 </div>
 </div>
 <div class="nr-feature">
@@ -197,7 +196,8 @@ every LLM call goes through the gateway.
 Every gate decision (allow / block / require_approval) is
 recorded in an append-only audit log with a tamper-evident
 hash chain. The chain is recompute-verifiable on demand via
-the audit-log verify endpoint.
+the audit-log verify endpoint. The audit log is a plan feature —
+Lite and Starter do not carry it.
 </div>
 </div>
 </div>
@@ -231,4 +231,95 @@ event travels over that connection — the SDK adds a network round-trip
 and nothing else to your deployment. Policies, workflows, approvals,
 and the operator controls live in the dashboard, which is where your
 team configures what the gate enforces.
+</section>
+
+<section class="nr-section md-grid md-typeset" markdown="1">
+## Let LLM do all the heavy work
+
+You already run a coding agent — Claude Code, GPT, or anything else
+that edits your repo. Hand it this prompt and it does the whole
+NullRun setup: install, wrap the right call sites, handle the errors,
+and tell you which policies to create in the dashboard.
+
+Copy the block, paste it into your agent, and answer the two
+questions it asks. It reads the code before it changes it.
+
+```text title="Prompt for Claude Code, GPT, or any coding agent"
+Set up NullRun in this repository. NullRun is a runtime decision layer
+for tool-using AI agents: the SDK asks a gateway before every tool or
+model call, and the gateway answers allow, block, or require_approval.
+
+Docs: https://docs.nullrun.io
+
+Do this in order. Stop and ask me if a step is ambiguous.
+
+1. READ FIRST
+   Read https://docs.nullrun.io/getting-started/quickstart/ and
+   https://docs.nullrun.io/reference/sdk-api/ so you use the real API.
+   The public surface is small: `nullrun.init()`, the `@nullrun.protect`
+   decorator, `with nullrun.guard():`, `nullrun.on_error(hook)`,
+   `nullrun.format_user_message(exc)`, and the `workflow` / `span` /
+   `agent` / `chain` context managers. There is no other decorator.
+
+2. INSTALL
+   Add `nullrun` to the project's dependency file (pyproject.toml or
+   requirements.txt). Do not add vendor extras — the plain package
+   covers OpenAI, Anthropic, Gemini, Cohere, Mistral, and Bedrock.
+   Ask me for a NullRun API key if `NULLRUN_API_KEY` is not already
+   exported. Never commit the key.
+
+3. INITIALISE
+   Add one `import nullrun` and one `nullrun.init()` call at the
+   entry point of the application. Do not call `init()` more than once.
+   Leave the API key in the `NULLRUN_API_KEY` environment variable.
+
+4. PROTECT THE CALL SITES
+   Find every place this code calls an LLM or a tool that has a side
+   effect: model completions, HTTP calls to a payment or messaging
+   provider, database writes, file deletion, shell commands.
+   Wrap each one with `@nullrun.protect`. The decorator takes no
+   arguments. Do not change the function body, its name, its
+   signature, or its return value.
+   Do not wrap pure functions that only compute a value.
+   If the app uses a framework (LangGraph, LangChain, CrewAI,
+   AutoGen, OpenAI Agents, LlamaIndex), wrap the entry point of the
+   agent run instead of every node, and say so in your summary.
+
+5. HANDLE THE REFUSALS
+   Wrap the main entry point in `with nullrun.guard():` so a refused
+   call prints a clean message and exits non-zero. Where the app has
+   its own error handling, catch `nullrun.NullRunError` and show
+   `nullrun.format_user_message(exc)` to the user instead of the raw
+   exception text. Never let a refusal fall through as if it had
+   succeeded — a swallowed refusal means the call ran without being
+   authorised.
+   Register `nullrun.on_error(...)` to forward errors to the logging
+   or error-reporting system the project already uses, if there is one.
+
+6. VERIFY
+   Run the project's own test suite. Then write one small test that
+   calls a protected function and asserts that a NullRun refusal
+   raises `nullrun.NullRunError`. Do not weaken or delete any existing
+   test to make the suite pass.
+
+7. REPORT
+   Tell me, in this order:
+   - which files you changed and why;
+   - which call sites you protected and which you left alone;
+   - the exact dashboard steps I must do myself, because only I can
+     create policies: set the budget cap in cents for the workflow,
+     add a ToolBlock rule for the tools that should never run, and
+     add an approval rule for the calls that need a human. Include the
+     tool names you found, so I can write the patterns.
+   - anything you could not verify.
+```
+
+The prompt covers everything that happens inside the code. Three things
+stay with you, because they live in the dashboard and not in the repo:
+
+| You do this | Where |
+|---|---|
+| Set the budget cap in cents | Dashboard → your workflow → budget |
+| List the tools that must never run | Dashboard → Policies → ToolBlock |
+| List the calls that need a human | Dashboard → Policies → approval rule |
 </section>

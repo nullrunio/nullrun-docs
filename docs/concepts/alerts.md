@@ -1,171 +1,110 @@
 ---
 title: Alerts
 maturity: stable
-description: Severity-tiered alerts surfaced in the dashboard — what the four KPI tiles mean, the filter chips, the snooze and dismiss flows.
+description: The operational signals the gateway raises — what fires an alert, how to filter the feed, and how to snooze or dismiss one.
 ---
 
 # Alerts
 
-The **Alerts** page surfaces every operational signal the gateway
-fires that the operator should look at — blocked incidents,
-threshold breaches, system events. It lives at
-`/control-center/alerts` and is gated by the `alerts` plan feature
-(Starter and above). On Lite plans the sidebar link is hidden and
-direct URLs render an upgrade prompt.
+The **Alerts** page shows the signals an operator has to look at: a threshold the spend crossed, an action the gate stopped, an event about the organization.
 
-The page reads from the same `alerts` feed that drives the
-sidebar bell badge (count next to **Alerts**), so dismissing or
-snoozing on the page brings the badge in line immediately.
+Alerts are on Starter and above. On Lite the sidebar entry carries a lock, and the page shows an upgrade prompt.
 
-## Page header
+The page reads the same feed as the badge next to **Alerts** in the sidebar, so a dismiss or a snooze brings the badge in line.
 
-The header reads **Alerts** with a running subtitle that breaks
-down the live state:
+## Reading the feed
+
+The header carries one number per quantity:
 
 ```
-12 active · 5 resolved · 3 critical · 6 warning · 2 info
+3 active of 5 · 2 snoozed · 1 of 2 critical
 ```
 
-Zero-count tiers collapse out of the subtitle so a clean org
-shows just `0 active · 0 resolved` with no visual noise. The
-counts cover every severity tier, so the **info** tier is
-counted alongside critical and warning — all three severities
-surface to operators.
-
-The header action is **Dismiss all (N)** when at least one active
-alert exists; clicking it opens a confirmation Dialog
-("Dismiss N active alerts? This action cannot be undone.") with
-Cancel and the destructive confirm button.
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../../assets/images/screenshots/alerts-light.png"
-       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../../assets/images/screenshots/alerts-dark.png"
-       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">Alerts · Set up alerts</figcaption>
-</figure>
-
-## Metric strip — not a row of four cards
-
-The four tiles above the filter chips are:
-
-| Tile | Sub-line example |
+| Part | Meaning |
 |---|---|
-| **Action sources** | `Add one to begin` / `registered or observed` |
-| **Verified** | `3 unverified — verify now` (deep link to `?filter=unverified`) / `all sources verified` |
-| **Tool calls** | `Last 30 days across all sources` |
-| **Drift** | `Tools match the upstream catalog` / `4 verification pending — not drift` |
+| `3 active of 5` | Rows visible under the current filters, of the organization's active total. The second number appears when a filter narrows the view. |
+| `2 snoozed` | Alerts that are open but snoozed. The table hides them. |
+| `1 of 2 critical` | Visible critical alerts, of the organization's critical total. |
 
-If the list is still loading, every tile shows `—` rather than
-`0`, so the operator never confuses "I don't know yet" with "the
-answer is zero".
+The header also offers **Dismiss all (N)**. N counts every open alert, snoozed included.
 
-## Filter chips — two orthogonal dimensions
+## Filters
 
-Two filter dimensions run side by side above the list:
+| Filter | Values |
+|---|---|
+| **Severity** | All, Critical, Warning, Info |
+| **Source** | All, Prevented, System |
+| **State** | All, Active, Digests |
 
-- **Severity** — `All` / `Critical` / `Warning` / `Info`.
-- **Category** — `All` / `Prevented` / `System`.
+**Prevented** alerts are the ones the gate stopped: a tool block, a budget block. **System** alerts are about the organization: a spend threshold, a killed workflow, a revoked key.
 
-Severity is applied client-side (small enum, response shape
-unchanged); Category is also pushed to the server via
-`useAlerts({ category })` so the wire doesn't even ship the
-filtered-out rows. The combination of the two narrows the list
-independently — `Critical + Prevented` is the typical "what
-incidents did the breaker actually stop today" view.
+Severity and source are independent. A prevented incident can be critical, and a system event can be informational.
 
-## Alert row anatomy
+## A row
 
-Each row is an `AlertCard` rendered as a hairline-divided block.
-The components from top to bottom:
+Each row shows the severity, what happened, the workflow it belongs to, and when it happened. Two actions:
 
-- **Severity left-border** — critical/warning/info accent.
-- **Icon-avatar** — incident type (Wallet for budget_block,
-  ShieldAlert for tool_block, Gauge for spend thresholds).
-- **Title + body** — structured for `budget_block` rows:
-  "Projected vs budget" stats + a horizontal threshold bar
-  (current spend over threshold_cents, live from the wire).
-- **Timestamp + workflow name** — when the alert is workflow-
-  scoped; system alerts omit the workflow chip.
-- **Snooze dropdown** — `1h` / `4h` / `24h` / `3d` / `7d`. The
-  snoozed row is hidden from the active list until the snooze
-  expires; a "Snoozed until …" footer line plus a live countdown
-  appears on the row while the snooze is active.
-- **Dismiss** — single click, the row collapses into the
-  Resolved section.
+| Action | Effect |
+|---|---|
+| **Snooze** | Hides the row for 1 hour, 24 hours, or 7 days. The row shows a countdown until it returns. |
+| **Dismiss** | Closes the alert. It moves to the resolved list. |
 
-## Resolved section
+Beneath the active list, a **Resolved today (N)** section holds the alerts dismissed during the current day. Dismissed rows carry no actions.
 
-Beneath the active list, a **Resolved today** section shows
-dismissed alerts from the current calendar day. Each row renders
-the same `AlertCard` with a `resolved` flag — icon, title, body,
-but no Snooze / Dismiss actions. The resolved section is
-collapsed automatically when there are no resolved alerts.
+## What raises an alert
 
-## How to wire up alerts
+### Threshold rules
 
-The **Set up alerts** button in the top-right of the header takes
-the operator to **Notifications** (`/control-center/notifications`)
-where they can:
+You write these on the **Notifications** page. Each rule watches one value in a window.
 
-- Add Slack, Email, or Webhook channels.
-- Configure threshold rules (e.g. "spend reaches 80% of cap").
-- Subscribe the org's events to the enabled channels.
+| Rule type | Watches |
+|---|---|
+| `daily_spend` | Spend over a day. |
+| `hourly_spend` | Spend over an hour. |
+| `error_rate` | The count of failed calls in the window. |
+| `per_key_spend` | Spend by one API key. |
 
-The Alerts page is the **read** surface; Notifications is the
-**configure** surface. They share the same wire, so a channel
-that fires lands both in the page and in the channel that the
-operator subscribed to.
+A rule has a threshold, a window in minutes, a severity, and an enabled switch. A spend rule uses cents. An error-rate rule uses a count of events.
 
-## API hooks
+### The budget ladder
 
-For automations, the same actions are exposed via REST and are
-mirrored in the audit log:
+Spending against a monthly budget raises alerts at fixed points:
 
-- `POST /api/orgs/alerts/{id}/snooze` — `{ hours: number }` body.
-- `POST /api/orgs/alerts/dismiss-all` — dismiss every active
-  alert for the org in one call. Use sparingly; the gateway
-  still writes one audit row per dismissal.
+| Spend | Severity |
+|---|---|
+| 80% of the budget | Warning |
+| 95% of the budget | Warning |
+| 100% of the budget | Critical |
 
-The plan-tier gate (`alerts` feature) is enforced server-side on
-every handler — a Lite user cannot dismiss alerts by hitting the
-API directly even if the page itself doesn't render.
+### Events
 
-## Where to read next
+The event subscriptions on the **Notifications** page decide which of these reach your channels and which show on this page:
 
-- [Notifications](notifications.md) — how to add channels and
-  subscribe events.
-- [Audit log](error-handling.md#audit-trail) — every dismiss /
-  snooze is recorded as an audit row.
+- Approaching the execution limit.
+- A workflow over its budget.
+- A workflow making repeated identical calls.
+- An action blocked by policy.
+- A workflow terminated.
+- An API key created.
+- A member invited.
 
-!!! info "Deep dive"
+## Configuring alerts
 
-    Severity and category answer different questions, and the two
-    dimensions are orthogonal. Severity is urgency: three tiers exist,
-    critical, warning, and info, with nothing in between, so the colour
-    ladder is the only in-band signal available. Category is ownership:
-    a prevented incident can be critical, and a system event can be
-    purely informational. Spend-threshold alerts follow a fixed ladder
-    where 80% and 95% of the cap are warnings and 100% is critical;
-    key revocation is a warning. System-scope alerts are never bound to
-    a workflow, and that invariant is enforced before the record is
-    written rather than checked at read time.
+The **Set up alerts** button in the header opens the **Notifications** page, where you add channels and write rules. The Alerts page is the read surface; Notifications is the configure surface. They share the same feed, so an alert that fires shows on both.
 
-    The header counts and the listed rows are produced by the same
-    query under the same category filter, so a count can never disagree
-    with what is on screen. An alert counts as active when it is not
-    dismissed and either carries no snooze or its snooze has expired;
-    that one predicate drives both the list and every per-severity
-    count. A category filter value that is not recognised is rejected
-    with a 400 that names the supported set instead of being ignored.
+## API
 
-    Dismissal is idempotent: dismissing an already-dismissed alert
-    changes nothing, and every dismissal writes exactly one audit row.
-    Dismiss-all is organization-wide, and there is no per-workflow bulk
-    path, so an operator cleaning up a single workflow dismisses row by
-    row. A burst of system events of the same kind collapses rather
-    than flooding the feed, so rapid repeated emissions are dropped at
-    the channel layer. The per-row snooze actor is not surfaced on the
-    alerts view; who snoozed and when is recorded in the audit log.
+| Method | Path |
+|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/alerts` |
+| `POST` | `/api/v1/orgs/{org_id}/alerts/{alert_id}/snooze` — body `{"hours": 24}`, clamped to 1–168 hours. |
+| `POST` | `/api/v1/orgs/{org_id}/alerts/{alert_id}/dismiss` |
+| `POST` | `/api/v1/orgs/{org_id}/alerts/dismiss-all` |
+
+Dismiss-all covers the whole organization. There is no per-workflow bulk path, so cleaning up one workflow means dismissing its rows one by one.
+
+## See also
+
+- [Notifications](notifications.md) — channels and rules
+- [Budgets](budgets.md) — the spend behind a spend alert
+- [Policies](policies.md) — what produces a blocked action

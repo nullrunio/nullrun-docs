@@ -1,202 +1,189 @@
 ---
 title: Billing & Plan
 maturity: stable
-description: The merged Billing & Plan page — two tabs (subscription / payment / invoices, and quota / plan comparison / feature availability) sharing one fetch and one loading state.
+description: The plan an organization runs on — its caps, its features, the period the usage counter resets on, and where to read the spend.
 ---
 
 # Billing & Plan
 
-The **Billing & Plan** page combines subscription / payment /
-invoice history with quota / plan-comparison / feature-gate
-information under one URL. It lives at
-`/control-center/billing` in the sidebar.
+The **Billing & Plan** page covers two things: the subscription and the plan. It lives under **Billing** in the sidebar and has two tabs.
 
-The two questions a plan change raises — "can I afford the next
-tier" and "how do I pay for it" — share one fetch and one loading
-state, so the operator never waits on two round-trips to answer
-them.
+| Tab | Answers |
+|---|---|
+| **Billing** | Which plan, at what price, paid how, with which invoices. |
+| **Plan** | How much of the plan is used, and what a different plan gives. |
 
-The active tab is encoded in the URL via `?tab=billing|plan` so the
-view is shareable + reload-safe. `?tab=plan` is the common inbound
-from upgrade prompts (the at-risk banner, the `TierGate`, and the
-`/control-center/plan` URL, which redirects here). Anything
-else — and the default — is the **Billing** tab.
+The tab is part of the URL: `?tab=billing` or `?tab=plan`. **Billing** is the default. Every upgrade prompt in the dashboard opens `?tab=plan`, so a comparison comes before a payment.
 
-## The Billing tab
+## Plans and prices
 
-Default landing. The header reads **Billing** with the subtitle
-"Subscription, payment method and invoice history."
+| Plan | Monthly | Yearly | Per month, billed yearly |
+|---|---|---|---|
+| Lite | $0 | — | — |
+| Starter | $29 | $278 | $23 |
+| Growth | $99 | $950 | $79 |
+| Scale | $299 | $2 870 | $239 |
+| Enterprise | Contact sales | Contact sales | Contact sales |
 
-The hero card surfaces:
+Yearly billing costs 20 % less than twelve monthly payments. Lite is free and has no paid cycle.
 
-- **Plan name + price** (e.g. `Starter · $29/mo · Renews Sep 30`).
-- **Status pill** — `Active` / `Past due` / `Cancelled` / `Expired`
-  (4-state machine; `Trialing` is not a state — paid plans go
-  straight to `Active` after Polar checkout; Lite is free forever
-  with no trial).
-- **Manage subscription** button (see the customer-portal note
-  below).
-- **Update payment method** button.
+## What a plan includes
 
-Below the hero:
+A plan sets two things: the caps on what an organization may create, and the features it may use.
 
-- **Current period end** — RFC-3339 timestamp.
-- **Payment method** — `Brand · last4` (Visa, Mastercard, Amex).
-  Full PAN and CVC are never persisted; Polar is the merchant of
-  record.
-- **Invoice history** — table of `Date / Invoice number / Amount /
-  Status / Download`. Each PDF download wraps the blob in
-  `URL.createObjectURL` and opens it; `window.open` can't attach
-  the bearer token.
-
-!!! note "Customer portal"
-    NullRun does not operate a self-service customer portal. Both
-    **Manage subscription** and **Update payment method** controls
-    render a `mailto:support@nullrun.io` deep-link with a pre-filled
-    subject + body. Auto-checkout on first mount (when
-    `pending_checkout_plan` is set in sessionStorage) is preserved.
-
-### Lite orgs
-
-Lite is the free tier — there is no active `billing_subscriptions`
-row (a row in `Cancelled` or `Expired` status is also treated as
-Lite: no Polar anchor, no live payment method). The hero reads
-`$0/mo · Free tier` and the payment-method / invoices sections
-collapse.
-
-## The Plan tab
-
-Default landing when `?tab=plan` is set. The header reads **Plan**
-with the subtitle "Quota usage, plan comparison and feature
-availability."
-
-The tab surfaces:
-
-- **Quota usage cards** — every plan cap (workflows, policies,
-  api_keys, seats, executions, tokens/hour, requests/second,
-  approval rules) with `used / limit` and a percentage. The
-  executions card surfaces `executions_period_kind` so the operator
-  knows whether the reset is the **Lite rolling 1-month window**
-  anchored at `organizations.created_at` (Lite) or the **Polar
-  billing-cycle anchor** (paid plans). `calendar_month` only
-  appears as a Postgres-failure fallback when the org-row lookup
-  fails.
-- **At-risk banner** — when `quota.at_risk` is true, the page
-  renders a callout with the projected hit date
-  (`projected_hit_in_days`) and a CTA to upgrade.
-- **Plan comparison table** — every public plan catalog row, with
-  the per-tier feature column (Approval rules, Audit log, MCP
-  servers, Notifications, …). The current plan row is highlighted
-  and disabled.
-- **Per-tier feature-gate panel** — a tighter view of which
-  features are on/off at the current plan, with upgrade CTAs.
-
-### Per-tier caps
-
-Canonical cap values per plan (from the `plans` table — single
-source of truth, surfaced via `GET /api/v1/plans`):
+### Caps
 
 | Cap | Lite | Starter | Growth | Scale | Enterprise |
 |---|---|---|---|---|---|
-| Workflows | 3 | 8 | 50 | 200 | unlimited |
-| API keys | 10 | 15 | 100 | 350 | unlimited |
-| Seats | 1 | 3 | 10 | 75 | unlimited |
-| Policies | 3 | 10 | 25 | 150 | unlimited |
-| Approval rules | 0 | 0 | 20 | unlimited | unlimited |
-| Tokens / hour | 10 000 | 25 000 | 300 000 | unlimited | unlimited |
-| Executions / month | 75 000 | 100 000 | 750 000 | 2 000 000 | unlimited |
-| Requests / second | 5 | 10 | 50 | 300 | 1 000 |
+| Executions per month | 75 000 | 100 000 | 750 000 | 2 000 000 | Unlimited |
+| Workflows | 3 | 8 | 50 | 200 | Unlimited |
+| Policies | 3 | 10 | 25 | 150 | Unlimited |
+| API keys | 10 | 15 | 100 | 350 | Unlimited |
+| Seats | 1 | 3 | 10 | 75 | Unlimited |
 
-Lite has the `team`, `approvals`, and `audit log` features
-disabled; Starter unlocks team workspaces and alerts; Growth
-unlocks approvals, audit log, custom policies, and command
-palette; Scale adds saved-cost-share and unlimited workflows;
-Enterprise removes every cap.
+An approval rule counts against the policy cap. A policy that carries its own approval rule counts once, as a policy.
 
-The catalog comes from `GET /api/v1/plans`, which is
-unauthenticated and lives outside the `createApiClient` factory,
-so the page shell fetches it once and threads it through both
-tabs.
+### Features
 
-### Billing period toggle
+| Feature | Lite | Starter | Growth | Scale | Enterprise |
+|---|---|---|---|---|---|
+| Team | — | Yes | Yes | Yes | Yes |
+| Alerts | — | Yes | Yes | Yes | Yes |
+| RBAC | — | — | Yes | Yes | Yes |
+| Human approvals | — | — | Yes | Yes | Yes |
+| Audit log | — | — | Yes | Yes | Yes |
+| Custom policies | — | — | Yes | Yes | Yes |
+| Replay | — | — | Yes | Yes | Yes |
+| SSO | — | — | — | Yes | Yes |
+| History retention | 3 days | 7 days | 30 days | 90 days | Unlimited |
 
-Above the comparison table, a `BillingPeriodToggle` switches
-between **Monthly** and **Yearly** price columns. The yearly
-column is computed via `computeYearlyPriceCents` so the discount
-matches the public pricing page. The wire string for the yearly
-period is `"year"` (not `"yearly"`) — `BillingPeriod::Yearly.as_str()`
-returns the short form to match the frontend
-`BillingData.billing_cycle: "monthly" | "year"` type.
+## The Lite trial
 
-!!! note "Plan IDs on the wire"
-    The canonical id for Enterprise is `"enterprise_unlimited"`.
-    The id `"enterprise"` carries Scale content. `GET /api/v1/plans`
-    returns the canonical id; the dashboard renders it as the
-    **Enterprise** plan name. If you query the catalog by id, use
-    `enterprise_unlimited`.
+A new Lite organization gets Scale for 14 days. The Plan tab shows a countdown while the trial runs and a banner when it ends. The organization keeps its Lite plan and its Lite caps when the trial ends.
 
-## Auto-checkout (post-signup)
+## The period
 
-When a user lands on `/control-center/billing` directly with a
-`pending_checkout_plan` in sessionStorage (post-signup flow), the
-Billing tab is the right destination — it shows the
-**Manage subscription** portal button after a successful checkout
-returns. The Plan tab doesn't get this side effect because the Plan
-tab is a comparison, not a payment surface.
+The executions counter runs over a period, and the period decides when the counter resets.
 
-## Upgrading from anywhere
+| Plan | The period |
+|---|---|
+| Lite | A rolling 30 days, anchored at the day the organization was created. |
+| Paid | The billing cycle. Monthly or yearly, as billed. |
 
-The same Billing & Plan page is where every upgrade prompt in the
-dashboard lands. The redirect contract is:
+The Plan tab states the period under the Executions card: `rolling 30 days · resets in N days` for Lite, `resets on your billing day · in N days` for a paid plan.
 
-- TierGate on a gated page → `?tab=plan`.
-- At-risk banner (any page) → `?tab=plan`.
-- `Upgrade plan` button in a feature empty-state → `?tab=plan`.
+## Reading the usage
 
-All three deep links land on the Plan tab so the user sees the
-comparison table before being asked to pay.
+The Plan tab opens with five quota cards, one per counter.
 
-## Where to read next
+| Card | Counts | Resets |
+|---|---|---|
+| Executions | The decisions the organization took in the period. | On the period boundary. |
+| Workflows | Saved workflows. | Never. |
+| API keys | API keys. | Never. |
+| Policies | Policies, plus the approval rules that count against the policy cap. | Never. |
+| Team members | Members and pending invites. | Never. |
 
-- [Pricing page](https://nullrun.io/pricing) — public plan
-  catalog (the Billing page reads from the same endpoint).
-- [Workspace & Org](organization.md) — for changing the org
-  name / contact email / DPA acceptance.
+Each card shows the count, the cap, and the share used. A card with room left shows `N remaining`. A card on an unlimited cap shows `Unlimited`.
 
-!!! info "Deep dive"
+Deleting a workflow, a policy, or an API key frees its slot at once.
 
-    Plan identity and subscription state are both small state machines.
-    A subscription is always in one of four states â€” active, past due,
-    cancelled, or expired â€” and only a few moves between them are
-    valid: active may go to past due, cancelled, or expired, and past
-    due may go back to active or onwards to cancelled or expired.
-    Anything else is rejected rather than coerced, so status never
-    rewinds implicitly and a failed renewal cannot silently restore a
-    cancelled plan. A free org has no subscription row at all, and that
-    absence is what marks the free tier; a subscription sitting in
-    cancelled or expired status counts as free too.
+### The at-risk banner
 
-    Prices and capabilities are read from the plan catalog rather than
-    embedded in the page, so the dashboard, the public pricing page,
-    and any direct query against the catalog agree by construction. The
-    catalog is readable without authentication and is cacheable, which
-    is what lets the page shell fetch it once and share the result
-    across both tabs. Yearly pricing is derived from the same monthly
-    figure by a single computation, so the discount shown in the
-    comparison table matches the public pricing page exactly.
+When the organization is on pace to reach its execution cap before the period ends, a banner states the number of days and links to a larger plan. Once the cap is reached, every execution is refused until the period resets.
 
-    The Enterprise plan carries the wire identifier
-    `enterprise_unlimited`. Query the catalog by that identifier; the
-    shorter `enterprise` identifier does not name the Enterprise tier.
-    Paid plans have no trial state â€” checkout moves a plan straight to
-    active â€” and the free tier stays free indefinitely.
+## The plan comparison table
 
-    There is no self-service customer portal and no self-service
-    cancellation: both subscription management and payment-method
-    updates resolve to a support contact, and an invoice is downloaded
-    through a credentialed request rather than handed to a new window.
-    Every upgrade entry point in the product â€” the prompt on a gated
-    page, the at-risk banner, and the upgrade action in a feature empty
-    state â€” deep-links to the Plan tab, so a comparison is always shown
-    before a payment is requested. The Plan tab stays
-    comparison-only; payment actions live on the Billing tab.
+The Plan tab carries a table with one column per plan and one row per cap or feature: Price, Executions per month, Workflows, Policies, API keys, Seats, Team, RBAC, Human approvals, Audit log, History. The current plan's column is marked, and its button is disabled.
+
+A **Monthly** / **Yearly** toggle sits above the table. It switches the price row between the monthly and the yearly figure.
+
+## The Billing tab
+
+### The plan card
+
+The card names the plan and the price.
+
+| Plan | Reads |
+|---|---|
+| Lite | `Free • Forever`, with a **Free tier** chip. |
+| Paid | `$29/mo` or `$278/yr`, with an **Active subscription** chip. |
+
+A paid organization on the monthly cycle also gets a **Save 20 %** banner that links to the yearly prices.
+
+### Subscription details
+
+| Field | Meaning |
+|---|---|
+| Status | `active`, `past_due`, `cancelled`, or `expired`. |
+| Subscription ID | The short identifier of the subscription. |
+| Started | The day the subscription began. |
+| Next renewal | The day the current period ends. |
+
+A Lite organization has no subscription, and the card reads **No active subscription**.
+
+### Payment method
+
+The card shows the card on file as `Brand •••• last4`. **Update payment method** opens an email to support.
+
+### Invoices
+
+The invoice table has one row per invoice.
+
+| Column | Meaning |
+|---|---|
+| Date | When the invoice was issued. |
+| Invoice | The invoice number. |
+| Amount | The amount charged. |
+| Status | `paid`, `open`, or `pending`. |
+| Download | The invoice PDF. |
+
+An organization with no invoices reads **No invoices yet**.
+
+### Contacting support
+
+NullRun has no self-service customer portal. **Contact support** and **Update payment method** both open an email to `support@nullrun.io` with the details filled in.
+
+## Changing the plan
+
+**Upgrade plan** on the plan card opens the Plan tab, where each other tier carries its own button. An upgrade takes effect at once.
+
+A downgrade to a plan with lower caps asks what to do with the objects that no longer fit. The preview lists every group that is over its new cap.
+
+| Group | Choice |
+|---|---|
+| Workflows | Archive, Delete, or Keep. |
+| Policies | Archive, Delete, or Keep. |
+| Members | Archive. |
+| Slack installs | Archive. |
+| API keys | Revoke. |
+
+A downgrade takes effect at the end of the current billing period. The Plan tab shows a banner with the date and the target plan until then.
+
+## Plan identifiers
+
+The plan identifiers on the wire are `lite`, `starter`, `growth`, `scale`, and `enterprise_unlimited`.
+
+| Plan | Identifier |
+|---|---|
+| Lite | `lite` |
+| Starter | `starter` |
+| Growth | `growth` |
+| Scale | `scale` |
+| Enterprise | `enterprise_unlimited` |
+
+Query the plan catalog by `enterprise_unlimited` for the Enterprise tier.
+
+## API
+
+The plan catalog is public. It needs no authentication.
+
+| Method | Path |
+|---|---|
+| `GET` | `/api/v1/plans` |
+
+## See also
+
+- [Budgets](budgets.md) — the money the plan pays for
+- [Team](team.md) — the seats the plan carries
+- [Organization](organization.md) — the workspace the plan belongs to

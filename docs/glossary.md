@@ -1,6 +1,7 @@
 ---
 title: Glossary
-description: Every NullRun term in one place — gate, policy, budget, workflow, span, action source, approval, and the fail-closed contract — with a link to the page that explains each one.
+description: Every NullRun term in one place — gate, policy, budget, execution_id, reservation, approval rule, and the fail-closed contract — with a link to the page that explains each one.
+maturity: stable
 ---
 
 # Glossary
@@ -20,16 +21,16 @@ term means and links to the page that goes deeper on it.
 **Policy**
 :   A rule attached to your organization or to a single workflow. Each
     policy answers one enforcement question, and the applicable ones
-    are aggregated most-restrictive-wins across scopes. The four types
-    are `BudgetLimit`, `RateLimit`, `ToolBlock`, and
-    `LoopDetection`. See [Policies](concepts/policies.md).
+    are aggregated most-restrictive-wins across scopes. There are three
+    types — `budget_limit`, `rate_limit`, and `tool_block`. See
+    [Policies](concepts/policies.md).
 
 **ToolBlock**
 :   The policy type that decides which tools an agent may call. Its
     patterns are glob matches over canonical tool names, unioned across
-    every scope that applies. It is **always hard**: it fails closed on
-    a transport error regardless of the budget's
-    `enforcement_mode`. See [Tool policies](concepts/tool-policies.md).
+    every scope that applies. It is **always hard**: a transport error
+    refuses the call regardless of the budget's `enforcement_mode`. See
+    [Tool policies](concepts/tool-policies.md).
 
 **Sensitive tool**
 :   A tool that should never run without a human paying attention —
@@ -38,18 +39,26 @@ term means and links to the page that goes deeper on it.
     patterns. See [Sensitive tools](concepts/sensitive-tools.md).
 
 **Fail-closed / fail-open**
-:   What the gate does when it cannot reach the policy engine.
-    `ToolBlock` and aggregate rate limiting fail **closed** (the call is
-    refused) because the policy is the authoritative gate; per-key rate
-    limits and budget checks fail **open** because the budget
-    enforcement layer behind them is the real backstop. See
-    [Policies](concepts/policies.md).
+:   What happens when the gate cannot get the signal it needs. The
+    enforcement path fails **closed**: a missing tool block, a missing
+    aggregate rate-limit answer, or a missing budget answer refuses the
+    call. The SDK-side circuit breaker is the one component that fails
+    **open**, and only locally — an unreachable gateway short-circuits
+    the SDK's calls instead of hanging. See
+    [Policies](concepts/policies.md) and
+    [Circuit breaker](concepts/circuit-breaker.md).
 
 **Circuit breaker**
 :   The SDK-side guard that short-circuits gate calls after repeated
     infrastructure failures, so an unreachable gateway does not turn
     into a hang. It opens on transport errors and closes again after a
     cooldown. See [Circuit breaker](concepts/circuit-breaker.md).
+
+**Protocol version**
+:   The wire contract version the SDK sends on every gateway request in
+    the `X-NULLRUN-PROTOCOL` header. The SDK sends version `4`. The
+    gateway refuses a request whose version it does not support. See
+    [HTTP API](reference/http-api.md).
 
 ## Cost
 
@@ -66,11 +75,30 @@ term means and links to the page that goes deeper on it.
     returns to Hard mode once the cap is exhausted. See
     [Budgets](concepts/budgets.md).
 
+**execution_id**
+:   The id the gateway mints for one tool call. It is a UUIDv7, so ids
+    sort by time, and the gateway — not the client — issues it. The
+    gateway binds it to your organization and API key, so a call can
+    only be settled by the identity that reserved it. See
+    [HTTP API](reference/http-api.md).
+
 **Reservation**
 :   The amount a workflow commits at gate time, before the call runs.
     The actual cost is consumed against it afterwards, so the reserve /
     consume invariant keeps a single call from being implicitly
     re-reserved. See [Budgets](concepts/budgets.md).
+
+**Consume**
+:   The settlement of a reservation after the call runs. The consumed
+    amount may not exceed the reserved amount plus a small fixed
+    tolerance. A call that overshoots is refused. See
+    [Budgets](concepts/budgets.md).
+
+**operation_id**
+:   The id the SDK attaches to one gate call, so several calls in the
+    same scope stay distinguishable from one another. It is a client
+    value and carries no authority of its own. See
+    [HTTP API](reference/http-api.md).
 
 ## Runtime
 
@@ -117,6 +145,14 @@ term means and links to the page that goes deeper on it.
     `action_digest`; if the payload drifts, the grant is refused. See
     [Human approval](concepts/human-approval.md).
 
+**Approval rule**
+:   A policy that asks for a human instead of answering `allow` or
+    `block` on its own. Its predicate reads the call's business
+    impact — an amount of money, or a named argument value. Approval
+    rules are separate from `ToolBlock`: the tool block says which
+    tools are off limits, the approval rule says which calls need a
+    person. See [Human approval](concepts/human-approval.md).
+
 **action_digest**
 :   The SHA-256 hash that binds an approval to the action it approves.
     A digest mismatch after approval produces a hard block rather than
@@ -138,6 +174,7 @@ term means and links to the page that goes deeper on it.
 
 **Pause**
 :   The control-plane signal that suspends a workflow. It surfaces as
-    `WorkflowPausedException` carrying a `resume_after`, and maps to
-    HTTP `503` with a `Retry-After` header. See
+    `WorkflowPausedException` carrying an optional `resume_after`. A
+    gate call to a paused workflow is refused with `403`
+    `WORKFLOW_PAUSED`. See
     [Error handling](concepts/error-handling.md).

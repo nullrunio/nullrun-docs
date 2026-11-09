@@ -1,36 +1,28 @@
 ---
-title: Llm Tool Catalog
-description: Per-model input and output pricing for every LLM NullRun understands, with capability flags for streaming, tools, and structured output.
+title: LLM tool catalog
+description: A catalogue of the tool names AI agents commonly expose, with a risk rating for each and the ToolBlock patterns that cover them.
+maturity: stable
 ---
 
 # Tool catalog
 
 A reference list of the tool names LLM agents commonly expose, tagged
-with a default risk rating you can use as a starting point when you
-configure approval-rule patterns. `@protect` is the canonical entry
-point; every protected tool ships `tool_name + args + kwargs` on
-the wire, and ToolParameters approval rules read argument values
-directly out of `kwargs` by `param_name`.
+with a risk rating you can use as a starting point when you configure
+`ToolBlock` patterns.
 
-The catalog covers three sources that NullRun sees in production:
-
-- **LangChain built-in toolkits** (`langchain-community` — search, SQL,
-  Gmail, Slack, GitHub, file system, vector stores, code interpreters)
-- **Anthropic / OpenAI hosted tools** (OpenAI code interpreter, e2b
-  sandbox, Riza JS exec)
-- **MCP servers** (official + community — filesystem, git, github,
-  postgres, sqlite, redis, puppeteer, memory, time)
-
-Names are normalised to `snake_case` — that's the convention
-LangChain's docs recommend.
-
-Risk rating:
+`@protect` is the entry point for every protected tool. The tool name
+and the call's argument bag both reach the gateway, so a rule can match
+on the name and a typed approval rule can read an argument value.
 
 | Rating | Meaning |
 | --- | --- |
 | `low` | Read-only or reversible. Safe to call without a policy decision. |
-| `medium` | Mutates external state but the change is reversible (issue created, draft email, S3 put). |
-| `high` | **Side effects you can't easily undo** — files written or deleted, money moved, messages sent, code executed, infra changed. Mark with `@protect` and route through a human approval gate. |
+| `medium` | Mutates external state, and the change is reversible — an issue created, a draft email, an object stored. |
+| `high` | **Side effects you cannot easily undo** — a file written or deleted, money moved, a message sent, code executed, infrastructure changed. Mark it with `@protect` and route it through an approval rule. |
+
+The rating is a starting point, not an enforced value. The gateway
+does not carry a risk table; it matches the names you write into a
+policy.
 
 ## Search & retrieval
 
@@ -61,21 +53,20 @@ Risk rating:
 
 ## Code execution
 
-Any tool that evaluates arbitrary code is `high` by definition —
-the blast radius is the entire host or sandbox the agent reaches.
+Any tool that evaluates arbitrary code is `high` by definition. The
+blast radius is the whole host or sandbox the agent reaches.
 
 `python_repl`, `python_repl_ast`, `execute_python`,
-`code_interpreter` (OpenAI built-in), `e2b_code_interpreter`,
-`execute_javascript` (Riza), `execute_code`, `run_command`,
-`run_bash_command`, `terminal`, `bash`, `shell`, `repl` — all
-**`high`**. Register a blanket pattern (see the starter list below)
-rather than enumerating them.
+`code_interpreter`, `e2b_code_interpreter`, `execute_javascript`,
+`execute_code`, `run_command`, `run_bash_command`, `terminal`, `bash`,
+`shell`, `repl` — all **`high`**. Cover them with one pattern per
+family rather than enumerating every framework's code runner.
 
 ## Databases
 
 | Tool | Risk |
 | --- | --- |
-| `sql_db_schema`, `sql_db_query_checker`, `read_query` (sqlite) | low |
+| `sql_db_schema`, `sql_db_query_checker`, `read_query` | low |
 | `list_tables`, `describe_table` | low |
 | `sql_db_query`, `query_sql_database`, `db_query` | medium |
 | `redis_set` | medium |
@@ -119,8 +110,8 @@ rather than enumerating them.
 
 `stripe_charge`, `stripe_create_customer`, `stripe_refund`,
 `stripe_create_payment`, `create_invoice`, `send_payment` — all
-**`high`**. Reads only (`get_balance_sheet`, `get_income_statement`,
-`get_cash_flow`) drop to `low`.
+**`high`**. Read-only calls (`get_balance_sheet`,
+`get_income_statement`, `get_cash_flow`) drop to `low`.
 
 ## Memory & vector stores
 
@@ -138,25 +129,29 @@ rather than enumerating them.
 | `puppeteer_navigate`, `puppeteer_click`, `puppeteer_fill`, `browser_navigate`, `browser_click` | medium |
 | `puppeteer_evaluate` | high |
 
-!!! note
-    `puppeteer_evaluate` runs JS in the browser page context — treat
-    it as `high` (cross-origin requests, DOM injection, credential
-    theft). `browser_navigate` and `browser_click` are `medium`
-    because they take actions on whatever URL the agent picks.
+`puppeteer_evaluate` runs JavaScript in the page, so it can make
+cross-origin requests, inject DOM, and read credentials. Treat it as
+`high`. `browser_navigate` and `browser_click` are `medium` because
+they act on whatever URL the agent picks.
+
+## MCP tools
+
+An MCP tool's name is whatever the server exposes. The SDK sends that
+name to the gateway unchanged, so a `ToolBlock` pattern has to spell it
+the way the server does. The **MCP servers** view in the dashboard
+lists the servers and the tools each one registers — read the names off
+there rather than guessing them from the server's documentation.
 
 ## Recommended ToolBlock starter list
 
-The SDK does **not** ship a built-in sensitive tool list (see
-[Sensitive tools](../concepts/sensitive-tools.md) for the rationale).
-You express "this tool needs review" with a `ToolBlock` policy on
-the server, evaluated by the gate on every `/gate` call. The
-recommended starter patterns below map to that policy mechanism.
+The SDK ships no built-in sensitive-tool list. You express "this tool
+needs review" with a `ToolBlock` policy, evaluated by the gateway on
+every gate call.
 
-Create a ToolBlock policy in the dashboard under
-**Policies → New policy** (pick **Tool block** as the type). The
-dashboard renders the
-canonical tool name for every framework integration so you can
-match against the right string:
+Create the policy in the dashboard under **Policies → New policy**, and
+pick **Tool block** as the type. The dashboard renders the canonical
+tool name for every framework integration, so you can match against
+the right string.
 
 ```json title="tool_block_policy.json"
 {
@@ -167,17 +162,17 @@ match against the right string:
       "scope": "Org",
       "config": {
         "tool_pattern": [
-          "stripe.*", "charge", "send_payment", "create_invoice", "refund",
+          "stripe*", "charge", "send_payment", "create_invoice", "refund",
           "send_email", "send_gmail", "send_message", "send_sms",
-          "slack_send.*", "office365_send.*",
+          "slack_send*", "office365_send*",
           "delete_file", "file_delete", "write_file", "file_write",
           "execute_sql", "run_sql", "db_write", "db_delete",
           "write_query", "create_table",
-          "s3_delete.*", "ec2_terminate.*", "ec2_stop.*",
+          "s3_delete*", "ec2_terminate*", "ec2_stop*",
           "lambda_invoke", "kubernetes_delete", "kubernetes_apply",
-          "python_repl.*", "bash", "shell", "terminal",
-          "execute_.*", "run_command", "run_bash_command",
-          "git_commit", "github_merge.*", "github_push.*", "github_delete.*",
+          "python_repl*", "bash", "shell", "terminal",
+          "execute_*", "run_command", "run_bash_command",
+          "git_commit", "github_merge*", "github_push*", "github_delete*",
           "memory_delete", "vector_store_delete", "delete_entities"
         ]
       }
@@ -186,62 +181,68 @@ match against the right string:
 }
 ```
 
-Patterns are glob-matched against the tool name the agent requested,
-case-insensitively — `"Stripe.Charge"` will match `"stripe.*"`.
+Note the trailing `*` on the family patterns. `stripe*` covers
+`stripe_charge`, `stripe_refund` and every other `stripe_…` name.
+`stripe.*` does not: it matches the bare name `stripe` and dotted
+names like `stripe.charge`, and nothing else.
 
-For finer-grained rules (e.g. "block refunds over $500", "require
-approval for sends to non-`@internal` addresses"), use the typed
-`BusinessImpact` predicate (`money_amount` or `tool_parameters`) — see
+## Pattern syntax
+
+`*` is the only metacharacter. There is no regex.
+
+| Pattern | Matches | Does not match |
+| --- | --- | --- |
+| `bash` | `bash` | `bash_foo`, `pybash` |
+| `bash*` | `bash`, `bash_foo`, `bash.foo` | `pybash` |
+| `*.secret` | `aws.secret`, `db.secret` | `secret` |
+| `bash.*` | `bash`, `bash.foo`, `bash.foo.bar` | `bash_foo` |
+| `*.drop_*` | `s3.drop_table`, `db.drop_user` | `s3.execute_drop` |
+
+Alternatives share one entry. The pipe character separates them, and
+each side is evaluated on its own:
+
+```text
+bash|sh|shell
+```
+
+That entry matches `bash`, `sh` and `shell`, and nothing else.
+
+| Rule | Behaviour |
+| --- | --- |
+| No `*` | Exact equality. A bare literal is never a substring match. |
+| One `*` | Anchored prefix and/or suffix. `db.drop_*` needs the prefix; `*.secret` needs the suffix. |
+| Two or more `*` | Every literal segment must appear in the value, in order. The ends stay anchored when the pattern does not start or end with `*`. |
+| `prefix.*` | The bare prefix **and** any dotted continuation. `bash.*` covers `bash`, `bash.foo` and `bash.foo.bar`. It does not cover `bash_foo`. |
+| `\|` | Separates alternatives inside one entry. Each alternative is evaluated on its own. |
+| `?` | An ordinary character, not a single-character wildcard. |
+| `**` | Matches nothing. A pattern with two adjacent stars is refused rather than read as one. |
+| Empty | Matches nothing. |
+
+Matching is case-sensitive. A built-in tool name is lowercase ASCII
+letters, digits, `_` and `-`, up to 64 characters, so write the pattern
+in the same shape.
+
+## What a pattern cannot do
+
+Matching reads the tool name only. A pattern never inspects the
+arguments, so `bash*` blocks every bash call whatever the command
+inside it, and no glob can express a condition on one argument.
+
+For a rule that depends on an argument — "block refunds over $500",
+"approve only sends to `@internal` addresses" — use the typed
+predicates on an approval rule. See
 [Human approval → typed predicates](../concepts/human-approval.md#typed-predicates).
+
+## Other limits
+
+| Limit | Value |
+| --- | --- |
+| Pattern length | 4096 bytes per entry |
+| Pattern characters | No control characters. A pattern with a newline is refused when you save the policy. |
+| Enforcement | A tool block is always hard. Soft budget mode does not soften it. |
 
 ## See also
 
-- [Sensitive tools](../concepts/sensitive-tools.md) — the policy-
-  driven way to express "this tool needs review" (no built-in SDK
-  list, all server-side via ToolBlock)
-- [Tool policies](../concepts/tool-policies.md) — glob patterns,
-  per-tool block / allow rules
-- [Human approval](../concepts/human-approval.md) — typed
-  `BusinessImpact` predicates for narrower rules
-
-!!! info "Deep dive"
-
-    Enforcement does not live in the catalog. The catalog is a
-    starting point for rating tools; a tool is actually stopped by a
-    `ToolBlock` policy evaluated on the server against the canonical
-    tool name the agent requested. Keeping the decision server-side
-    means a pattern can be tightened or relaxed without an SDK
-    rollout. Because the gate classifies the name it receives and
-    that classification is authoritative, treat the names here as
-    documentation of what agents commonly call — the drift between
-    this page and the names a particular agent actually sends is a
-    real possibility, and the gate's view wins when they disagree.
-
-    The pattern language is deliberately narrow. `*` is the only
-    metacharacter and matches any run of characters, including
-    nothing at all, so `send_*` matches anything with that prefix and
-    `bash.*` matches the bare `bash` as well as `bash.foo` and
-    `bash.foo.bar`. A pattern with more than one star, such as
-    `*.drop_*`, matches when its literal segments appear in order,
-    which is why it catches `s3.drop_table` and `db.drop_user` but not
-    `s3.execute_drop`. `|` separates alternatives inside one entry, and
-    a bare literal matches exactly — never a substring. `?` and `**`
-    are not supported and are matched as ordinary characters, so a
-    pattern written as a regex habit matches less than intended. Each
-    entry is capped at 4096 bytes, which is a bound on matcher work
-    per gate call rather than a limit on how many patterns a policy
-    may carry.
-
-    Matching is name-only. A pattern never inspects arguments, so
-    `bash.*` blocks every bash call regardless of the command inside
-    it, and a glob cannot express a condition on one argument. For
-    command-level rules, the typed `tool_parameters` predicate reads
-    an argument by `param_name` in the approval rule editor. Tool
-    block is always hard, soft enforcement mode does not soften it,
-    and a request that reaches the gate without a tool name while
-    patterns are active is blocked rather than passed, so omitting the
-    field is not a way around a policy. Blanket patterns such as
-    `python_repl.*` and `bash.*` are the durable choice for execution
-    tools: enumerating every framework's code runner goes stale as
-    soon as a new server appears, while a prefix pattern keeps
-    working.
+- [Tool policies](../concepts/tool-policies.md) — how a `ToolBlock` policy is evaluated
+- [Sensitive tools](../concepts/sensitive-tools.md) — the policy-driven way to express "this tool needs review"
+- [Human approval](../concepts/human-approval.md) — typed predicates for narrower rules

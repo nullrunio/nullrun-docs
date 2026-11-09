@@ -1,6 +1,9 @@
+---
 title: SDK API
 maturity: stable
-description: Reference for every NullRun SDK symbol: @protect (canonical entry point, takes no parameters), the workflow / span / chain context managers, exceptions, manual tracking, and transport hooks.
+description: Reference for the NullRun Python SDK: the public package surface, the protect decorator, context managers, manual tracking, runtime methods, and the full exception catalog with error codes.
+---
+
 # SDK API
 
 The Python SDK lives in
@@ -15,108 +18,272 @@ pip install nullrun[dev]               # pytest + respx + mypy + ruff + coverage
 
 Auto-instrumentation for httpx-based libraries (`openai`,
 `anthropic`, `openai-agents`, …) attaches lazily on the first
-`@protect` call — see [Auto-instrumentation](../getting-started/install.md#auto-instrumentation).
+`@protect` call — see [Auto-instrumentation](../getting-started/install.md#what-gets-instrumented).
 
-## Top-level
+## Package surface
+
+`dir(nullrun)` returns **only the curated `__all__` list** — 46 names.
+Everything else the SDK exposes is imported on first attribute access, so it
+never shows up in `dir()` or in tab-completion until you touch it.
 
 ```python title="public_surface.py"
 from nullrun import init, protect, workflow, span, agent, chain
 ```
 
-### `init` {#init}
+### Curated surface (`__all__`, shown by `dir(nullrun)`)
 
-The runtime is created lazily on the first `@protect` call from
-`NULLRUN_API_KEY` — most apps skip `init()` entirely. `init()`
-exists for the cases where you need early fail-fast before any
-`@protect` call runs (CI / smoke tests, pre-flight validation, library
-authors wiring keys from a non-env source).
-
-| Helper | Behaviour | Use when |
+| Symbol | Kind | Purpose |
 |---|---|---|
-| `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI). Library authors wiring an SDK key from a non-env source. |
-| `init(api_key=None, api_url=None, debug=False, fail_on_exit=True)` | Prints the four-line developer report to stderr and calls `sys.exit(1)` if `api_key` is missing or env var unset. Otherwise identical to `init()`. | One-shot scripts, CLI tools, smoke tests — anywhere a missing key is a hard error and you want a clean exit instead of a traceback. |
+| `__version__` | value | SDK version string. |
+| `init` | function | Create the runtime eagerly. |
+| `protect` | decorator | Gate a function. The only entry point for enforcement. |
+| `shutdown` | function | Close the runtime and drain buffered events. |
+| `on_error` | function | Register a global error hook. |
+| `guard` | context manager | Turn an SDK error into a clean process exit. |
+| `format_user_message` | function | Render an exception as end-user-facing text. |
+| `set_user_message` | function | Override the message for one `error_code`. |
+| `NullRunError` | exception | Base class for every SDK exception. |
+| `NullRunDecision` | exception | Marker for expected policy outcomes. |
+| `NullRunInfrastructureError` | exception | Marker for system failures. |
+| `NullRunDeniedError` | exception | Operator refused this specific call. |
+| `NullRunBudgetError` | exception | Budget exhausted. |
+| `NullRunBudgetRecheckFailedError` | exception | Budget moved between gate and execute. |
+| `NullRunToolBlockedError` | exception | Tool is in the block list. |
+| `NullRunChainError` | exception | Chain-scope check failed. |
+| `NullRunConsumeOverbudgetError` | exception | Actual cost exceeded the reservation. |
+| `NullRunWorkflowInactiveError` | exception | Workflow is inactive. |
+| `WorkflowKilledInterrupt` | exception | Operator kill signal. |
+| `NullRunWorkflowKilledError` | exception | Typed name for the kill signal. |
+| `NullRunApprovalNotYetApprovedError` | exception | Approval still pending. |
+| `NullRunApprovalResponseMissingError` | exception | No approval row for the call. |
+| `NullRunApprovalDeniedError` | exception | Operator denied the approval. |
+| `NullRunApprovalExpiredError` | exception | Approval expired. |
+| `NullRunApprovalReplayRejectedError` | exception | Approval already consumed. |
+| `NullRunApprovalDigestMismatchError` | exception | Action digest drifted. |
+| `NullRunApprovalToolDigestMismatchError` | exception | Tool digest drifted. |
+| `NullRunApprovalToolMismatchError` | exception | Tool outside the approved set. |
+| `NullRunApprovalDbUnavailableError` | exception | Approval store unreachable. |
+| `NullRunMcpDestructiveBlockedError` | exception | Destructive MCP tool blocked. |
+| `NullRunMcpReadonlyBypassBlockedError` | exception | Read-only MCP tool blocked. |
+| `NullRunMcpApprovalRequiredError` | exception | MCP tool needs operator approval. |
+| `NullRunProtocolError` | exception | Wire-protocol version mismatch. |
+| `NullRunMalformedGateResponseError` | exception | Gate response is not a decision. |
+| `NullRunGateIndeterminateError` | exception | Decision could not be determined. |
+| `NullRunUnknownActionError` | exception | Control-plane action type unknown. |
+| `NullRunUnclassifiedRefusalError` | exception | Refusal category not understood. |
+| `NullRunTransportError` | exception | Transport failure. |
+| `NullRunBackendError` | exception | Gateway returned 5xx. |
+| `NullRunExecutionNotFoundError` | exception | Execution id unknown or expired. |
+| `RateLimitError` | exception | Gateway returned 429. |
+| `NullRunRateLimitRedisError` | exception | Rate limiter unavailable. |
+| `NullRunAuthError` | exception | API key rejected. |
+| `NullRunConfigError` | exception | Misconfiguration. |
+| `BreakerTransportError` | exception | Events could not be delivered. |
+| `InsecureTransportError` | exception | HTTPS required. |
 
-`init()` also auto-registers `nullrun.shutdown()` via `atexit`, so a
-clean WS close on process exit happens without an explicit call.
-Calling `shutdown()` manually remains safe and idempotent. The
-`with nullrun.guard():` context manager provides the same
-callsite-level error translation as `init(..., fail_on_exit=True)`,
-applied to a region of code rather than at startup. Calling `init()`
-twice returns the same singleton without re-running the lazy trigger.
+### Lazy surface
 
-| Symbol | Purpose | In `__all__` |
-|---|---|---|---|
-| `init(api_key=None, api_url=None, debug=False, fail_on_exit=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). With `fail_on_exit=True`, missing config prints the developer report and `sys.exit(1)` instead of raising. The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
-| `@protect` | Wrap a function for **gate** enforcement (control plane / budget / span / per-tool policy). Takes no kwargs. Every call routes through `/execute`; the backend decides allow / block / require-approval. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — ships `tool_name + args + kwargs` on the wire for every protected call. Wrap the call site in `with nullrun.guard():` for the structured 4-line dev report on failure. | ✅ |
-| `with nullrun.guard():` | Context manager for friendly exit — catches every `NullRunError` raised inside the block (the kill signal re-raises), renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Keyword-only `exit_code` overrides the exit status: `with nullrun.guard(exit_code=2):`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
-| `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
-| `chain(chain_id: str, op: str = "start")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
-| `span(name=None)` | Context manager for nested trace spans. | (lazy) |
-| `agent(name=None)` | Context manager for agent identity. | (lazy) |
-| `set_call_context(model=None, tools=None)` | Per-call context the SDK forwards to `/gate` so the backend's budget + tool-block enforcement sees real values. | (lazy) |
-| `on_error(hook)` | Register a global error hook. Fires for every `NullRunError` subclass BEFORE the exception propagates. A kill signalled through a **sync** `@protect` arrives as a re-wrapped `NullRunBlockedException` carrying `error_code="NR-W002"` — that re-wrapped form is what the hook sees. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Filter inside the hook by `error_code`. Returns an idempotent unregister callable. | ✅ |
-| `runtime.track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` | Manual escape hatch for non-HTTP LLM calls. Reach it via `nullrun.get_runtime()`. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. Cost is recomputed on the backend from `input_tokens` + `output_tokens` + org pricing policy. | (runtime method) |
-| `runtime.track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool-call tracking on the runtime instance. `tool_name` flows through to the policy engine — a `ToolBlock` policy with matching pattern catches the call. | (runtime method) |
-| `runtime.track(event: dict)` | Generic manual-event emission on the runtime instance. Pass a dict with `type` (event category) and any additional payload fields; buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. Use for arbitrary observability signals (milestones, errors, business events). | (runtime method) |
-| `format_user_message(exc)` | Render a `NullRunError` as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. | ✅ |
-| `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
-| `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
-| `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads. Auto-registered with `atexit` inside `init()`, so long-running scripts get a clean WS close on process exit without an explicit call. Calling it manually is safe and idempotent. | ✅ |
-| `nullrun.get_runtime().status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `misconfigured`). Thread-safe, side-effect-free. | (lazy) |
+These names import fine (`from nullrun import X`) but stay out of `dir(nullrun)`.
 
-Rows marked **lazy** are exposed under `nullrun.*` via `__getattr__`
-on first access; they do not appear in `dir(nullrun)` until used.
+| Group | Names |
+|---|---|
+| Runtime | `NullRunRuntime`, `get_runtime`, `get_protected_runtime`, `reset` |
+| Context managers | `workflow`, `span`, `agent`, `chain` |
+| Context getters | `get_workflow_id`, `get_trace_id`, `get_span_id`, `get_agent_id`, `get_call_model`, `get_call_tools`, `get_chain_id`, `get_chain_op` |
+| Context setters | `set_call_context`, `set_chain_id`, `set_chain_op` |
+| Tracing | `SpanContext`, `get_current_span`, `create_root_span`, `create_child_span`, `set_span`, `reset_span` |
+| Actions | `ActionHandler`, `ActionType`, `ActionEvent`, `WebhookConfig`, `handle_action`, `register_action_handler`, `get_action_handler` |
+| Exceptions | `BreakerError`, `NullRunBlockedException`, `NullRunAuthenticationError`, `WorkflowPausedException`, `TransportErrorSource` |
+| Status | `NullRunStatus`, `RecentError`, `WorkflowState`, `ErrorContext` |
+| Audit | `AuditEntry`, `AuditLogMeta`, `AuditLogPage`, `AuditQuery`, `AuditVerifyResult`, `AuditExportJob`, `AuditExportStatus` |
+| Messages | `get_user_message` |
 
-### `runtime.track_llm` manual usage
+## Lifecycle
 
-Use `runtime.track_llm` when auto-instrumentation can't see the LLM
-call — a custom HTTP client that bypasses `httpx`, an offline batch
-job, a test fixture. The signature mirrors the data the
-auto-instrumentation extractor reads from OpenAI / Anthropic / Gemini
-/ Cohere response bodies:
+### `init`
 
-```python title="track_llm_manual.py"
+```python title="init.py"
+import nullrun
+
+nullrun.init(api_key="nr_live_...", api_url="https://api.nullrun.io")
+```
+
+| Parameter | Default | Behaviour |
+|---|---|---|
+| `api_key` | `NULLRUN_API_KEY` | Required. A whitespace-only value is rejected. A missing key raises `NullRunAuthenticationError` with `error_code="NR-C001"`. |
+| `api_url` | `NULLRUN_API_URL`, else `https://api.nullrun.io` | Gateway base URL. |
+| `debug` | `False` | Turns on debug logging. |
+| `fail_on_exit` | `False` | On a missing key, print the developer report to stderr and `sys.exit(1)` instead of raising. |
+| `on_denied` | `"raise"` | `"raise"` or `"message"`. `"message"` makes the operator's refusal surface as `NullRunDeniedError`, whose `agent_message` is text the gateway marks safe to show a model. Any other value raises `ValueError`. The flag applies to a `denied` refusal only. |
+
+`init()` is optional. The first `@protect` call creates the runtime lazily from
+`NULLRUN_API_KEY`.
+
+`init()` also registers `nullrun.shutdown()` with `atexit`, probes
+`/api/v1/capabilities` for the protocol version, and installs
+auto-instrumentation.
+
+### `protect`
+
+```python title="protect.py"
+import nullrun
+
+@nullrun.protect
+def send_email(to: str, body: str) -> None:
+    ...
+```
+
+`protect(fn=None)` takes no keyword arguments. Both forms work:
+
+```python
+import nullrun
+
+@nullrun.protect
+def call(): ...
+
+@nullrun.protect()
+def call(): ...
+```
+
+It works on sync and async functions. Every protected call routes through the
+gateway, which answers with one of five decisions: `allow`, `block`,
+`require_approval`, `soft_pass`, or `deny`.
+
+### `shutdown`
+
+```python title="shutdown.py"
+nullrun.shutdown(timeout=2.0, flush=True)
+```
+
+`timeout` is reserved and unused today. `flush=False` skips the final network
+call and cancels the flush thread. The call is safe and idempotent, and it is a
+no-op when `init()` never ran.
+
+### `on_error`
+
+```python title="on_error.py"
+import nullrun
+
+def report(err, ctx):
+    print(err.error_code, ctx.stage)
+
+unregister = nullrun.on_error(report)
+```
+
+The hook takes `(NullRunError, ErrorContext)` and must be synchronous. It runs
+first, then the exception propagates. Hook exceptions are caught and logged at
+debug level, so a misbehaving hook cannot break the SDK. The returned callable
+unregisters the hook and is idempotent.
+
+### `guard`
+
+```python title="guard.py"
+import nullrun
+
+with nullrun.guard(exit_code=1):
+    run_my_agent("hello")
+```
+
+`guard(*, exit_code=1)` is a context manager. It catches every `NullRunError`
+raised inside the block, prints a structured developer report to stderr, and
+calls `sys.exit(exit_code)`. The kill signal propagates unchanged so it reaches
+the top of the agent loop.
+
+### Messages
+
+```python title="messages.py"
+import nullrun
+
+text = nullrun.format_user_message(exc)
+nullrun.set_user_message("NR-B004", "You've used all your support credits.")
+raw = nullrun.get_user_message("NR-B004")
+```
+
+`format_user_message(exc)` renders an exception as end-user-facing text. Use it
+in place of `str(exc)` whenever a person reads the message — `str(exc)` carries
+internal identifiers.
+
+`set_user_message(code, text)` overrides the message for one `error_code` for
+the lifetime of the process. Pass `text=""` to clear the override.
+`get_user_message(code)` returns the override when one is set, the catalog
+default otherwise.
+
+## Context managers
+
+| Manager | Yields | Behaviour |
+|---|---|---|
+| `workflow(name=None)` | `workflow_id` | Sets the workflow id for every event inside the block. The id is `name` or a fresh UUID. Also mints a root trace and span. |
+| `span(name=None)` | `span_id` | Sets the active span for nested traces. |
+| `agent(name=None)` | `agent_id` | Sets the agent identity for events inside the block. |
+| `chain(chain_id, op="start")` | `chain_id` | Scopes the calls to one chain. `op` must be `"start"`, `"continue"`, `"end"`, or `"auto"`; any other value raises `ValueError`. `chain_id` must be a **UUID v4**; any other format raises `ValueError`. |
+
+```python title="chain.py"
+import uuid
+import nullrun
+
+chain_id = str(uuid.uuid4())
+with nullrun.chain(chain_id, op="start") as cid:
+    agent.run_long_loop()
+```
+
+`chain()` does not close the chain on exit. Close it explicitly with
+`runtime.chain_end(chain_id)`.
+
+### `set_call_context`
+
+```python title="set_call_context.py"
+import nullrun
+
+nullrun.set_call_context(
+    model="claude-sonnet-4-6",
+    tools=["search", "send_email"],
+    max_output_tokens=4096,
+)
+```
+
+`set_call_context(model=None, tools=None, max_output_tokens=None)` attaches
+per-call context that the gateway uses when it evaluates the call. Pass `None`
+to leave a field unchanged. `max_output_tokens` is sent only when it is a
+positive integer.
+
+Manual setters `set_chain_id(chain_id)` and `set_chain_op(op)` set the chain
+scope directly. Each returns a token.
+
+## Manual tracking
+
+Tracking methods live on the runtime, not on the package. Reach the runtime
+with `nullrun.get_runtime()`.
+
+| Method | Signature |
+|---|---|
+| `track_llm` | `track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` |
+| `track_tool` | `track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` |
+| `track` | `track(event: dict)` |
+| `track_event` | `track_event(event_type, **kwargs)` |
+
+```python title="track_llm.py"
 import nullrun
 
 runtime = nullrun.get_runtime()
-
-# After your custom LLM call returns:
 runtime.track_llm(
     input_tokens=response.usage.prompt_tokens,
     output_tokens=response.usage.completion_tokens,
     model="custom-model-v1",
     latency_ms=response.elapsed_ms,
-    metadata={"vendor": "custom", "trace_id": "..."},
 )
 ```
 
-Without `track_llm`, the SDK has nothing to report to the gateway —
-the budget counter is never credited, and the next `/gate` call may
-reject based on stale spend. Call `runtime.track_llm` once per real
-LLM call.
-
-### `runtime.track_tool` manual usage
-
-```python title="track_tool_manual.py"
+```python title="track_tool.py"
 import nullrun
 
 nullrun.get_runtime().track_tool(
     tool_name="send_email",
     duration_ms=240,
     is_retry=False,
-    metadata={"to": "user@example.com"},
 )
 ```
 
-Use it when a non-LLM tool call happens outside the auto-instrumentation
-hooks (e.g. a custom agent framework, or a tool wrapped in your own
-function). The `tool_name` flows through to the policy engine — a
-`ToolBlock` policy with `pattern = "send_*"` will catch a manual call
-to `runtime.track_tool("send_email", ...)`.
-
-### `runtime.track` catch-all
-
-```python title="track_manual.py"
+```python title="track.py"
 import nullrun
 
 nullrun.get_runtime().track({
@@ -126,77 +293,133 @@ nullrun.get_runtime().track({
 })
 ```
 
-Accepts an arbitrary dict as the event payload. Use for custom
-observability signals (milestones, errors, business events) that
-you want in the decision log alongside `track_llm` / `track_tool`.
-The `type` field becomes the filterable event category in the
-dashboard.
+```python title="track_event.py"
+import nullrun
 
-### Custom user messages
+nullrun.get_runtime().track_event("workflow_start", workflow_id="wf-123")
+```
 
-See [User-facing messages → Per-deployment branding](#per-deployment-branding)
-below for `set_user_message` / `get_user_message` usage.
+`track_llm` reports token counts. The gateway computes cost from the tokens and
+the org's pricing. A call the SDK cannot see is never billed, and the next
+budget check can reject against a stale spend.
 
-The curated public surface in `dir(nullrun)` is the `__all__` list
-in `nullrun/__init__.py`: `__version__`, `init`, `protect`,
-`shutdown`, `on_error`, `format_user_message`,
-`set_user_message`, `guard`, plus the
-structured exception names `NullRunError`, `NullRunAuthError`,
-`NullRunConfigError`, `NullRunBackendError`, `NullRunBudgetError`,
-`NullRunToolBlockedError`, `WorkflowKilledInterrupt`,
-`NullRunWorkflowKilledError`, `NullRunApprovalDbUnavailableError`,
-and the typed MCP subclasses. The lazy surface (PEP 562) adds
-`workflow`, `span`, `agent`, `chain`,
-`set_call_context`, the audit classes (`AuditQuery`, `AuditEntry`,
-…), the tracer (`SpanContext`, `get_current_span`, …), and the
-additional exception names (`WorkflowPausedException`,
-`NullRunBlockedException`, `NullRunApproval*Error`, etc.).
+`track_tool` reports a tool call by name. The name reaches the policy engine,
+so a blocked-tool policy can catch a manual call.
 
-For a runtime snapshot, reach `NullRunStatus` via
-`nullrun.get_runtime().status()`. Returns a frozen
-`NullRunStatus` dataclass (`ok` / `degraded` / `misconfigured`);
-thread-safe, side-effect-free. `get_runtime()` builds the runtime
-from `NULLRUN_API_KEY` if none exists yet, and raises
-`NullRunConfigError` with `error_code="NR-C001"` when no API key is
-available.
+`track` takes an arbitrary event payload. The `type` field becomes the
+filterable event category. `track_event` is the same thing with the event type
+as its first argument.
+
+## Runtime methods
+
+| Method | Purpose |
+|---|---|
+| `status()` | Snapshot of the runtime. |
+| `check_workflow_budget(*, model=None, estimated_tokens=None, max_output_tokens=None)` | Ask whether the workflow has budget left. |
+| `execute(tool_name, input_data, mode="auto", ...)` | Run one tool call through the gateway. |
+| `heartbeat(chain_id)` | Post a cadence heartbeat for a chain. |
+| `ping_chain(chain_id, interval=30.0)` | Keep a chain alive on a timer. |
+| `cancel_execution(execution_id, reason=None)` | Cancel an in-flight execution. |
+| `consume_approval(...)` | Close an approved grant. |
+| `chain_end(chain_id)` | Close a chain. |
+| `approximate_budget()` | Best-effort budget view for display. |
+| `audit` | Audit log reader: `.list()`, `.verify()`, `.list_exports()`, `.create_export()`, `.export_status()`. |
+| `shutdown(flush=True)` | Close the runtime. |
+
+### `status()`
+
+```python title="status.py"
+import nullrun
+
+snapshot = nullrun.get_runtime().status()
+print(snapshot.state)
+```
+
+`status()` returns a frozen `NullRunStatus` dataclass. It is safe to call from
+any thread.
+
+| Field | Meaning |
+|---|---|
+| `state` | `ok`, `degraded`, `offline`, or `misconfigured`. |
+| `api_key_valid` | `True`, `False`, or `None` when never tested. |
+| `api_key_prefix` | A fingerprint of the API key. Carries no character of the key. |
+| `organization_id` | The org the key belongs to. |
+| `workflow_id` | The bound workflow, or `None`. |
+| `api_url` | The gateway base URL. |
+| `backend_reachable` | `True`, `False`, or `None` when never tested. |
+| `ws_connected` | `True`, `False`, or `None` when not started. |
+| `workflow_state` | The remote workflow state, or `None`. |
+| `recent_errors` | Bounded list of recent errors. |
+
+There is no top-level `nullrun.status()`.
 
 ## Exceptions
 
-All raised from `nullrun.breaker.exceptions`. Every public SDK
-exception inherits from `NullRunError` and carries four structured
-fields: `error_code` (machine-readable, e.g. `"NR-B004"`),
-`user_action` (imperative hint), `retryable` (bool), `docs_url`. See
-[Errors](errors.md#sdk-exception-hierarchy-python) for the full
-hierarchy diagram.
+Every public SDK exception inherits from `NullRunError` and carries four
+structured fields: `error_code` (machine-readable, e.g. `"NR-B004"`),
+`user_action` (imperative hint), `retryable` (bool), and `docs_url`.
 
-| Class | When | Notes |
-| --- | --- | --- |
-| `NullRunError` | Structured base for every user-facing SDK exception | Inherits `BreakerError`. Carries `.error_code`, `.user_action`, `.retryable`, `.docs_url`. |
-| `NullRunConfigError` | SDK misconfigured (e.g. missing `api_key`) | Code family for config errors. Never retryable. |
-| `NullRunAuthenticationError` | Missing / invalid `X-API-Key`, bad HMAC | 401 / 403. Carries `.message`. |
-| `NullRunAuthError` | 401 specifically (key rejected) | Subclass of `NullRunAuthenticationError`. Carries `.status_code` (the wire HTTP status). |
-| `NullRunTransportError` | Gateway unreachable | Carries `.source` (e.g. `NETWORK_ERROR` / `GATEWAY_ERROR` / `BREAKER_OPEN` / `AUTH_ERROR`) and `.endpoint`. Retryable. |
-| `NullRunBackendError` | 5xx from the gateway | Subclass of `NullRunTransportError`. Code `NR-B002` family. Retryable. |
-| `RateLimitError` | HTTP 429 (gateway rate-limit response) | Subclass of `NullRunTransportError` → `NullRunInfrastructureError` (infrastructure class — see exception tree above). Carries `.retry_after`, `.upgrade_url`, `.body`. Code `NR-R001`. Retryable. Despite the 4xx status, integration handlers should treat it as infrastructure (FastAPI middleware maps it to 503). |
-| `NullRunRateLimitRedisError` | 503 — Redis reservation failed | Subclass of `NullRunInfrastructureError`. Code `NR-R002`. |
-| `NullRunProtocolError` | Backend rejected the `X-NULLRUN-PROTOCOL` header as too old or too new | Code `NR-P001`. Not retryable. `user_action` names the protocol version the SDK speaks and points at the compatibility matrix. |
-| `NullRunBlockedException` | Generic policy block | Inspect `.workflow_id`, `.reason`, `.action`, `.tool_name`, `.details`. Carries `.status_code` (the wire HTTP status, e.g. 402 budget, 403 cross-org, 422 `CONSUME_OVERBUDGET`, 429 cap-reached). **No** `.message` — use `str(exc)`. |
-| `NullRunBudgetError` | Budget exhausted | Subclass of `NullRunBlockedException`. Code `NR-B004`. |
-| `NullRunToolBlockedError` | Tool in block list | Subclass of `NullRunBlockedException`. Code `NR-T001`. Carries `.tool_name`. |
-| `NullRunChainError` | Chain-mode gate check failed | Subclass of `NullRunDecision`. Code `NR-CH001`. |
-| `NullRunConsumeOverbudgetError` | 422 — actual cost > reservation + ε | Subclass of `NullRunDecision`. Surfaces over-budget commit events. |
-| `NullRunWorkflowInactiveError` | 403 — workflow paused / killed cross-org | Subclass of `NullRunDecision`. Code `NR-W004`. |
-| `NullRunApprovalDbUnavailableError` | Approval database unreachable | Subclass of `NullRunBlockedException` → `NullRunDecision` (so a `NullRunDecision` handler catches it). Code `NR-A016`. |
-| `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
-| `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
-| `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunDecision`. Carries `.workflow_id`, `.reason`, `.resume_after` — and no `.status_code`; map it to `503` plus a `Retry-After` header. |
-| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `NullRunError` directly, **not** of `NullRunDecision` — catch it by name. Caught by `except Exception:` like every other SDK error. |
-| `NullRunWorkflowKilledError` | Kill arrived mid-call (typed alias) | Subclass of `WorkflowKilledInterrupt`. Same wire semantics; use this for typed `except` arms. |
+`NullRunDecision` and `NullRunInfrastructureError` are marker classes. They let
+host code catch every expected policy outcome with one clause, and every system
+failure with another.
 
+`NullRunBlockedException` carries `.workflow_id`, `.reason`, `.action`,
+`.tool_name`, `.status_code`, and `.details`. It has **no** `.message`
+attribute — use `str(exc)`.
+
+| Class | Base | `error_code` | Raised when |
+|---|---|---|---|
+| `NullRunError` | `BreakerError` | `NR-0000` | Base class for every SDK exception. |
+| `NullRunDecision` | `NullRunError` | `NR-0000` | Marker for expected policy outcomes. |
+| `NullRunInfrastructureError` | `NullRunError` | `NR-0000` | Marker for system failures. |
+| `NullRunBlockedException` | `NullRunDecision` | `NR-X001` | Generic policy block. |
+| `NullRunDeniedError` | `NullRunBlockedException` | `NR-D001` | The operator refused this specific call. Carries `.agent_message`. |
+| `NullRunBudgetError` | `NullRunBlockedException` | `NR-B004` | Budget exhausted. |
+| `NullRunBudgetRecheckFailedError` | `NullRunBudgetError` | `NR-B006` | The budget moved between the gate call and the execute call. |
+| `NullRunToolBlockedError` | `NullRunBlockedException` | `NR-T001` | The tool is in the block list. |
+| `NullRunApprovalDbUnavailableError` | `NullRunBlockedException` | `NR-A016` | The approval store is unreachable. |
+| `NullRunApprovalResponseMissingError` | `NullRunBlockedException` | `NR-A004` | The gate asked for approval and no approval row exists. |
+| `NullRunApprovalNotYetApprovedError` | `NullRunBlockedException` | `NR-A010` | The operator has not decided yet. |
+| `NullRunApprovalDeniedError` | `NullRunBlockedException` | `NR-A011` | The operator denied the approval. |
+| `NullRunApprovalExpiredError` | `NullRunBlockedException` | `NR-A012` | The approval expired. |
+| `NullRunApprovalReplayRejectedError` | `NullRunBlockedException` | `NR-A015` | The grant was already consumed. |
+| `NullRunApprovalDigestMismatchError` | `NullRunBlockedException` | `NR-A013` | The action changed since the approval. |
+| `NullRunApprovalToolDigestMismatchError` | `NullRunBlockedException` | `NR-A014` | The tool surface changed since the approval. |
+| `NullRunApprovalToolMismatchError` | `NullRunBlockedException` | `NR-A017` | The tool is outside the approved tool set. |
+| `NullRunMcpDestructiveBlockedError` | `NullRunBlockedException` | `NR-MCP01` | A destructive MCP tool was blocked. |
+| `NullRunMcpReadonlyBypassBlockedError` | `NullRunBlockedException` | `NR-MCP02` | A read-only MCP tool was blocked. |
+| `NullRunMcpApprovalRequiredError` | `NullRunBlockedException` | `NR-MCP03` | An MCP tool needs operator approval. |
+| `NullRunConsumeOverbudgetError` | `NullRunDecision` | `NR-O001` | The actual cost exceeded the reservation. |
+| `NullRunChainError` | `NullRunDecision` | `NR-CH001` | The chain scope check failed. |
+| `WorkflowPausedException` | `NullRunDecision` | `NR-W003` | The workflow is paused. Carries `.resume_after`. |
+| `NullRunWorkflowInactiveError` | `NullRunDecision` | `NR-W004` | The workflow is inactive. |
+| `WorkflowKilledInterrupt` | `NullRunError` | `NR-W002` | The operator killed the workflow. Not a `NullRunDecision`. |
+| `NullRunWorkflowKilledError` | `WorkflowKilledInterrupt` | `NR-W002` | Typed name for the kill signal. |
+| `NullRunConfigError` | `NullRunInfrastructureError` | `NR-C000` | Misconfiguration. |
+| `NullRunAuthenticationError` | `NullRunInfrastructureError` | `NR-A001` | The credentials were rejected. |
+| `NullRunAuthError` | `NullRunAuthenticationError` | `NR-A003` | The API key was rejected. |
+| `NullRunProtocolError` | `NullRunInfrastructureError` | `NR-P001` | The wire-protocol version does not match. |
+| `NullRunMalformedGateResponseError` | `NullRunProtocolError` | `NR-P002` | The gate response is not a decision the SDK can act on. |
+| `NullRunGateIndeterminateError` | `NullRunInfrastructureError` | `NR-P004` | The SDK could not obtain a decision. |
+| `NullRunUnclassifiedRefusalError` | `NullRunInfrastructureError` | `NR-P003` | The refusal category is not one the SDK understands. |
+| `NullRunUnknownActionError` | `NullRunInfrastructureError` | `NR-P005` | The control plane sent an action type this SDK cannot run. |
+| `NullRunRateLimitRedisError` | `NullRunInfrastructureError` | `NR-R002` | The rate limiter is unavailable. |
+| `NullRunTransportError` | `NullRunInfrastructureError` | `NR-B001` | The request never reached the gateway. Carries `.source` and `.endpoint`. |
+| `NullRunBackendError` | `NullRunTransportError` | `NR-B002` | The gateway returned 5xx. |
+| `NullRunExecutionNotFoundError` | `NullRunBackendError` | `NR-EX01` | The execution id is unknown or its binding expired. |
+| `RateLimitError` | `NullRunTransportError` | `NR-R001` | The gateway returned 429. Carries `.retry_after` and `.upgrade_url`. |
+| `BreakerError` | `Exception` | — | Root alias for the SDK error hierarchy. |
+| `BreakerTransportError` | `BreakerError` | — | Events could not be delivered. Not a `NullRunError`. |
+| `InsecureTransportError` | `BreakerTransportError` | — | HTTPS was required. |
+
+`TransportErrorSource` has four values: `NETWORK_ERROR`, `GATEWAY_ERROR`,
+`AUTH_ERROR`, `BREAKER_OPEN`.
 
 ## Catch-all pattern
 
 ```python title="catch_all_pattern.py"
+import time
+
 import nullrun
 from nullrun import WorkflowKilledInterrupt, protect
 from nullrun.breaker.exceptions import (
@@ -205,38 +428,28 @@ from nullrun.breaker.exceptions import (
     WorkflowPausedException,
 )
 
-# init() is OPTIONAL — the first protect(...) below creates the
-# runtime lazily from NULLRUN_API_KEY. See `init` above.
-
 try:
     step()
 except WorkflowKilledInterrupt:
-    raise                    # always re-raise — kill must reach the top
+    raise                    # always re-raise — the kill must reach the top
 except NullRunBlockedException:
-    ...                      # budget / tool block / workflow inactive / chain
+    ...                      # budget, tool block, approval, chain
 except RateLimitError as exc:
     time.sleep(exc.retry_after)
 except WorkflowPausedException:
-    ...                      # paused — resume via WS / API, then retry
+    ...                      # resume the workflow, then retry
 ```
 
-The full annotated tutorial (handler ordering rationale, observability
-hooks, exception hierarchy walkthrough) lives in
-[Use with FastAPI → HTTP status mapping](../how-to/fastapi.md#http-status-mapping).
-For global observability (Sentry, OpenTelemetry, structured logs),
-register a hook with `nullrun.on_error(...)` instead of wrapping every
-call site. The hook fires for every `NullRunError` subclass BEFORE the
-exception propagates. Hook exceptions are caught and DEBUG-logged — a
-misbehaving hook cannot break the SDK.
+`init()` is optional here. The first `protect`-decorated call creates the
+runtime lazily from `NULLRUN_API_KEY`.
+
+For global observability, register `nullrun.on_error(...)` instead of wrapping
+every call site.
 
 ## User-facing messages
 
-`nullrun.format_user_message(exc)` renders a `NullRunError`
-(or any object with an `error_code` attribute) as an end-user-facing
-string. **Use this instead of `str(exc)` whenever the message might be
-shown to a person who is not the developer** — `str(exc)` contains
-internal identifiers like `workflow_id` and `budget_cents` that leak
-the SDK's internals into product UI.
+`nullrun.format_user_message(exc)` renders a `NullRunError` — or any object with
+an `error_code` attribute — as end-user-facing text.
 
 ```python title="format_user_message.py"
 import nullrun
@@ -249,50 +462,24 @@ def chatbot(message: str) -> str:
 try:
     reply = chatbot(message)
 except NullRunBudgetError as exc:
-    # Show the user a clean message instead of the raw exception text
-    # ("Workflow wf-31a blocked: budget_cents=500 exceeded...").
     return nullrun.format_user_message(exc)
 ```
 
-### Why the SDK owns the wording
+The catalog of default messages belongs to NullRun, so every deployment shows
+the same wording for a given `error_code`. A deployment can override one code
+with `set_user_message`. Overrides live in a per-process dict. They are not
+persisted and not sent to the gateway.
 
-The catalog of default messages is part of the NullRun product so
-every deployment sees consistent wording for a given `error_code`.
-
-### Per-deployment branding
-
-If a deployment wants its own wording for a single code (e.g. a
-branded "out of credits" message), call `set_user_message` once at
-startup:
-
-```python title="set_user_message.py"
-import nullrun
-
-# Override the default message for budget-exceeded. Pass "" to clear.
-nullrun.set_user_message(
-    "NR-B004",
-    "You've used all your support credits. Upgrade to keep chatting.",
-)
-```
-
-Overrides live in a per-process dict and are checked before the
-catalog default. They do not persist across processes and are not
-synced to the backend — they are pure presentation sugar.
-
-### What if `error_code` is unknown or missing?
-
-Objects without `error_code` (plain `Exception`, raw values) get a
-generic fallback (`"Something went wrong. Please try again."`). The
-function never raises and never returns an empty string.
+An object without `error_code` gets a generic fallback. The function never
+raises and never returns an empty string.
 
 ## See also
 
-- [Decorators & context managers](decorators.md) — deep-dive on
-  `@protect` (canonical entry point, takes no parameters),
-  `with nullrun.guard():`, `set_call_context`, and the
-  workflow / span / chain context managers
+- [Decorators & context managers](decorators.md) — `@protect` and the
+  extractor wrappers
 - [Errors](errors.md)
 - [Errors → Decision vs. infrastructure](errors.md#decision-vs-infrastructure)
 - [Use with FastAPI](../how-to/fastapi.md)
-- [Auto-instrumentation](../getting-started/install.md#auto-instrumentation)
+- [Manual cost / event tracking](../how-to/custom-tracking.md)
+- [Auto-instrumentation](../getting-started/install.md#what-gets-instrumented)
 - [Control plane](../concepts/control-plane.md)

@@ -1,166 +1,120 @@
 ---
 title: Notifications
 maturity: stable
-description: Alert channels (Slack / Email / Webhook), threshold rules, and the per-event subscription matrix that controls where every signal lands.
+description: Where NullRun signals land — Slack and webhook channels, threshold rules, and the per-event switches that decide what each channel receives.
 ---
 
 # Notifications
 
-The **Notifications** page is the configure surface for every
-outbound signal NullRun sends. It lives at
-`/control-center/notifications` in the sidebar and is gated by the
-Starter plan and above.
+The **Notifications** page configures every outbound signal NullRun sends. It lives under **Notifications** in the sidebar.
 
-The page has three sections in this order:
+Notifications are on Starter and above. On Lite the sidebar entry carries a lock, and the page shows an upgrade prompt.
 
-1. **Channels** — where signals can land (Slack / Email / Webhook).
-2. **Alert rules** — threshold rules that fire when a value crosses.
-3. **Event subscriptions** — which events reach which channels.
+The page has three sections:
 
-It is the **configure** surface for [Alerts](alerts.md) (the read
-surface); channels created here appear in the Alert rules editor,
-and alerts dismissed on the Alerts page keep their wire-side
-notification enabled.
+1. **Channels** — where signals land.
+2. **Alert rules** — thresholds that fire when a value crosses.
+3. **Event subscriptions** — which events reach the channels.
+
+The **Alerts** page is the read surface. Channels created here appear in the alert rules editor, and an alert that fires shows on both.
 
 ## Channels
 
-The top section is a 2-up grid of channel cards. Each card carries:
+Two channel types exist.
 
-- **Icon tile** + **Channel name**.
-- **Masked URL** in mono for webhook channels; Slack channels show
-  the channel name. See the Email variant note below.
-- **Status dot** — neutral for idle, faint for `last_sent` (so
-  the operator can see at a glance whether the channel has fired
-  recently).
-- **Edit link** + **Send test** icon-btn + **On / off** switch row.
+| Type | What it is |
+|---|---|
+| **Slack** | A Slack channel connected through the Slack app. |
+| **Webhook** | A generic HTTPS endpoint that receives a JSON POST. |
+
+There is no email channel, no PagerDuty channel, and no Discord channel.
 
 ### Adding a channel
 
-Click **+ Add channel** in the section header. The dialog supports:
+Click **+ Add channel** and pick a type.
 
-- **Slack** — OAuth-branded setup with Slack-specific help text.
-  Pre-pivot rows that store `installation_id` / `channel_id` in
-  config are preserved on edit so the existing connection
-  doesn't break.
-- **Webhook** — generic HTTPS POST. The signing secret is
-  optional; if set, the receiver verifies `X-NullRun-Signature`
-  (HMAC-SHA256, 5-minute clock-skew tolerance, 10-minute nonce
-  replay defence).
+For a **webhook**, paste the HTTPS URL and give the channel a name. The signing secret is optional. With a secret set, every delivery carries three headers:
 
-Both Slack and generic webhook store on the backend as
-`channel_type: "webhook"` with `config: { type: "webhook", url: ... }`
-— Slack incoming webhooks accept POST JSON out of the box, so no
-Block Kit transform is needed for MVP.
+| Header | Meaning |
+|---|---|
+| `X-NullRun-Signature` | HMAC-SHA256 over the timestamp, the nonce, and the body, in that order. |
+| `X-NullRun-Timestamp` | When the payload was signed. |
+| `X-NullRun-Nonce` | A one-shot value that makes the delivery unique. |
 
-!!! note "Email variant"
-    The Email channel type is not available in the dialog. The
-    channel list may contain read-only rows from prior installs;
-    new channels use Slack or Webhook.
+A receiver should reject a timestamp that differs from its own clock by more than five minutes, and should remember a nonce for ten minutes. Compare the signature in constant time.
+
+A channel marked test-only receives synthetic payloads only. Test payloads never reach a production destination.
 
 ### Send test
 
-The **Send test** button on each card posts a synthetic payload
-to the channel; the toast reports success or surfaces the
-backend's error message. Use this after creating or editing a
-channel to confirm your URL / OAuth installation actually
-delivers before relying on it for production signals.
+The **Send test** button on each channel card posts a synthetic payload and reports the outcome. Use it after creating or editing a channel, to confirm the endpoint delivers.
 
 ## Alert rules
 
-The middle section is a list of threshold rules. Each rule
-renders as a card with:
+A rule watches one value and fires when it crosses a threshold.
 
-- **Left-border accent by severity** — info / warning / critical.
-- **Inline gauge bar** showing `last_observed_value / threshold_cents`
-  live from the wire.
-- **Last-fired timestamp** + **enabled toggle** + **delete link** on
-  the right.
+| Field | Meaning |
+|---|---|
+| **Type** | What the rule watches. |
+| **Threshold** | The value that triggers the rule. Spend rules use cents. Error-rate rules use a count of events. |
+| **Window** | How far back the rule looks, in minutes. |
+| **Severity** | `info`, `warning`, or `critical`. The severity of the alert the rule produces. |
+| **Enabled** | Whether the rule fires at all. |
 
-Rule editing is a form inside an `AlertRulesSection` dialog. The
-form shape mirrors the wire contract — name, severity, threshold in
-cents, and which channels the rule routes to.
+The rule types are:
 
-## Event subscriptions matrix
+| Type | Watches |
+|---|---|
+| `daily_spend` | Spend over a day. |
+| `hourly_spend` | Spend over an hour. |
+| `error_rate` | The count of failed calls in the window. |
+| `per_key_spend` | Spend by one API key. |
 
-The bottom section is the matrix that decides which event reaches
-which channel. Events are grouped by area:
+Each rule card shows the last value it observed against its threshold, and when it last fired.
 
-- **Workflow activity** — `workflow.killed`, `workflow.paused`,
-  `workflow.resumed`, `workflow.created`.
-- **Governance & access** — `approval.created`, `approval.decided`,
-  `policy.changed`, `key.created`, `key.revoked`.
-- **Team** — `member.invited`, `member.joined`, `member.removed`.
-- **Digest** — weekly spend digest, monthly quota report.
+## Event subscriptions
 
-Each event is a row; each channel is a column. A cell shows a
-chip-dot when the event is enabled for that channel; no chip means
-the event is disabled for that channel. The right edge of each row
-has a master on/off toggle that flips every channel at once.
+The matrix decides which events reach which channels. Each row is an event. Each column is a channel. A filled dot means the channel receives that event.
 
-A footer legend explains the chip-dot semantics (`●` = enabled, no
-chip = disabled).
+The events are:
 
-## Plan gating
+| Group | Event | Fires when |
+|---|---|---|
+| Workflow activity | `execution_quota_warning` | The organization approaches its execution limit. |
+| Workflow activity | `workflow_budget_warning` | A workflow exceeds its budget. |
+| Workflow activity | `loop_detected` | A workflow makes repeated identical calls. |
+| Workflow activity | `policy_violation` | An action is blocked by policy. |
+| Workflow activity | `workflow_killed` | A workflow is terminated. |
+| Governance & access | `approval_required` | A new approval is requested. Off by default. |
+| Governance & access | `api_key_created` | An API key is created. |
+| Team | `member_invite` | A new member is invited. |
+| Digest | `daily_summary` | The previous day's activity digest. |
+| Digest | `weekly_summary` | The previous week's activity digest. |
 
-The Notifications page itself renders a `TierGate` upgrade prompt
-for plans without Starter; the sidebar link is also hidden. The
-upgrade card links to **Billing & Plan** (`/control-center/billing`)
-and to the public pricing page (which hosts the comparison table)
-so operators can inspect feature deltas before committing.
+The toggle on the right of a row switches the event on or off for every channel. The dots are read-only indicators of where the event lands.
 
-The plan-tier gate is enforced server-side on every
-`/api/alert_channels` and `/api/alert_rules` handler — a Lite user
-cannot POST to the API directly even if the page itself doesn't
-render.
+## API
 
-## API hooks
+The same actions are available over REST.
 
-For automations, the same actions are exposed via REST:
+| Method | Path |
+|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/alert-channels` |
+| `POST` | `/api/v1/orgs/{org_id}/alert-channels` |
+| `PATCH` | `/api/v1/orgs/{org_id}/alert-channels/{channel_id}` |
+| `DELETE` | `/api/v1/orgs/{org_id}/alert-channels/{channel_id}` |
+| `POST` | `/api/v1/orgs/{org_id}/alert-channels/{channel_id}/test` |
+| `GET` | `/api/v1/orgs/{org_id}/alert-rules` |
+| `POST` | `/api/v1/orgs/{org_id}/alert-rules` |
+| `PATCH` | `/api/v1/orgs/{org_id}/alert-rules/{rule_id}` |
+| `DELETE` | `/api/v1/orgs/{org_id}/alert-rules/{rule_id}` |
+| `GET` | `/api/v1/orgs/{org_id}/notification-settings` |
+| `PATCH` | `/api/v1/orgs/{org_id}/notification-settings` |
 
-- `GET /api/alert_channels` / `POST` / `PATCH /{id}` / `DELETE /{id}`.
-- `POST /api/alert_channels/{id}/test` — fire a synthetic payload.
-- `GET /api/alert_rules` / `POST` / `PATCH /{id}` / `DELETE /{id}`.
+The plan gate is enforced on the server. A Lite organization cannot create a channel by calling the API directly.
 
-The full endpoint catalog is in
-[HTTP API → alert channels](../reference/http-api.md) (and the
-alert-rules section, when split out).
+## See also
 
-## Where to read next
-
-- [Alerts](alerts.md) — the read surface for what fired.
-- [Audit log](error-handling.md#audit-trail) — every channel and
-  rule mutation is recorded as an audit row.
-
-!!! info "Deep dive"
-
-    Two channel types carry signals: Slack, and a generic webhook
-    that posts JSON to any HTTPS receiver. Both receive the same
-    body, so a Slack channel needs no transformation. A channel
-    marked test-only is partitioned away before delivery, so
-    synthetic test payloads never reach a production destination.
-
-    A webhook channel with a signing secret gets three headers:
-    `X-NullRun-Signature`, `X-NullRun-Timestamp`, and
-    `X-NullRun-Nonce`. The signature is an HMAC-SHA256 over the
-    timestamp, the nonce, and the body joined in that order, and it
-    is compared in constant time. A receiver should reject a
-    timestamp that differs from its own clock by more than five
-    minutes, and should remember a nonce for ten minutes. The
-    nonce ledger expires on the same horizon as the accepted
-    timestamp window, so it can never outlive a timestamp it exists
-    to defend.
-
-    Delivery is throttled per organization and per detector, at one
-    alert per fifteen minutes per bucket, which means a burst of
-    different alerts sharing a detector collapses into one. Each
-    organization can also opt out of individual event classes; the
-    default is on, and a failure to read that setting is treated as
-    opt-out rather than as a reason to amplify delivery during a
-    dependency blip. A dispatch failure never blocks the producer
-    that raised the alert, and a fan-out that does not land is
-    picked up by a later pass.
-
-    Every alert is recorded for the Alerts page before delivery is
-    attempted and before the channel list is consulted, so an
-    organization with no channels configured still sees the full
-    history of what fired.
+- [Alerts](alerts.md) — what fired and what to do about it
+- [Approvals](approvals.md) — where an approval request is announced
+- [HTTP API](../reference/http-api.md) — the full endpoint catalog

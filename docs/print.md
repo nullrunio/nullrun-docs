@@ -64,7 +64,7 @@ source-of-truth remains [docs.nullrun.io](https://docs.nullrun.io).
     - [6.11 CI / CD integration](#611-ci-cd-integration)
 7. [Reference](#7-reference)
     - [7.1 SDK API](#71-sdk-api)
-    - [7.2 Decorators & extractors](#72-decorators-extractors)
+    - [7.2 Decorators & context managers](#72-decorators-context-managers)
     - [7.3 HTTP API](#73-http-api)
     - [7.4 Error codes](#74-error-codes)
     - [7.5 Tool catalog](#75-tool-catalog)
@@ -85,20 +85,23 @@ source-of-truth remains [docs.nullrun.io](https://docs.nullrun.io).
 
 ## 1.1 First agent in 15 minutes
 
-This is the recommended path from "I have an LLM app" to "NullRun is
-gating my spend and tools".  Each step links out to deeper docs only
-when you need them.
+This is the path from "I have an LLM app" to "NullRun is gating my spend and my tools".
 
-### 1. Sign up and create an API key
+### 1. Create a workspace and a workflow
 
-1. Go to [nullrun.io](https://nullrun.io) and sign in.
-2. In the sidebar, under **Access**, open **API keys**, then click
-   **New API key** in the top right.
-3. Pick a name (e.g. `"my-first-agent"`) and the workflow you want the
-   key bound to. Each key is **workflow-scoped** — it represents one
-   agent run, not one workspace.
-4. Copy the key (`nr_live_…`) shown once and store it somewhere safe
-   (env var, secret manager). You'll need it in step 3.
+Sign in at [nullrun.io](https://nullrun.io). The setup wizard walks through five steps: **Workspace**, **Workflow**, **API key**, **Connect**, **Ready**.
+
+1. **Workspace** — name your workspace.
+2. **Workflow** — name the workflow your agent runs as. The wizard creates the workflow, a **Budget Limit** policy of `$10` scoped to that workflow, and an API key bound to it.
+3. **API key** — the key appears once. Copy it into your shell:
+
+```bash title="shell"
+export NULLRUN_API_KEY=nr_live_...
+```
+
+The signing secret is never shown again. The SDK fetches it from the gateway on first use.
+
+You can create more keys later under **Access → API keys**. Each key is bound to one workflow.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/api-key-new-light.png"
@@ -116,30 +119,20 @@ when you need them.
 pip install nullrun
 ```
 
-The plain `nullrun` package covers the full HTTP-level instrumentation
-(httpx hook for OpenAI, Azure, Anthropic, Mistral, Gemini, Cohere,
-Bedrock) and the auto-patch path for LangGraph, LangChain, OpenAI
-Agents, LlamaIndex, CrewAI, and AutoGen. **No vendor extra is required**
-— the SDK uses URL-keyed extractors, not vendor-package imports, for
-all of the LLM providers above. See [Install](#13-installation)
-for the full list of extras and when you would still need one.
+The plain `nullrun` package covers every provider built on `httpx` — OpenAI, Azure OpenAI, Anthropic, Gemini, Cohere, Mistral, Bedrock — and the framework hooks for LangGraph, LangChain, OpenAI Agents, LlamaIndex, CrewAI, and AutoGen. No vendor extra is needed. See [Install → optional extras](#13-installation).
 
 ### 3. Wire NullRun into your code
 
-Pick the pattern that matches what you have today:
-
-#### A. You already call `client.chat.completions.create(...)`
+#### A. You call the provider SDK directly
 
 ```python title="my_agent.py"
+import nullrun
 from openai import OpenAI
 from nullrun import protect
 
 client = OpenAI()
 
-# @protect gates every call through NullRun before it runs.
-# The runtime is created lazily on the first protected execution
-# from NULLRUN_API_KEY, the HTTP instrumentation is installed,
-# and tracking starts.
+
 @protect
 def answer(prompt: str) -> str:
     response = client.chat.completions.create(
@@ -149,143 +142,102 @@ def answer(prompt: str) -> str:
     return response.choices[0].message.content
 
 
-# `init()` auto-registers `shutdown()` via `atexit`, so a clean WS
-# close happens on process exit without any explicit call. For a
-# CLI script that wants fail-fast on missing config, call
-# `nullrun.init(fail_on_exit=True)` instead.
 if __name__ == "__main__":
     with nullrun.guard():
         print(answer("What does NullRun do?"))
-        # guard() prints the structured 4-line developer report
-        # on any NullRunError, then sys.exit(1).
 ```
 
-Every call inside `answer()` is cost-attributed. `@protect` is the
-**gate** (budget pre-flight + kill check + sensitive-tool decision),
-not the tracking mechanism — tracking is handled automatically by
-auto-instrumentation.
+`@protect` is the gate: it asks the gateway for a decision, and it stops the call when the answer is no. Cost tracking is separate — the SDK instruments the HTTP client and books the tokens on its own.
 
-#### B. You use a framework (LangGraph / CrewAI / OpenAI Agents / AutoGen / LlamaIndex)
+`with nullrun.guard():` catches the refusal, prints the message, and exits with code `1`. Use a plain `try` and `except` when your service has to stay up.
 
-Auto-instrumentation does the same thing — see
-[Use with LangGraph](#61-protect-a-langgraph-agent) or any of the other
-[framework how-tos](#65-llm-frameworks).
-The framework hook subscribes itself on the first `@protect` call.
+#### B. You use a framework
 
-### 4. Set a budget
+Auto-instrumentation covers the same ground. See [Use with LangGraph](#61-protect-a-langgraph-agent) and the other [framework how-tos](#65-llm-frameworks).
 
-In the dashboard, open the workflow your key is bound to and set a
-`budget_cents`. A reasonable starter budget:
+#### Start the runtime yourself
 
-| Use case | Suggestion |
+`init()` is optional. The first `@protect` call creates the runtime from `NULLRUN_API_KEY`.
+
+```python title="my_agent.py"
+import nullrun
+
+nullrun.init()
+```
+
+Call it when you want a missing key to fail at startup rather than at the first request. A missing key raises `NullRunAuthenticationError` with the code `NR-C001`. `init()` also registers a clean shutdown on process exit, so the SDK closes its connection without an explicit call.
+
+### 4. Set the budget
+
+The wizard seeds a Budget Limit policy of `$10` for the new workflow. Open **Governance → Policies** to edit it, or to add another one.
+
+| Use case | Starting cap |
 |---|---|
-| Personal / dev experiment | `500` ($5) per period |
-| Single-tenant internal tool | `2000` ($20) per period |
-| Customer-facing AI feature | `10000` ($100) per period with alerts |
+| Personal experiment | `$5.00` (`500` cents) per period |
+| Internal tool | `$20.00` (`2000` cents) per period |
+| Customer-facing feature | `$100.00` (`10000` cents) per period, with alerts |
 
-Periods are either calendar-month UTC (Lite) or your billing cycle
-(paid plans via Polar). See [Budgets → Period rollover](#31-budgets)
-for the detail.
+A Budget Limit policy has an **Enforcement mode**. `Hard` stops every call once the cap is reached. `Soft` lets calls through inside an overdraft cap.
 
-### 5. Run and observe
+On a paid plan the period is your billing cycle. On a free workspace it is a rolling month that starts on the day the workspace is created. See [Budgets](#31-budgets).
+
+### 5. Run it and watch the decisions
 
 ```bash title="shell"
 python my_agent.py
 ```
 
-Then open the dashboard → **Workflows** → your workflow → **Executions**.
-You'll see every `/gate` call (one per `@protect`-wrapped invocation),
-the policy verdict (`allow` / `block` / `rate_limit`), and the cost.
+Then open **Workflows → your workflow → Executions**. Every protected call gets a row. The **Result** column holds the gate verdict, and **Cost** holds what the call cost.
 
-For real-time spend, hit
-[`GET /api/v1/orgs/{org_id}/status`](#73-http-api)
-— it returns `current_spend_cents`, `budget_cents`, `time_to_exhaustion`,
-and your plan caps in a single call (see the **Single-call status**
-example under "Common request patterns").
+For the raw numbers, `GET /api/v1/orgs/{org_id}/status` returns the spend of the period, the cap, and what is left of it in one call. See [HTTP API → Budget and status](#73-http-api).
 
 ### 6. Tighten or loosen
 
-Common next steps, in rough order of how often they're needed:
+1. **Block a tool** the agent should not touch — see [Tool policies](#23-tool-policies) and the starter list in the [Tool catalog](#75-tool-catalog).
+2. **Ask a human first** on a sensitive action — see [Human approval](#32-human-approval).
+3. **Let a long agent overspend on purpose** — see [Workflows → Chain context](#41-workflow-context).
+4. **Forward every error to your monitoring** — see [Error handling](#43-error-handling).
 
-1. **Block a tool** the agent shouldn't touch — see
-   [Tool policies](#23-tool-policies) and the
-   recommended ToolBlock starter list in the
-   [Tool catalog](#75-tool-catalog).
-2. **Allow over-budget for long agents** — see
-   [Chain context → soft mode](#41-workflow-context).
-3. **Forward every error to Sentry** — see
-   [Error handling → on_error hook](#43-error-handling).
-4. **Pre-flight keys before risky calls** — see
-   [Human approval](#32-human-approval).
+### Next
 
-### What this walk-through didn't cover
-
-- **Multi-process / multi-key** patterns — see
-  [Run multiple agents](#67-run-multiple-agents).
-- **Streaming responses** — see
-  [Stream with chain heartbeat](#69-stream-responses).
-
-### Where to read next
-
-- [Concepts → Circuit breaker](#21-circuit-breaker) —
-  the mental model behind `@protect`.
-- [Concepts → Error handling](#43-error-handling) — the
-  three-layer error model and the structured four-line developer report.
-- [Concepts → Workflow context](#41-workflow-context) — what the
-  `with nullrun.workflow(...)` block does.
+- [5-minute tour → the dashboard end to end](#12-5-minute-tour)
+- [Concepts → Circuit breaker](#21-circuit-breaker)
+- [How-to → Run multiple agents](#67-run-multiple-agents)
+- [How-to → Stream responses](#69-stream-responses)
 
 
-title: 5-minute tour
-maturity: stable
-description: Five-minute walkthrough of the NullRun dashboard, policies, and SDK — enough to evaluate the platform end-to-end.
 ## 1.2 5-minute tour
 
-This is the shortest path from "I have never used NullRun" to
-"I shipped an agent to production and it tripped a budget cap." It
-mirrors the dashboard tour at `nullrun.io/onboarding` — same five
-screens, same five CLI commands.
+This is the shortest path from "I have never used NullRun" to "my agent stopped itself at the budget cap". Six screens, one script, one cap.
 
-> **If you want to install first**, jump to [Install](#13-installation) and
-> come back. This tour assumes `nullrun` is already installed and an
-> API key is exported as `NULLRUN_API_KEY`.
+> **Install first?** Jump to [Install](#13-installation) and come back. This tour assumes the `nullrun` package is installed and `NULLRUN_API_KEY` is exported.
 
 ### What you will build
 
-A LangGraph agent that:
+A small agent that:
 
 1. Calls `gpt-4o-mini` through the NullRun gate
-2. Has a hard $0.50 budget per workflow
-3. Trips the circuit breaker when it tries to call `send_email`
-4. Recovers cleanly after you raise the budget
+2. Runs on a workflow with a budget of `$10`
+3. Books about two cents of spend in one run
+4. Stops at the cap once you lower it to one cent
 
-You will see each step land in the dashboard as a real audit row.
+Every call lands in the dashboard.
 
-### Step 1 — Create an organization
+### Step 1 — Set up the workspace
 
-If you do not already have one, open `nullrun.io/onboarding`,
-pick a name ("Acme AI"), and click **Create**. The dashboard
-provisions an `organization_id` and a default `policy_id` that
-allows everything except destructive tools.
+Open [nullrun.io/onboarding](https://nullrun.io/onboarding). The wizard walks through five steps: **Workspace**, **Workflow**, **API key**, **Connect**, **Ready**.
 
-!!! note "What you see"
-    On the dashboard home, a single card shows: organization name,
-    default policy name (`Permissive`), and an "API keys" tile that
-    is empty until step 2.
+1. **Workspace** — name it.
+2. **Workflow** — name it `tour-agent`. The wizard creates the workflow, a **Budget Limit** policy of `$10` scoped to it, and an API key bound to it.
 
 ### Step 2 — Create an API key
 
-In the dashboard:
+To use the key the wizard made, you can skip this step. To create another one:
 
-1. In the left sidebar, under **Access**, click **API keys**.
+1. In the sidebar, under **Access**, click **API keys**.
 2. Click **New API key** in the top right.
-3. In the dialog, pick the **Workflow** the key belongs to (the
-   tour-agent workflow you just created) and name the key
-   `tour-agent`. Pick an expiration — **Never**, **24 hours**,
-   **7 days**, **30 days**, or **90 days**.
-4. Click **Create**.
-5. Copy the `nr_live_…` public identifier and the HMAC secret.
-   The secret is shown **once** — store it in your secrets manager
-   immediately.
+3. In the dialog, pick the **Workflow** the key belongs to and name the key `tour-agent`. Pick an expiration: **Never**, **24 hours**, **7 days**, **30 days**, or **90 days**.
+4. Click **Create** and copy the `nr_live_…` identifier.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/api-keys-list-light.png"
@@ -297,18 +249,11 @@ In the dashboard:
   <figcaption class="nr-shot__caption">API keys · New key</figcaption>
 </figure>
 
-Export both in your shell:
+The dashboard shows the key once. The signing secret is never shown, and the SDK does not need it — it fetches the secret from the gateway on first use.
 
 ```bash title="shell"
 export NULLRUN_API_KEY="nr_live_xxxxxxxxxxxxxxxx"
-export NULLRUN_SECRET_KEY="hmac_xxxxxxxxxxxxxxxxxxxx"
 ```
-
-!!! warning "Where the HMAC secret lives"
-    The SDK pulls the HMAC secret via `POST /api/v1/auth/verify` on
-    first use, then caches it in memory. Re-exporting the env var
-    does NOT invalidate an existing cached secret — restart your
-    process to pick up a new one.
 
 ### Step 3 — Wire up the agent
 
@@ -317,16 +262,25 @@ Create a file `tour_agent.py`:
 ```python title="tour_agent.py"
 import nullrun
 from nullrun import protect, NullRunBudgetError
-from langchain_openai import ChatOpenAI
+from openai import OpenAI
 
-llm = ChatOpenAI(model="gpt-4o-mini")
+client = OpenAI()
+
+# One long prompt, so every call books real tokens.
+CONTEXT = "NullRun checks every tool call before it runs. " * 500
+
 
 @protect
 def ask(question: str) -> str:
-    return llm.invoke(question).content
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": CONTEXT + question}],
+    )
+    return response.choices[0].message.content
+
 
 if __name__ == "__main__":
-    for i in range(20):
+    for i in range(30):
         try:
             print(f"[{i}]", ask("Tell me a one-sentence joke."))
         except NullRunBudgetError as exc:
@@ -334,33 +288,26 @@ if __name__ == "__main__":
             break
 ```
 
-The first `@protect` call creates the runtime from `NULLRUN_API_KEY`.
+The long prompt is deliberate. A one-sentence question costs so little that no cap would ever trip. With `CONTEXT` in the prompt each call carries about 5,000 input tokens, so thirty calls cost about two cents on `gpt-4o-mini`.
 
 Run it:
 
 ```bash title="shell"
-pip install nullrun langgraph langchain-openai
+pip install nullrun openai
 python tour_agent.py
 ```
 
-You will see ~7–10 successful LLM calls, then
-`BLOCKED: You've used all your support credits. Upgrade to keep chatting.`
-(or whatever your catalog wording is).
+All thirty calls succeed.
 
 ### Step 4 — Watch the decisions
 
-Open `nullrun.io/control-center/audit` (the dashboard **Audit log**
-page, under **Governance** in the sidebar). You will see:
+Open **Governance → Audit log**. You see:
 
-- One row per `@protect` call across four columns: **Time**,
-  **Decision**, **Rule**, **Actor**.
-- `decision = allow` for the first ~7–10 rows. The **FilterBar**
-  above the table has period preset chips (1h / 24h / Today /
-  7d / 30d / 90d / All), decision chips, and an event-type selector.
-- `decision = block` on the last row with `error_code = NR-B004`,
-  `wire = BUDGET_HARD_BLOCKED` — click the row to open the
-  **DetailPanel** and see the budget snapshot at the time of the
-  block.
+- One row per protected call, in four columns: **Time**, **Decision**, **Rule**, **Actor**.
+- The period presets **24h**, **7d**, **30d**, **90d**, and **All**, plus a **Custom** range. The page opens on **30d**.
+- **Allow** on every row so far.
+
+The audit log is a plan feature. A workspace in its trial has it.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/audit-log-light.png"
@@ -372,177 +319,118 @@ page, under **Governance** in the sidebar). You will see:
   <figcaption class="nr-shot__caption">Governance · Audit log</figcaption>
 </figure>
 
-Each row is recorded by the gateway's audit pipeline and surfaces
-in your own customer's audit trail identically.
+### Step 5 — Trip the cap
 
-### Step 5 — Trip a ToolBlock
+In the sidebar, open **Governance → Policies**. You find the `tour-agent - starting budget` policy, a **Budget Limit** on the `tour-agent` workflow.
 
-Edit `tour_agent.py` and add a second protected function:
+1. Edit it and set **Max cost (USD/month)** to `0.01`. That is one cent, and it is the smallest cap the server accepts.
+2. Leave **Enforcement mode** on **Hard**.
 
-```python title="tour_agent.py"
-@protect
-def send_email(to: str, body: str) -> None:
-    # Pretend SMTP call.
-    print(f"SMTP → {to}: {body}")
+Run the script again:
+
+```bash title="shell"
+python tour_agent.py
 ```
 
-Then call it from `__main__`:
+The agent stops itself before the first call:
 
-```python title="tour_agent.py"
-# After the loop:
-try:
-    send_email("test@example.com", "hi from the tour")
-except nullrun.NullRunToolBlockedError as exc:
-    print(f"BLOCKED:", nullrun.format_user_message(exc))
+```
+[0] BLOCKED: You've reached the usage limit for this conversation. Please try again later.
 ```
 
-Run it again. The dashboard shows a `decision = block` row with
-`error_code = NR-T001`, `wire = TOOL_BLOCKED`. New organizations
-ship with a permissive default policy; if your admin has added a
-stricter default, you may see additional blocks.
+The cap covers the whole period, not one run. The first run booked about two cents, so a one-cent cap leaves nothing to spend and the gate refuses the next call. If your first run booked less than a cent, the block lands a few calls later instead.
 
-To allow `send_email`, open **Policies** in the sidebar, find the
-tool-block rule that matches `send_email`, and either narrow the
-pattern or scope it to a different workflow.
+That line comes from the SDK's message catalog. Replace it with your own wording if you want to:
 
-### Step 6 — Raise the budget and try again
+```python
+import nullrun
 
-Back in the dashboard:
+nullrun.set_user_message("NR-B004", "Your monthly limit is reached. Upgrade to keep going.")
+```
 
-1. Open the tour-agent workflow and stay on the **Overview** tab.
-2. In the budget card, raise the cap to `$5.00` (500 cents).
-3. Save.
+The audit log has a new row. **Decision** is **Deny**, and **Rule** names the budget policy. Open the row to read the reason code and the policy hash.
 
-Re-run `tour_agent.py`. The loop now completes all 20 calls. The
-**Overview** tab's spend bar shows ~$0.40 used (depending on token
-counts), and the progress bar sits at ~8%.
+The SDK error code for this refusal is `NR-B004`. It rides on the exception, and `nullrun.guard()` prints it in the developer report.
+
+### Step 6 — Raise the cap
+
+Edit the same policy and set **Max cost (USD/month)** to `5` (`$5.00`). Run the script once more. All thirty calls succeed.
+
+The **Overview** tab of the workflow shows the spend against the cap.
 
 ### What next?
 
 | You want to… | Open |
 | --- | --- |
+| Block a tool the agent must not touch | [Concepts → Tool policies](#23-tool-policies) |
+| Ask a human to approve a sensitive action | [Concepts → Human approval](#32-human-approval) |
 | Understand the gate in depth | [Concepts → Circuit breaker](#21-circuit-breaker) |
-| Wire up multiple agents | [How-to → Run multiple agents](#67-run-multiple-agents) |
-| Add an approval flow for sensitive tools | [Concepts → Human approval](#32-human-approval) |
+| Run several agents | [How-to → Run multiple agents](#67-run-multiple-agents) |
 | Stream responses | [How-to → Stream responses](#69-stream-responses) |
-| Deploy to production behind your gateway | [Configuration → Behaviour](#15-configuration) |
+| Tune the SDK | [Configuration → Behaviour](#15-configuration) |
 
 !!! tip "Where to send feedback"
-    Email `support@nullrun.io` with the dashboard's
-    **Help → Send feedback** form filled in. Include the workflow ID
-    (top-right of any dashboard page) and the failing row's
-    `decision_id`.
+    Email `support@nullrun.io`. Include the workflow ID and the `decision_id` of the row that surprised you.
 
 
 ## 1.3 Installation
 
-### Python SDK
+### Install the SDK
 
 ```bash title="shell"
 pip install nullrun
 ```
 
-Verify:
+The package needs Python 3.10 or newer. It depends on `httpx` and nothing else.
 
 ```bash title="shell"
 python -c "from nullrun import protect; print('ok')"
 ```
 
-> **First `@protect` call builds the runtime.** Initialization is
-> lazy, process-wide, and triggered by the first `@protect` call —
-> see the mental-model diagram in [Quickstart](#14-quickstart).
+### Create an API key
 
-> **No local mode.** If `NULLRUN_API_KEY` is missing when the first
-> `@protect` call hits the runtime, the SDK raises
-> `NullRunConfigError` (NR-C001) at the gate. Every gate decision
-> is server-side — a silent local fallback would bypass the backend
-> gate.
+Sign in at [nullrun.io](https://nullrun.io). Open **Access → API keys** and click **New API key**. The dialog asks for a name, a workflow, and an expiration.
 
-### API key
-
-Sign in at [nullrun.io](https://nullrun.io), open **API keys**, and create a key. Each key is minted with a public
-identifier (`nr_live_...`) plus a server-side HMAC secret. The SDK
-transparently obtains the HMAC secret via:
-```http
-POST /api/v1/auth/verify
-```
-
-on first use, so you only need to export the key as an environment
-variable:
+The key is enough. The SDK signs its requests with the key and fetches the matching signing secret from `POST /api/v1/auth/verify` on first use. Without a key the SDK raises `NullRunAuthenticationError` with the code `NR-C001`.
 
 ```bash title="shell"
 export NULLRUN_API_KEY=nr_live_...
 ```
 
-The SDK reads `NULLRUN_API_KEY` on the first `@protect` call. The HMAC
-secret is **not** a constructor argument — it is read from
-`NULLRUN_SECRET_KEY` or returned by `/api/v1/auth/verify`.
+Set `NULLRUN_SECRET_KEY` yourself only if your secret manager already holds the signing secret.
 
-> **Explicit `init()`.** The first `@protect` call creates the
-> runtime lazily from `NULLRUN_API_KEY`. Call `init()` directly when
-> you want fail-fast on a missing key before the first gate call
-> (CI / smoke tests), or to bind an API key from a non-env source.
-> CLI scripts that want a clean `sys.exit(1)` on missing config can
-> pass `init(fail_on_exit=True)`. See
-> [Reference → init](#71-sdk-api)
-> for the contract.
+### What gets instrumented
 
-For env-var setup (`NULLRUN_API_KEY`, `NULLRUN_SECRET_KEY`, and other
-runtime flags), see [Configuration](#15-configuration).
+Instrumentation attaches when the runtime starts. It patches the HTTP client and every framework it finds in `sys.modules`.
 
-### Auto-instrumentation
-
-The SDK's auto-instrumentation runs **lazily on the first protected
-execution path**, not at import time or in any pre-`@protect` hook.
-The lazy trigger creates the runtime, reads `NULLRUN_API_KEY`, installs
-the HTTP instrumentation, and attaches every framework / transport
-hook it can detect in `sys.modules` in a single process-wide
-idempotent step.
-
-| Detected | Coverage |
+| Package | What the SDK attaches |
 | --- | --- |
-| `openai` ≥ 1.0 | HTTP transport hook (httpx) |
-| `openai-agents` | Agent framework hook (`Runner.run` / `run_streamed`) |
-| `anthropic` | HTTP transport hook (httpx) |
-| `langgraph` | Graph runtime hook (`Pregel.invoke` / `stream` / `ainvoke` / `astream`) |
-| `langchain` | Callback manager hook (`BaseCallbackManager`) |
-| `llama-index` | LlamaIndex tool/agent hook |
-| `crewai` | CrewAI EventBus bridge (1.15+) |
-| `autogen` | AutoGen agent runtime hook |
-| `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock) | per-vendor URL-keyed extractors |
+| `httpx` | Token counting for every provider built on it |
+| `requests` | Token counting through `Session.send` |
+| `langchain-core` | Callback manager and chat model hooks |
+| `openai-agents` | `Runner.run` and `Runner.run_sync` |
+| `langgraph` | `Pregel.invoke`, `stream`, `ainvoke`, `astream` |
+| `llama-index` | LLM chat-end and function-call events |
+| `crewai` | `Crew.kickoff` and `kickoff_async` |
+| `autogen` | `BaseChatAgent.on_messages` and the OpenAI chat client |
 
-The Gemini vendor extra is `google-genai` (the actively maintained
-package, ≥ 1.0); the older `google.generativeai` package is **not**
-supported.
+Provider traffic is recognised by host, not by package:
 
-In every case the call is cost-tracked automatically — `@protect` is
-not required for tracking. `@protect` is the **gate** layer (budget
-pre-flight + kill/pause + sensitive-tool decision).
+| Host | Provider |
+| --- | --- |
+| `api.openai.com` | OpenAI |
+| `openai.azure.com` | Azure OpenAI |
+| `api.anthropic.com` | Anthropic |
+| `generativelanguage.googleapis.com` | Gemini |
+| `api.cohere.ai` | Cohere |
+| `api.mistral.ai` | Mistral |
+| `bedrock-runtime.amazonaws.com` | Bedrock |
 
-#### Zero-activity diagnostic
+NullRun never imports a vendor package. Install the vendor package you already use.
 
-If `@protect` fires 50+ times without the runtime observing a single
-`track_llm` event (i.e. your code path never reaches an LLM call, or
-auto-instrumentation never attached), the SDK logs **one WARNING**
-naming the three most likely root causes — no spam, warn-once.
+### Frameworks
 
-### Optional extras
-
-The plain `pip install nullrun` package covers every LLM provider
-(OpenAI, Anthropic, Mistral, Gemini, Cohere, Bedrock) via URL-keyed
-httpx extractors — those vendor SDKs are **never imported** by
-NullRun. Framework hooks for LangGraph / CrewAI / OpenAI Agents /
-LangChain / LlamaIndex / AutoGen auto-attach at runtime when the
-framework package is installed in the same environment as `nullrun`;
-no install extra is needed.
-
-| Extra | Installs | When you need it |
-| --- | --- | --- |
-| `nullrun[opentelemetry]` | `opentelemetry-api`, `opentelemetry-sdk` | OTel span export |
-| `nullrun[dev]` | `pytest`, `pytest-asyncio`, `respx`, `mypy`, `ruff`, `coverage` | Local development and CI |
-
-To pair NullRun with a framework hook, install the framework
-alongside `nullrun`:
+Install the framework next to the SDK. No extra is needed for any of them.
 
 ```bash title="shell"
 pip install nullrun langgraph langchain-openai
@@ -550,350 +438,288 @@ pip install nullrun crewai
 pip install nullrun openai-agents
 ```
 
+### Optional extras
+
+| Extra | Installs | When you need it |
+| --- | --- | --- |
+| `nullrun[websocket]` | `websockets` | Real-time workflow state push. Without it the SDK polls the gateway for state changes, and a kill or pause takes longer to reach the agent. |
+| `nullrun[opentelemetry]` | `opentelemetry-api`, `opentelemetry-sdk` | Exporting spans to an OpenTelemetry collector. |
+| `nullrun[dev]` | `pytest`, `pytest-asyncio`, `respx`, `mypy`, `ruff`, `coverage`, `httpx` | Running the SDK test suite locally. |
+
+```bash title="shell"
+pip install "nullrun[websocket]"
+```
+
+### If the dashboard stays empty
+
+The SDK logs one warning when `@protect` has run 50 times and the SDK has seen no LLM call. The gate is enforced, but no cost is booked. The usual causes are a raw `httpx` client outside the instrumented surface, a custom transport, or a framework that is not on the list above.
+
+### Next
+
+- [Quickstart → your first gated call](#14-quickstart)
+- [Configuration → every setting](#15-configuration)
+- [Reference → init](#71-sdk-api)
+
 
 ## 1.4 Quickstart
 
-Wrap any function with **`@nullrun.protect`** to track its cost, tools, and
-behaviour, and let NullRun halt it when it goes off the rails.
+Install the SDK, export an API key, decorate one function.
+
+### 1. Install
+
+```bash title="shell"
+pip install nullrun
+```
+
+### 2. Export an API key
+
+Create a key in the dashboard under **Access → API keys**. Every key is bound to one workflow.
+
+```bash title="shell"
+export NULLRUN_API_KEY=nr_live_...
+```
+
+### 3. Decorate one function
+
+`@protect` is the only decorator. It works on sync functions and on async functions.
 
 ```python title="app.py"
+import nullrun
 from openai import OpenAI
-from nullrun import protect, workflow
+from nullrun import protect
 
 client = OpenAI()
 
-with workflow("my-first-agent"):       # scopes the gate to a workflow
-    @protect                           # gates every call via /check;
-    def answer(prompt: str) -> str:    # lazy-creates the runtime on first call
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.choices[0].message.content
+
+@protect
+def answer(prompt: str) -> str:
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content
+
 
 if __name__ == "__main__":
-    with nullrun.guard():         # catches NullRunError, prints the
+    with nullrun.guard():
         print(answer("What does NullRun do?"))
-        # structured 4-line developer report on failure, then sys.exit(1)
 ```
 
-> **First `@protect` call builds the runtime.** It reads
-> `NULLRUN_API_KEY`, installs the HTTP instrumentation hook, and attaches
-> every importable framework hook in a single idempotent step. If the
-> API key is missing at that point, the SDK raises `NullRunConfigError`
-> (NR-C001) at the first gate call.
+`import nullrun` gives you `nullrun.guard()`. `from nullrun import protect` gives you the decorator.
 
-> **`@protect` is the entry point.** For early fail-fast (CI / smoke
-> tests) before the first `@protect` call, see [Reference → init](#71-sdk-api).
+### 4. Run it
 
-> The `with workflow("..."):` block binds every `@protect` call inside
-> to a named workflow — required, otherwise the SDK falls back to an
-> ad-hoc workflow_id with no budget policy attached. For production,
-> the workflow name should match the dashboard workflow your API key
-> is bound to.
+```bash title="shell"
+python app.py
+```
 
-Every call inside `answer()` is cost-attributed and governed by your
-workspace policy. On any policy outcome (budget cap, tool block, rate
-limit, transport outage), `with nullrun.guard():` prints the structured
-four-line developer report (`error_code` + what + where + why +
-how to fix) and exits `1`.
+### What the gate does
+
+`@protect` sends a gate request when the protected function is called. The gateway checks:
+
+- the budget of the workflow your API key is bound to
+- the tool rules that match the call
+- the rate limit
+
+If the gateway allows the call, the function body runs. The SDK then tracks the input tokens, the output tokens, and the cost.
+
+### What a refusal looks like
+
+`with nullrun.guard():` catches every refusal. It writes the user-facing message and a developer report to stderr. The report carries the error code, the stage that failed, the endpoint, the reason, and the fix. The process exits with code `1`.
+
+```
+You've reached the usage limit for this conversation. Please try again later.
+```
+
+### Start the runtime yourself
+
+`init()` is optional. The first `@protect` call creates the runtime from `NULLRUN_API_KEY`.
+
+```python title="app.py"
+import nullrun
+
+nullrun.init()
+```
+
+Call it when you want a missing key to fail at startup rather than at the first request. A missing key raises `NullRunAuthenticationError` with the code `NR-C001`. `init()` also registers a clean shutdown on process exit.
 
 ### What gets tracked
 
 - LLM tokens in and out
-- Cost in cents (per-call and aggregate)
+- Cost per call
 - Latency
-- Tool calls (if you use a framework integration)
-
-### What can go wrong
-
-See [Troubleshooting](#91-troubleshooting) for the full table of
-expected behaviours (budget cap, loop, sensitive-tool, gateway down,
-kill/pause, etc.) and recovery steps. For the three-layer error model,
-see [Concepts → Error handling](#43-error-handling).
+- Tool calls made through an instrumented framework
 
 ### Next
 
+- [Install → optional extras](#13-installation)
+- [First agent → the full walkthrough](#11-first-agent-in-15-minutes)
+- [Configuration → every setting](#15-configuration)
+- [Troubleshooting → every refusal and its fix](#91-troubleshooting)
 - [Concepts → Circuit breaker](#21-circuit-breaker)
 - [Concepts → Control plane](#44-control-plane-websocket)
 - [Concepts → Error handling](#43-error-handling)
 - [How-to → Set a hard cost cap](#66-set-a-hard-cost-cap)
-- [How-to → Use with LangGraph](#61-protect-a-langgraph-agent)
 
 
 ## 1.5 Configuration
 
-NullRun reads configuration from environment variables. The runtime
-is created lazily on the first protected execution. Only
-`NULLRUN_API_KEY` is required; everything else has sensible defaults.
+The Python SDK reads its settings from environment variables. Only `NULLRUN_API_KEY` is required. The gateway is operated by the NullRun team and exposes no user-facing runtime flags.
 
-Variables are read by the Python SDK process on the first `@protect`
-call. The gateway is operated by the NullRun team and exposes no
-user-facing runtime flags.
+### Settings
 
-### SDK env vars
-
-Read by the SDK transport when the runtime is created on the first
-`@protect` call. None of these affect the gateway.
-
-| Variable | Default | Description |
+| Variable | Purpose | Default |
 | --- | --- | --- |
-| `NULLRUN_API_KEY` | unset (required) | API key from the NullRun dashboard (`nr_live_...`). Missing at the first `@protect` call raises `NullRunConfigError`. |
-| `NULLRUN_SECRET_KEY` | unset | HMAC-SHA256 signing secret returned by `POST /auth/verify`. The SDK signs every request automatically when this is set. |
-| `NULLRUN_API_URL` | `https://api.nullrun.io` | Gateway REST base URL — only override this when pointing at a regional or staging cluster. |
+| `NULLRUN_API_KEY` | API key from the dashboard (`nr_live_...`). The SDK signs every gateway request with it. | unset — required |
+| `NULLRUN_SECRET_KEY` | Signing secret for that key. The SDK fetches it from `POST /api/v1/auth/verify` when this variable is unset. | unset |
+| `NULLRUN_API_URL` | Base URL of the gateway. Point it at a self-hosted gateway only if you run one. | `https://api.nullrun.io` |
+| `NULLRUN_ENV` | Deployment label. The value `production` or `prod` marks the process as production, which arms the guards on the development bypasses below. | unset |
+| `NULLRUN_REQUEST_TIMEOUT` | Seconds the SDK waits for one gateway request. | `30` |
+| `NULLRUN_APPROVAL_TIMEOUT_SECONDS` | Seconds the SDK waits for a human approval decision. It is the fallback when the gateway sends no timeout of its own. | `300` |
+| `NULLRUN_TRANSPORT` | Control-plane transport: `ws` for WebSocket push, `http` for polling. | `ws` |
+| `NULLRUN_BATCH_SIZE` | Number of tracked events the SDK sends per flush. | `50` |
+| `NULLRUN_FLUSH_INTERVAL_MS` | Milliseconds between flushes of tracked events. | `5000` |
+| `NULLRUN_WAL_PATH` | Path of the write-ahead log that holds events that could not be delivered yet. Give every runtime its own path. | `<tempdir>/nullrun-<user>-<key>.wal` |
+| `NULLRUN_EDGE_URL` | Base URL of an edge node that enforces the gate next to the agent. | unset |
+| `NULLRUN_EDGE_LEASE_ID` | Lease the edge node uses for this runtime. Required when `NULLRUN_EDGE_URL` is set. | unset |
+| `NULLRUN_EDGE_TOKEN` | Token the edge node authenticates with. | unset |
 
-### Developer and CI overrides
+A value that is not a number is ignored, and the SDK logs a warning naming the variable.
 
-!!! danger "Production-safe default: do NOT set these in production traffic"
-    The variables below override the gate's safety defaults. They
-    exist for local SDK development and CI only. Exporting them in
-    a production environment silently disables protection — your
-    agent will run un-gated.
+### Development and test bypasses
 
-| Variable | Effect | When to use |
-| --- | --- | --- |
-| `NULLRUN_SKIP_BUDGET_CHECK=1` | Fully bypasses the gate on every `@protect` call in the process. **For local SDK development and CI only** — do not export in production environments. Production with this flag set silently skips every policy check. | Local SDK experiments, integration tests where you want to verify business logic without gate noise. |
-| `NULLRUN_SENSITIVE_FAIL_OPEN=1` | Returns a permissive result instead of failing-CLOSED when a sensitive-tool transport error blocks the gate call. | Environments without a working transport for sensitive-tool lookups — modern installs should leave this unset. |
+!!! danger "A production deployment must not set these"
+    The two variables below switch off a safety check. They exist for local development and for test suites. A production deployment must not set them, and a test that only passes with them set is a defect in the gate, not in the test.
 
-If a CI test "passes only with `NULLRUN_SKIP_BUDGET_CHECK=1`" that's a
-signal the gate is blocking what it should not — fix the gate, not
-the bypass.
+| Variable | Effect |
+| --- | --- |
+| `NULLRUN_SKIP_BUDGET_CHECK=1` | Skips the budget pre-flight on every protected call in the process. |
+| `NULLRUN_SENSITIVE_FAIL_OPEN=1` | Lets a sensitive tool run when the policy engine cannot be reached. Only tools the operator classified as fail-open-allowed are affected. |
 
-### Server-side configuration
+Each one needs a second variable that acknowledges the risk:
 
-NullRun runs as a managed service; the gateway is operated by the
-NullRun team and exposes no user-facing runtime flags.
+| Variable | Effect |
+| --- | --- |
+| `NULLRUN_ALLOW_SKIP_BUDGET_CHECK=1` | Acknowledges `NULLRUN_SKIP_BUDGET_CHECK=1` in production. |
+| `NULLRUN_ALLOW_SENSITIVE_FAIL_OPEN=1` | Acknowledges `NULLRUN_SENSITIVE_FAIL_OPEN=1` in production. |
+
+The SDK refuses a bypass that is armed in production without its acknowledgement. It logs the refusal and continues to enforce.
 
 ### Behaviour
 
-The control-plane transport is WebSocket push with an HTTP polling
-fallback that takes over when the WS connection drops repeatedly.
+The control plane carries workflow state — kill, pause, resume. The SDK receives it over a WebSocket push channel. It falls back to polling the gateway every second when the WebSocket endpoint is blocked, when the `websockets` package is not installed, or when `NULLRUN_TRANSPORT=http` selects the poller.
+
+The edge settings change where the gate runs. With `NULLRUN_EDGE_URL` set, the gate request goes to the edge node instead of the cloud. Cost events still go to the cloud.
 
 ### See also
 
 - [HTTP API](#73-http-api)
-- [Control plane](#44-control-plane-websocket)
-- [Circuit breaker](#21-circuit-breaker)
+- [Install → optional extras](#13-installation)
+- [Concepts → Control plane](#44-control-plane-websocket)
+- [Concepts → Circuit breaker](#21-circuit-breaker)
 
 
 # 2. Decision model
 
 
-title: Circuit breaker
-maturity: stable
-description: How NullRun's circuit breaker trips on a budget overrun, recovers after a cooldown, and propagates a kill signal across in-flight calls.
 ## 2.1 Circuit breaker
 
-The circuit breaker stops your agent when something goes wrong. When
-the agent is hitting the budget cap, calling a tool your policies
-forbid, or being asked by an operator to stop — the gate returns
-`block` and the SDK raises an exception, even if the agent's code
-doesn't know to stop.
+The SDK ships a client-side circuit breaker. It sits in the transport
+layer and watches the calls the SDK makes to the gateway. After a run
+of transport failures it opens and stops sending, so an unreachable
+gateway does not turn into a hang. It closes again after a cooldown.
 
-The underlying mechanism is a single `/api/v1/gate` evaluation per
-`@protect`-wrapped call that returns `allow` / `block` /
-`require_approval`.
+A policy refusal and a breaker trip are different things:
 
-In the dashboard, a tripped breaker shows up as the workflow's status
-flipping from **Active** to **Killed** or as a flood of **block**
-decisions in the **Audit log**.
+- A **policy refusal** is the gateway answering "no". The gate
+  evaluated your rules and blocked the call.
+- A **breaker trip** is the SDK noticing that the gateway is not
+  answering at all.
 
-### When does it trip?
+### States
 
-The gate reacts to three categories of situation. Each is a separate
-decision path inside `/gate`, but to you it all looks the same: the
-next call rejects.
-
-| Situation | What you see | Where in the dashboard |
-|---|---|---|
-| **Budget exceeded** (Hard mode) | Every call returns `block`; SDK raises `NullRunBudgetError` with `error_code = "NR-B004"` | Audit log, then the spend bar hits 100% |
-| **Tool blocked** by policy | `block`; SDK raises `NullRunToolBlockedError` with `error_code = "NR-T001"` | Audit log |
-| **Operator kill** | `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) raised mid-call | Workflow status flips to **Killed** |
-
-Rate limiting (429) and budget soft-mode blocks are returned by the
-same gate but with different codes. SDK surfaces them as `error_code = "NR-R001"` and `error_code = "NR-B004"`. See [Budgets](#31-budgets) and [Policies](#22-policies).
-
-The first two are automatic — the gate enforces them on every call.
-The third needs you to click **Kill** in the dashboard or call
-`POST /api/v1/workflows/{id}/kill`.
-
-### What the agent sees
-
-When the breaker trips, the SDK raises an exception. The exact
-exception depends on what tripped it:
-
-| Trip cause | Exception | Class |
-|---|---|---|
-| Budget exceeded | `NullRunBudgetError` (`error_code = "NR-B004"`) | `NullRunError` (Exception) |
-| Tool blocked | `NullRunBlockedException` (`error_code = "NR-T001"`) | `NullRunError` (Exception) |
-| Operator kill | `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) | `NullRunError` (Exception) |
-
-The kill signal inherits from `NullRunError`, so `try/except Exception:`
-catches it like every other SDK error. To handle kill specifically
-— checkpoint state, notify a supervisor, exit cleanly — catch
-`NullRunWorkflowKilledError` (preferred) or `WorkflowKilledInterrupt`
-explicitly. See [Error handling → Kill signal](#43-error-handling)
-for the recommended handler shape.
-
-If you use the zero-boilerplate helpers from the SDK, you don't have
-to write any of this — `with nullrun.guard():` catches the standard
-`NullRunError` exceptions, prints the structured four-line developer
-report, and exits 1. The kill signal is the one exception:
-`guard()` re-raises it so kill always reaches the top of the agent
-loop. To handle kill distinctly, use bare `@protect` with an
-explicit `except NullRunWorkflowKilledError:` arm.
-
-### When the gateway is unreachable
-
-Sometimes the gateway itself is down — DNS, network, an outage.
-The mental model: critical paths (budget reservation, ToolBlock,
-aggregate rate limit) refuse to run when the gateway can't be reached;
-secondary signals (per-key rate limit) may let calls through. When the
-gateway rejects because of an infrastructure failure, you'll see a
-clear HTTP error from the SDK.
-
-If you're seeing persistent infrastructure failures, contact support.
-
-### When the breaker recovers
-
-After the gateway comes back, the gate transitions automatically to
-normal mode. No operator action needed — the next `/gate` call
-succeeds if the policy allows it.
-
-If the gate is blocking too often (every call rejects), look at:
-
-1. The **Audit log** for the workflow. The reason column tells you
-   why each call was blocked.
-2. The workflow's **Overview** tab — the spend vs. cap bar shows
-   whether you're consistently hitting the budget. Raise the cap or
-   switch to a cheaper model if so.
-3. **Effective policy** (on the **Policies** tab). A policy you added
-   recently may be too strict — try narrowing patterns or scoping to
-   one workflow before rolling out org-wide.
-
-### Common scenarios
-
-#### "My agent suddenly stopped responding"
-
-Open the workflow in the dashboard. Check the state:
-
-| Status | What happened |
+| State | What happens |
 |---|---|
-| **Active** | The agent is fine — check the application logs for the actual error |
-| **Paused** | You paused it (or an operator did). Click **Resume** to restart. See [Control plane](#44-control-plane-websocket). |
-| **Killed** | You killed it (or an operator did). Create a new workflow or re-activate. |
+| **Closed** | Calls go out normally. A transport failure raises the failure count. A success resets it. |
+| **Open** | Calls short-circuit. The SDK raises `BreakerTransportError` instead of waiting on the network. |
+| **Half-open** | The breaker lets one probe through. A success closes it. Another failure opens it again. |
 
-If the status is Active but every call rejects, open the
-**Audit log** and filter by `decision = block`. The reason column
-shows the pattern that matched.
+### When it opens
 
-#### "My agent was working yesterday and is blocked today"
+The breaker opens after a run of consecutive transport failures: a
+timeout, a refused connection, a 5xx. The threshold on the SDK's
+event-flush path is the failed-flush limit, 10 by default. The
+half-open probe waits 30 seconds.
 
-Look at the workflow's **Overview** tab — the spend bar. The budget
-probably rolled over (new month or billing cycle renewal) and the new
-period started with an empty counter. Raise the cap or wait for the
-next reset.
+While the breaker is open the SDK keeps the pending work on disk and
+retries it on a later flush. No record is dropped, and the agent keeps
+running.
 
-#### "I want to test my agent without the breaker tripping"
+### What it raises
 
-Use a **separate workflow** with its own (low or zero) budget. Don't
-disable the gate — bypassing it is a dev/test opt-out.
+`BreakerTransportError` extends `BreakerError`. It is not a
+`NullRunError`, so `except NullRunError` does not catch it:
+
+```python
+from nullrun import BreakerError, BreakerTransportError
+
+try:
+    run_agent("...")
+except BreakerTransportError:
+    # The gateway was not answering.
+    # The SDK is protecting itself, not enforcing a rule.
+    ...
+```
+
+A breaker-open transport failure on the `@protect` gate surfaces as a
+block with `error_code = "NR-B005"`, and the protected body does not
+run.
+
+### What it does not do
+
+The breaker never relaxes enforcement. A tool block, a budget refusal
+and a rate-limit refusal are answers from the gateway, and the SDK
+raises them whatever state the breaker is in. When the gateway cannot
+be reached at all, the enforcement path refuses — see
+[Policies → Fail closed](#22-policies).
 
 ### See also
 
-- [Budgets](#31-budgets) — the most common trip cause
-- [Tool policies](#23-tool-policies) — your own blocking rules
-- [Human approval](#32-human-approval) — the alternative to blocking
-  for sensitive operations you actually want to allow
-- [Troubleshooting](#91-troubleshooting) — common "why is my
-  agent blocked?" questions
-
-!!! info "Deep dive"
-
-    A single gate evaluation can trip on three independent paths,
-    and the budget and tool-block paths are fail-closed. Budget
-    enforcement runs as one atomic reservation: the org-level
-    ceiling applies first, then the workflow ceiling, then the
-    current period's counter. Nothing is committed unless all three
-    pass, so a caller can never observe a partially applied
-    reservation. On overflow the reservation flips to a blocked
-    state and the gate reports the spent, budget, and projected
-    totals, so the rejection can be reconstructed from the error
-    alone.
-
-    Tool blocking resolves one canonical tool list from the request
-    and matches it against the patterns on the effective policy.
-    Names containing control characters are rejected. Pattern
-    matching is glob-based: `*` alone matches everything,
-    `prefix.*` matches both `prefix` and `prefix.anything`, and a
-    pattern with several stars splits on each star and requires the
-    literal segments to appear in order — so `*.drop_*` matches
-    `s3.drop_table`. A request that supplies no tool list while
-    patterns are configured is blocked, not allowed.
-
-    Checks run in a fixed order — workflow active, parent
-    ownership, cycle depth, tool block, business-impact validation,
-    rate limit, then budget reservation — and evaluation
-    short-circuits on the first decision that is not `allow`.
-    Precedence runs `block` above `require_approval` above `allow`,
-    so a blocked call is reported before any budget envelope is
-    minted.
-
-    Retrying a gate call is safe: an idempotent retry returns the
-    stored response rather than minting a fresh reservation. The
-    execution identifier is minted server-side and bound to the
-    organization and API key, and that binding is the only source of
-    truth for the reserve-then-consume pair. An organization-level
-    budget is a single shared counter, so exhausting it through one
-    workflow also blocks every other workflow under the same
-    organization.
-
-    The aggregate per-organization rate limit fails closed; the
-    per-key limit fails open, with the budget gate as the backstop.
-    A storage partition surfaces as a fast rejection rather than a
-    hung request, and reservations in flight at the moment of a trip
-    are cleaned up when their envelope expires, which bounds the
-    cleanup window but does not remove it. Kill delivery falls back
-    to heartbeat polling when the push channel is unavailable, so
-    the worst-case latency of a kill is bounded by the heartbeat
-    interval rather than being immediate.
+- [Policies](#22-policies) — the rules the gate enforces
+- [Error handling](#43-error-handling) — how a refusal reaches your code
+- [Troubleshooting](#91-troubleshooting) — common "why is my agent
+  blocked?" questions
 
 
-title: Policies
-maturity: stable
-description: How BudgetLimit, RateLimit, ToolBlock, and LoopDetection policies are aggregated — most-restrictive-wins semantics across scopes.
 ## 2.2 Policies
 
-A **policy** is a rule attached to your organization or a single
+A **policy** is a rule attached to your organization or to a single
 workflow. In the dashboard they live under **Governance → Policies**.
-Each policy answers one question:
-
-- "Is this call allowed, blocked, or does it need a human to approve?"
 
 ### What you see in the dashboard
 
 The **Policies** page lists every policy in your org. Each row
 shows:
 
-- **Name** — you set this when you created the policy
-- **Type** — what the policy caps (see the table below)
-- **Scope** — applies to the whole org, or only one workflow
-- **Active** toggle — on/off without deleting
+- **Name** — what you set when you created the policy
+- **Type** — what the policy caps
+- **Scope** — the whole org, or one workflow
+- **Active** toggle — on or off, without deleting
 - **Effective from** — when the policy was last edited
 
-Click a policy to edit it. Changes apply to the next gate call —
-there's no need to redeploy your agent.
+Click a policy to edit it. A change applies to the next gate call.
 
 ### The three policy types
 
-| Type | What it controls | Example value |
-|---|---|---|
-| **BudgetLimit** | Maximum spend per workflow per period | `5000` ($50.00) |
-| **RateLimit** | Maximum calls per minute | `60` (one call per second sustained) |
-| **ToolBlock** | Tools the agent must not call | `["send_*", "db.drop", "stripe.charge"]` |
+| Type | Wire name | What it controls | Example value |
+|---|---|---|---|
+| **BudgetLimit** | `budget_limit` | Maximum spend per period | `5000` ($50.00) |
+| **RateLimit** | `rate_limit` | Maximum calls per minute | `60` (one call per second, sustained) |
+| **ToolBlock** | `tool_block` | Tools the agent must not call | `["send_*", "db.drop", "stripe.charge"]` |
 
-Each type has a JSON config payload — see the [Tool policies](#23-tool-policies)
-page for the glob-match syntax inside `ToolBlock`.
+Each type carries a JSON config payload. See
+[Tool policies](#23-tool-policies) for the pattern syntax inside a
+`ToolBlock`.
 
 ### BudgetLimit — extra fields
 
@@ -902,38 +728,34 @@ A `BudgetLimit` policy can carry these optional fields:
 | Field | Default | What it does |
 |---|---|---|
 | `enforcement_mode` | `"Hard"` | `Hard` blocks on budget exceeded. `Soft` allows a bounded overdraft when an active chain is present. |
-| `max_overdraft_cents` | `0` | Maximum overdraft in cents (per-org aggregate). Both `cents` and `percent` apply — the lower cap wins. |
-| `max_overdraft_percent` | `0` | Maximum overdraft as percent of the budget. |
-| `max_chain_duration_seconds` | `3600` | Maximum duration of a chain started under this policy before the gate refuses. |
+| `max_overdraft_cents` | `0` | Maximum overdraft in cents. The cent cap and the percent cap both apply — the lower one wins. |
+| `max_overdraft_percent` | `0` | Maximum overdraft as a percentage of the budget. |
+| `max_chain_duration_seconds` | `3600` | Maximum duration of a chain started under this policy. The gate refuses a longer chain. |
 
 The gate reads these fields from every applicable `BudgetLimit` and
-uses **most-restrictive-wins**: `enforcement_mode` (Hard > Soft),
-`max_overdraft_cents` (min), `max_overdraft_percent` (min).
+uses **most-restrictive-wins**: `enforcement_mode` (Hard beats
+Soft), `max_overdraft_cents` (min), `max_overdraft_percent` (min).
 
 #### Soft mode requirements
 
-Soft mode requires **all three**:
+Soft mode needs all three of these:
 
-1. The policy uses `enforcement_mode = Soft` (not Hard)
-2. An **active `chain_id`** exists (declared via `with chain(...)`)
-3. The projected cost stays within `max_overdraft_cents` and
-   `max_overdraft_percent`
+1. The policy uses `enforcement_mode = Soft`.
+2. An **active chain** exists — declared with `with chain(...)`.
+3. The projected cost stays inside both `max_overdraft_cents` and
+   `max_overdraft_percent`.
 
-If any of the three is missing, soft mode is unavailable and the
-gate behaves as Hard. Multiple parallel chains on the same org share
-one overdraft counter — N concurrent chains do **not** multiply the
-overdraft cap.
+If one of the three is missing, the budget behaves as Hard. Parallel
+chains on one organization share a single overdraft allowance, so
+concurrency does not multiply the cap.
 
-A chain dies on the first of: `op="end"`, 5 minutes of `/gate`
-inactivity (idle TTL), or exceeding `max_chain_duration_seconds`.
-Chain time is read server-side, eliminating clock skew between
-backend nodes.
+A chain ends on the first of: `op="end"`, five minutes without a gate
+call, or `max_chain_duration_seconds` exceeded.
 
 ### Aggregation
 
-When two policies in the merged set compete, the engine picks the
-**most restrictive** one for numeric caps and the **union** for tool
-patterns.
+When two applicable policies disagree, the engine takes the **most
+restrictive** numeric cap and the **union** of the tool patterns.
 
 | Field | If two policies disagree |
 |---|---|
@@ -942,44 +764,36 @@ patterns.
 | `enforcement_mode` | `Hard` beats `Soft` |
 | `max_overdraft_cents` | The smaller number wins |
 | `max_overdraft_percent` | The smaller number wins |
-| `tool_pattern` / `blocked_tools` / `tools` | Both lists are merged (a tool blocked anywhere is blocked everywhere) |
+| `tool_pattern` / `blocked_tools` / `tools` | Both lists merge — a tool blocked anywhere is blocked everywhere |
 
-You can't accidentally un-block a tool the org blocks. There is no
-"allow" rule that overrides a "block" — the system is conservative
-on purpose.
+You cannot un-block a tool that another scope blocks. There is no
+"allow" rule that overrides a "block".
 
 ### Org-level vs workflow-level
 
 A policy has one of two scopes:
 
-- **Org** — applies to every workflow in your organization. Useful
-  for "all our agents must block `db.drop`" or "everyone gets 60
-  calls/min".
-- **Workflow** — applies to one workflow only. Useful for "this
-  specific agent gets $500/month" or "this one agent can call
-  `send_email`".
+- **Org** — applies to every workflow in your organization. Use it
+  for rules like "all our agents must block `db.drop`".
+- **Workflow** — applies to one workflow. Use it for rules like
+  "this agent gets $500 per period".
 
-Both scopes apply at the same time. There's no "overrides" — both
-sets of rules run together. The dashboard's **Effective policy** tab
-on a workflow page shows the merged set.
+Both scopes apply together. There is no override. The **Effective
+policy** tab on a workflow page shows the merged set.
 
 ### Templates
 
-The dashboard ships with **templates** — pre-built policies for
-common patterns. To enable one:
+The dashboard ships **templates** — pre-built policies for common
+patterns:
 
 1. On the **Policies** page, click **Templates**.
-2. Pick a template (e.g. "Cap dev workflow at 100c/min" or "Block
-   all write tools").
+2. Pick a template.
 3. Click **Enable**.
 
-The template materialises as a real policy in your org using its
-config and name. Disable reverses it. Templates save you from
-hand-authoring JSON.
+A template materialises as a real policy in your org. Disable
+removes it.
 
 ### Plan gating
-
-Some policy features are plan-restricted:
 
 | Feature | Available on |
 |---|---|
@@ -988,28 +802,59 @@ Some policy features are plan-restricted:
 | `ToolBlock` policies | Growth+ |
 | Approval rules with typed predicates | Growth+ |
 
-If you try to create a feature your plan doesn't include, the
-dashboard shows the feature greyed out with an "Upgrade" link.
+Policies and approval rules share one quota per organization:
+
+| Plan | Policies and approval rules |
+|---|---|
+| Lite | 3 |
+| Starter | 10 |
+| Growth | 25 |
+| Scale | 150 |
+| Enterprise | Unlimited |
+
+If you try to use a feature your plan does not include, the dashboard
+shows it greyed out with an **Upgrade** link, and the server refuses
+the change.
+
+### Fail closed
+
+Every check on the enforcement path **refuses** when it cannot be
+evaluated. A refusal is a refusal, not a pass.
+
+| Situation | Result |
+|---|---|
+| The gateway cannot be reached | The protected body does not run. The SDK raises `NullRunBlockedException` with a transport code: `NR-B001` network, `NR-B002` gateway 5xx, `NR-A003` auth, `NR-B005` breaker open. |
+| The rate-limit store cannot be reached | The call is refused with HTTP 503 `RATE_LIMIT_REDIS_UNAVAILABLE`. |
+| The budget store cannot be reached | The call is refused with HTTP 402 `BUDGET_REDIS_UNAVAILABLE`. |
+| A `ToolBlock` policy cannot be evaluated | The call is refused with HTTP 403 `TOOL_BLOCKED`. |
+
+The SDK's own circuit breaker is the single local exception. After
+repeated transport failures it stops calling the gateway and keeps
+the pending work on disk. See
+[Circuit breaker](#21-circuit-breaker).
+
+The rate limiter has two buckets. The per-organization aggregate
+refuses on a store outage (503 `RATE_LIMIT_REDIS_UNAVAILABLE`). The
+per-key bucket is a secondary signal and does not refuse on its own.
 
 ### Approval rules — separate from ToolBlock
 
-Approval rules are **not** a `ToolBlock` policy with an `action =
-require_approval` field. They are a separate rule object with
-`tool_patterns`, a projected-cost threshold, a typed `BusinessImpact`
-predicate, and operational metadata.
+Approval rules are not a `ToolBlock` policy with an
+`action = require_approval` field. They are a separate rule object
+with `tool_patterns`, a projected-cost threshold, a typed
+`BusinessImpact` predicate and operational metadata.
 
 When a rule fires, the gate returns `decision = "require_approval"`
-and the SDK parks until the operator clicks Approve / Deny. See
-[Human approval](#32-human-approval) for the full flow, the typed
-`action_digest` binding, and the WebSocket push resume path.
+and the SDK parks until the operator clicks Approve or Deny. See
+[Human approval](#32-human-approval).
 
 ### How to create one
 
 1. **Governance → Policies → New policy**.
 2. Pick the type (BudgetLimit / RateLimit / ToolBlock).
-3. Pick the scope (Org or specific workflow).
-4. Fill in the config. The dashboard validates the JSON in real
-   time and shows errors before you save.
+3. Pick the scope (Org or a specific workflow).
+4. Fill in the config. The dashboard validates the JSON and shows the
+   errors, so you can fix them.
 5. Save. The policy is active immediately.
 
 <figure class="nr-shot">
@@ -1022,108 +867,38 @@ and the SDK parks until the operator clicks Approve / Deny. See
   <figcaption class="nr-shot__caption">Governance · Policies · New policy</figcaption>
 </figure>
 
-To test a new policy before rolling it out broadly, scope it to
-one workflow. The dashboard's **Effective policy** tab on that
-workflow's detail page shows the merged result so you can see exactly
-what your agent will see.
+To test a policy, scope it to one workflow. The **Effective policy**
+tab on that workflow shows the merged result.
 
 ### What gets logged
 
-Every policy decision is recorded in **Governance → Audit log**.
-You can filter by:
+Every policy decision lands in **Governance → Audit log**. Filter by
+decision (`allow`, `deny`, `require_approval`), event type, actor,
+policy, execution and time window.
 
-- Workflow
-- Decision type (`allow` / `block` / `require_approval`)
-- Time window
-- Tool name (for `ToolBlock` matches)
-
-The audit log is the source of truth for "why did my agent stop
-working at 14:32 yesterday?". Pair it with [Traces](#42-tracing) to
-see the exact request that triggered the decision.
+The audit log answers "why did my agent stop working at 14:32?".
+Pair it with [Traces](#42-tracing) to see the request behind the
+decision.
 
 ### See also
 
-- [Tool policies](#23-tool-policies) — the `ToolBlock` matching rules
-- [Budgets](#31-budgets) — how `BudgetLimit` interacts with the
+- [Tool policies](#23-tool-policies) — the `ToolBlock` pattern rules
+- [Budgets](#31-budgets) — how a `BudgetLimit` interacts with the
   period rollover
-- [Human approval](#32-human-approval) — typed `BusinessImpact` rules
-  that produce `require_approval`
-- [Workflows](#41-workflow-context) — where the merged policy is applied
-
-!!! info "Deep dive"
-
-    The merged view is computed once per policy refresh and is
-    the same value the gate reads on every call, so the set an
-    operator sees on a workflow's effective-policy view is not a
-    second, independent computation that can drift from the one
-    actually enforced. Numeric caps reduce to the smallest value
-    found across every applicable policy, and tool patterns
-    reduce to the union of every applicable list. A tool blocked
-    at one scope cannot be unblocked at another: the merge has no
-    allow arm for a block to lose.
-
-    Decisions resolve in a fixed order, and the first outcome
-    other than allow short-circuits the rest. Tool blocking is
-    evaluated ahead of any budget reservation, so a call refused
-    for its tool name never has a budget envelope minted for it.
-    A tool block is unconditional: whatever `enforcement_mode` a
-    budget policy carries, a matching pattern blocks. Rate
-    limiting at the organization level is authoritative and
-    refuses the call when it cannot be evaluated; the per-key
-    rate limit is a secondary signal that defers to the budget
-    gate rather than refusing a call on its own.
-
-    A per-workflow budget cap is tri-state. No applicable policy
-    means the per-workflow check is skipped entirely, which is a
-    different thing from a cap of zero, which rejects every call.
-    Collapsing the two would let an organization that meant to
-    forbid spending fall through to the organization-wide cap
-    instead.
-
-    Soft enforcement belongs to budgets alone and needs three
-    things at once: the policy set to soft, an active chain, and
-    a projected cost inside both the cent and the percentage
-    overdraft limits. If any is missing the budget behaves as
-    hard. Concurrent chains on one organization share a single
-    overdraft counter, so parallelism does not multiply the
-    allowance. Tool-block policies and approval rules are gated
-    to Growth and above; on plans without the feature the server
-    refuses the mutation, and rules inherited from a higher tier
-    are retained for audit while no new one can be created.
+- [Human approval](#32-human-approval) — rules that produce
+  `require_approval`
+- [Workflows](#41-workflow-context) — where the merged policy applies
 
 
-title: Tool policies
-maturity: stable
-description: Glob patterns for tool names with a 4 KB cap per pattern, union semantics across applicable scopes, and validation traps to avoid.
 ## 2.3 Tool policies
 
-A `ToolBlock` policy decides which tools the agent is allowed to call
-and which it can't. In the dashboard these rules live under a policy
-of type **ToolBlock** — see [Policies](#22-policies) for the general
-overview. This page covers how to write the patterns inside the
-policy.
-
-### Where you see it in the dashboard
-
-When you create or edit a policy and pick **ToolBlock** as the
-type, the dashboard shows a JSON editor for the `tool_pattern`,
-`blocked_tools`, or `tools` array. The "Test pattern" preview at the
-bottom lets you paste a tool name and see whether any pattern
-matches — useful for debugging.
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../assets/images/screenshots/policies-list-light.png"
-       alt="Policies list with the New policy button highlighted in the top right."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../assets/images/screenshots/policies-list-dark.png"
-       alt="Policies list with the New policy button highlighted in the top right."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">Governance · Policies · New policy</figcaption>
-</figure>
+A `ToolBlock` policy decides which tools the agent may call. It lives
+under a policy of type **ToolBlock** — see [Policies](#22-policies)
+for the general overview. This page covers the pattern syntax.
 
 ### What a tool name looks like
 
-The agent calls tools by name. The canonical tool name format:
+The agent calls tools by name. The canonical name format:
 
 | Type | Format | Example |
 |---|---|---|
@@ -1131,45 +906,65 @@ The agent calls tools by name. The canonical tool name format:
 | MCP tool | `mcp://{server}/{tool}` | `mcp://filesystem/read` |
 | Custom tool | `custom:{name}` | `custom:my_tool` |
 
-The policy matcher is name-based. The SDK sends the tool name to the
-gate, the gate checks it against every active ToolBlock policy, and
-the verdict comes back as `allow`, `block`, or `require_approval`.
+The matcher sees the tool name and nothing else. A rule is about
+which tool runs, not what it is called with.
 
-### How to write the patterns
+### Pattern syntax
 
-Each entry in a ToolBlock policy is one of:
+`*` is the only metacharacter. `|` separates alternatives.
 
-- **Exact name** — `"stripe.charge"` blocks only that one tool.
-- **Glob** — `"send_*"` blocks anything starting with `send_`.
-- **`*` alone** — blocks everything.
+| Pattern | Matches | Does not match |
+|---|---|---|
+| `stripe.charge` | exactly `stripe.charge` | `execute_stripe.charge` |
+| `send_*` | every name starting with `send_` | `resend_email` |
+| `bash.*` | `bash`, `bash.foo`, `bash.foo.bar` | `bashful` |
+| `*.drop_*` | `s3.drop_table` | `s3.execute_drop` |
+| `bash\|sh` | `bash` or `sh` | `bashful` |
+| `*` | every tool | — |
 
-Each entry is capped at **4096 bytes**. The cap exists because the
-matcher scans every pattern on every gate call — a 10 MB pattern
-would burn CPU on each call.
+The rules behind the table:
 
-The matcher runs case-insensitively against the canonical tool name.
+- A pattern with no `*` is an **exact match**. It is never a
+  substring match.
+- A pattern with **one** `*` is an anchored prefix and/or suffix.
+  `db.drop_*` matches `db.drop_table` and nothing else.
+- A pattern with **two or more** `*` matches when every literal
+  segment appears in the name, in order.
+- `prefix.*` matches the bare prefix as well as its dotted
+  continuations, so one pattern covers a whole namespace.
+- `|` splits a pattern into alternatives. Each alternative is
+  evaluated on its own.
+- `**` matches nothing. `?` is a literal character, not a
+  single-character wildcard.
+- An empty pattern matches nothing.
+- Matching is **case-sensitive**. Tool names are canonical lowercase,
+  so `BASH` does not match `bash`.
+
+Each entry is capped at **4096 bytes**. The cap bounds the work the
+matcher does on every gate call.
 
 ### What a ToolBlock policy does
 
-A ToolBlock policy **blocks** tool calls whose name matches one of
-its patterns. There is no `action = require_approval` field on a
-ToolBlock — for "I want a human to approve before this tool runs",
-create an **approval rule** instead (see
-[Human approval](#32-human-approval)). The two are separate rule
-objects; ToolBlock and approval rules don't share a configuration
-schema.
+A `ToolBlock` policy **blocks** tool calls whose name matches one of
+its patterns.
 
-ToolBlock is **always Hard**: it never lets through, regardless of
-the budget's `enforcement_mode`. See
-[Reliability matrix](#21-circuit-breaker).
-If the gate cannot evaluate the ToolBlock check (Redis or policy
-cache unavailable), it fails closed — `403 TOOL_BLOCKED` (SDK
-`error_code = "NR-T001"`). The agent never runs an unverified
-sensitive operation.
+ToolBlock is **always hard**. It never lets a call through, whatever
+the budget's `enforcement_mode` says, and it fails closed: if the
+gate cannot evaluate the check, the call is refused with HTTP 403
+`TOOL_BLOCKED` (SDK `error_code = "NR-T001"`). The agent never runs
+an unverified sensitive operation. See
+[Policies → Fail closed](#22-policies).
 
-ToolBlock and approval rules are distinct rule objects — they don't
-share a configuration schema. A ToolBlock policy always *blocks*; to
-require human review first, use an approval rule instead.
+There is no `action = require_approval` field on a `ToolBlock`. To
+require human review first, create an **approval rule** instead —
+see [Human approval](#32-human-approval). The two are separate rule
+objects and share no configuration schema.
+
+The pattern list lives under the `tool_pattern` key of the policy
+config. The `blocked_tools` and `tools` keys are also accepted, and
+their entries join the same list. A fourth key,
+`parameter_conditions`, adds argument-level conditions: such a row
+blocks only when the pattern matches **and** the condition holds.
 
 ### A worked example
 
@@ -1181,19 +976,17 @@ You want to:
 - Allow read-only operations (`tavily_search`, `read_file`)
 - Block destructive operations (`db.drop`, `stripe.charge`)
 - Require approval for any outbound communication (`send_email`)
-- Allow normal DB writes (`db.write`) but block `db.drop`
+- Allow normal DB writes (`db.write`)
 
-Two ToolBlock policies and one approval rule:
-
-!!! info "The example below shows the request payload shape — what you POST to the dashboard / API. It's not the storage schema, just the public input format."
+One ToolBlock policy and one approval rule:
 
 ```json title="tool_block_policy.json"
 {
   "policies": [
     {
       "name": "Block destructive",
-      "type": "ToolBlock",
-      "scope": "Org",
+      "policy_type": "tool_block",
+      "scope": "org",
       "config": {
         "tool_pattern": ["db.drop", "stripe.*"]
       }
@@ -1210,371 +1003,222 @@ Two ToolBlock policies and one approval rule:
 }
 ```
 
-`send_email` now triggers the approval flow (a human clicks
-**Approve** in the dashboard before the call goes through). `db.drop`
-and `stripe.charge` are blocked outright. The two policies do not
-interact — ToolBlock checks and approval-rule checks are independent
-paths in the gate.
+`policy_type` takes `budget_limit`, `rate_limit` or `tool_block`.
+`scope` takes `org` or `workflow`. Note the two spellings: a ToolBlock
+policy config uses the singular `tool_pattern`, an approval rule uses
+the plural `tool_patterns`.
+
+`send_email` triggers the approval flow — a human clicks
+**Approve** in the dashboard and the call goes through. `db.drop` and
+`stripe.charge` are blocked outright. The two do not interact:
+ToolBlock checks and approval-rule checks are independent paths in
+the gate.
 
 ### Validation at policy creation
 
-The dashboard rejects invalid patterns at save time:
+The dashboard rejects a malformed ToolBlock config at save time with
+HTTP **422** and the wire code `INVALID_FIELD`:
 
-| Error | Cause | Fix |
-|---|---|---|
-| `400 bare_string_pattern` | `"pattern": "send_*"` instead of `"pattern": ["send_*"]` | Always use an array, even for one entry |
-| `400 pattern_too_long` | An entry longer than the per-pattern byte cap | Split into multiple patterns |
-| `400 invalid_glob` | Contains control characters | Remove `\n`, `\r`, `\t` |
+| Rejected | Why |
+|---|---|
+| A bare string instead of an array | `"tool_pattern": "send_*"` must be `"tool_pattern": ["send_*"]` |
+| The plural key `tool_patterns` | The canonical key is singular: `tool_pattern` |
+| An unknown key, such as `block_tools` | A typo would otherwise create a rule that blocks nothing |
+| An empty pattern, or an empty config | It would match nothing, or everything |
+| An entry over 4096 bytes | The per-entry byte cap |
+| A pattern containing control characters | Remove `\n`, `\r`, `\t` |
 
 ### Plan gating
 
-`ToolBlock` policies require the Custom Policies feature, which is
-on **Growth+** plans. Lite and Starter can have `BudgetLimit` and
+`ToolBlock` policies need the Custom Policies feature, which is on
+**Growth+** plans. Lite and Starter can have `BudgetLimit` and
 `RateLimit` policies, but not ToolBlock.
 
-**Approval rules** (separate from ToolBlock) are gated by the
-`approvals` plan feature. The per-tier cap matches:
-
-| Plan | Approval rules allowed | Why |
-|---|---|---|
-| Lite | 0 | `approvals` feature disabled |
-| Starter | 0 | `approvals` feature disabled (server-side invariant: `approval_rules > 0 ⇒ approvals == true`) |
-| Growth | 20 | `approvals` enabled |
-| Scale | unlimited | `approvals` enabled, no cap |
-| Enterprise | unlimited | `approvals` enabled, no cap |
-
-The gate enforces `approval_rules = 0` server-side on Lite and
-Starter — even if you mint a key on a higher tier and downgrade,
-existing rules are kept (for audit) but no new rule can be created
-until the plan is upgraded back.
-
-On Lite / Starter, the dashboard shows ToolBlock policy creation
-greyed out with an "Upgrade" link.
+**Approval rules** are gated by the Approvals feature, which is on
+Growth+ as well. On Lite and Starter the dashboard shows approval
+rule creation greyed out with an **Upgrade** link, and the server
+refuses the change.
 
 ### How to debug a block you didn't expect
 
-If your agent reports `error_code = "NR-T001"` (wire `TOOL_BLOCKED`) on
-a call you think should be allowed:
+If your agent reports `error_code = "NR-T001"` (wire `TOOL_BLOCKED`)
+on a call you think should be allowed:
 
 1. Open the workflow in the dashboard.
 2. Click **Effective policy**. The merged set shows every ToolBlock
    pattern that could match.
-3. Open the **Audit log** and filter by `decision = block` and
-   the tool name. The log shows which pattern matched.
-4. If a pattern is too broad (`*` matches everything), narrow it
-   in the policy editor.
-5. If the pattern is wrong entirely, deactivate the policy and
-   re-create it with the correct list.
+3. Open the **Audit log** and filter by `decision = deny`. The
+   **Matched rule** field names the pattern that matched.
+4. If a pattern is too broad (`*` matches everything), narrow it in
+   the policy editor.
+5. If the pattern is wrong, deactivate the policy and re-create it
+   with the correct list.
 
 ### See also
 
-- [Policies](#22-policies) — the dashboard view, aggregation rules,
-  and most-restrictive-wins semantics
+- [Policies](#22-policies) — the dashboard view and the aggregation
+  rules
 - [Sensitive tools](#24-sensitive-tools) — the policy-driven way to
-  express "this tool needs review" (not a built-in SDK list)
+  express "this tool needs review"
 - [Tool catalog](#75-tool-catalog) — common tool
   names with risk ratings
 - [Human approval](#32-human-approval) — the approval-rule path,
   distinct from ToolBlock
 
-!!! info "Deep dive"
 
-    A ToolBlock check operates on the canonical tool name and nothing
-    else. The gate resolves the effective tool list from the request
-    before evaluating anything, so a call carrying one tool and a call
-    carrying a list are treated alike. Patterns are collected from the
-    `tool_pattern`, `blocked_tools` and `tools` keys, trimmed and
-    de-duplicated, so `"bash"` and `"bash "` collapse into one entry.
-    Matching runs case-insensitively against the canonical name, and
-    control characters in either the incoming tool name or a pattern
-    are rejected before the check runs.
-
-    The pattern language is small. `*` is the only metacharacter: it
-    matches any run of characters, so `send_*` matches anything
-    starting with `send_` and `bash.*` matches the bare name `bash`
-    as well as dotted continuations like `bash.foo` and `bash.foo.bar`.
-    A pattern with several stars, such as `*.drop_*`, matches when
-    every literal segment appears in order, which is why `*.drop_*`
-    matches `s3.drop_table` but not `s3.execute_drop`. `|` collapses
-    several alternatives into a single entry. Neither `?` nor `**`
-    is supported — both are matched as ordinary characters — and a
-    bare literal matches only itself, never a substring. Each entry is
-    capped at 4096 bytes, bounding the work the matcher does on every
-    gate call.
-
-    ToolBlock is always hard, independent of a budget's enforcement
-    mode, and it is evaluated ahead of rate-limit and budget
-    accounting, so a blocked call never receives a budget envelope. If
-    the check cannot be evaluated at all, the gate fails closed. A
-    block reports the pattern that fired, which is what the audit log
-    records, so an unexpected block can always be traced to one entry.
-
-    Validation at creation time rejects the configurations that would
-    otherwise mean "block nothing": an empty string, an empty array,
-    an empty config object, and the plural `tool_patterns` key. A typo
-    such as `block_tools` or `blocked_tool` is an error rather than a
-    silently ignored rule. Because `*` on its own blocks everything,
-    narrowing a policy is the operator's responsibility, and the
-    merged effective set is what the dashboard shows before a change
-    ships. Matching never inspects tool arguments: a rule is about
-    which tool runs, not what it is called with.
-
-
-title: Sensitive tools
-maturity: stable
-description: How `@protect` plus the server-side ToolBlock policy enforce "this tool needs review" without any SDK-side sensitive list.
 ## 2.4 Sensitive tools
 
 A **sensitive tool** is one that should never run without a human
 paying attention. Sending an email, moving money, deleting a record —
-all of these have consequences the agent can't easily undo.
+these have consequences the agent cannot easily undo.
 
-The way to express "this tool needs review" in NullRun is a
-**[ToolBlock policy](#23-tool-policies)** — a glob pattern that fails
-the gate at `/gate` evaluation time, regardless of the SDK's local
-context. This page covers the *recommended* patterns and how to wire
-them.
+NullRun ships **no SDK-side list of sensitive tools** and no decorator
+that marks a function as sensitive. A built-in list would be silently
+wrong for every tool it does not name. You express sensitivity with
+server-side rules instead, and the gate evaluates them on every
+protected call.
 
-!!! info "The canonical entry point is `@protect`"
-    Every protected tool is automatically eligible for ToolParameters
-    Approval Rules — `@protect` ships `tool_name + args + kwargs` on
-    the wire, and the backend reads argument values out of `kwargs`
-    by `param_name`. No SDK-side extractor or extra decorator is
-    required.
+Two mechanisms, and they answer different questions:
 
-!!! info "ToolBlock vs typed predicates"
-    Two complementary mechanisms, often confused:
+| Mechanism | Question it answers | Outcome |
+|---|---|---|
+| **[ToolBlock policy](#23-tool-policies)** | "May this tool run at all?" | The call is blocked. Always hard, fails closed. |
+| **[Approval rule](#32-human-approval)** | "May this tool run this time?" | The call parks until a human approves. |
 
-    - **`ToolBlock` (server-side)** — a policy rule evaluated by
-      the gate on every `/gate` call. The gate fails-CLOSED if it
-      cannot reach Redis or the policy cache to evaluate. This is
-      the canonical "this tool is forbidden" mechanism.
-    - **Typed predicates (`money_amount`, `tool_parameters`)** —
-      built into approval rules in the dashboard. The gate
-      evaluates a DNF over argument values, bound to the
-      SHA-256 `action_digest` for tamper-proof approval. Use these
-      for finer-grained rules ("refunds over $500 need
-      approval", "sends to non-internal recipients need review").
+Use ToolBlock for hard rules such as "never call `bash`". Use an
+approval rule when the answer depends on the call's arguments, such
+as "refunds over $500 need approval".
 
-    Use `ToolBlock` for hard rules ("never call `bash`"). Use typed
-    predicates when the rule depends on the call's arguments.
+### The two rules in detail
 
-### What a sensitive tool is, in policy terms
+#### ToolBlock — hard, by tool name
 
-There is no built-in tool catalogue shipped by the SDK — every
-enforcement decision is evaluated by the gate on every `/gate` call,
-so you can't accidentally miss a tool you didn't register locally.
-You express "sensitive" with one of two complementary mechanisms:
+A ToolBlock policy is a list of glob patterns over the canonical tool
+name. The gate matches the name against every active policy and
+blocks on a hit. It never inspects the arguments, so it cannot tell
+two calls to the same tool apart.
 
-- **`@protect` (SDK-side, canonical)** — wraps a function and
-  ships `tool_name + args + kwargs` on the wire. The backend
-  reads argument values out of `kwargs` by `param_name` for
-  ToolParameters approval rules. No SDK-side extractor is needed.
-- **`ToolBlock` (server-side)** — a policy rule evaluated by the
-  gate. The gate fails-CLOSED if it cannot reach Redis or the policy
-  cache to evaluate. Use this for hard rules — "never call `bash`".
-- **Approval rules with typed predicates (server-side)** — for
-  finer-grained control, an approval rule references `param_name`
-  and the gate evaluates a DNF of up to 5 named parameters against
-  Equals / OneOf / NumericRange / Regex / Exists matchers. The
-  grant is bound to the SHA-256 `action_digest` of the live
-  payload; the post-approval `/execute` re-check refuses on
-  drift.
+ToolBlock is always hard and fails closed: if the gate cannot
+evaluate the check, the call is refused with HTTP 403
+`TOOL_BLOCKED` (SDK `error_code = "NR-T001"`) and your function body
+does not run.
 
-For the typed-predicate wiring, see
-[Human approval → typed predicates](#32-human-approval).
+#### Approval rules — soft, by tool name and arguments
 
-Recommended starter patterns (see
-[Tool catalog → Recommended ToolBlock starter list](#75-tool-catalog)
-for the maintained list):
+An approval rule matches tool patterns and adds a typed predicate
+over the call's arguments. When it fires, the gate returns
+`require_approval` and the SDK parks until the operator clicks
+Approve or Deny. The grant is bound to a SHA-256 digest of the exact
+payload, so a changed amount or changed arguments after the approval
+is refused. See
+[Human approval → Typed predicates](#32-human-approval).
+
+### Recommended starter patterns
+
+The exact name comes from your MCP server or framework integration.
+See the
+[tool catalog](#75-tool-catalog)
+for the maintained list with risk ratings.
 
 | Category | Pattern examples |
 |---|---|
 | Money | `mcp://payments/refund*`, `mcp://stripe/charge`, `mcp://stripe/refund` |
-| Email & messaging | `mcp://gmail/send`, `mcp://slack/post`, `send_email` |
+| Email and messaging | `mcp://gmail/send`, `mcp://slack/post`, `send_email` |
 | Database destructive | `mcp://postgres/drop_table`, `mcp://postgres/delete_row`, `execute_sql` |
 | External API writes | `mcp://*/post`, `mcp://*/put`, `mcp://*/delete` |
-| Files & storage | `mcp://s3/delete`, `file_delete`, `bash` |
+| Files and storage | `mcp://s3/delete`, `file_delete`, `bash` |
 | Admin | `mcp://admin/delete_user`, `mcp://admin/disable_user` |
 
-These are the canonical tool names a policy matches against. The
-**exact name** comes from your MCP server / framework integration —
-see the tool catalog for the curated list with risk ratings.
+### What a ToolBlock rule does not match
 
-### Why the SDK does not ship a built-in list
-
-A built-in "sensitive tools" SDK list would force every framework to
-register its tools against NullRun's expectations — and would be
-silently wrong for any tool not on the list. The current model
-inverts this:
-
-- You write a ToolBlock policy that names the tools you care about.
-- The policy is evaluated server-side on every `/gate` call.
-- The decision is returned to the SDK as `TOOL_BLOCKED` (403); the SDK
-  raises `NullRunToolBlockedError` with `error_code = "NR-T001"`.
-
-The gate **does not inspect tool arguments** — it cannot distinguish
-two calls to the same tool by payload. If you want a narrower rule
-(e.g. "block refunds over $500"), use a typed `tool_parameters`
-predicate: the SDK ships `kwargs` on the wire and the gate evaluates
-a DNF of up to 5 named parameters against Equals / OneOf /
-NumericRange / Regex / Exists matchers. See
-[Human approval → typed predicates](#32-human-approval).
-
-### Why ToolBlock is enforced at the gate
-
-ToolBlock is enforced at the gate: sensitive operations never run
-when the policy engine is unreachable. If the gate returns
-`403 TOOL_BLOCKED` (SDK `error_code = "NR-T001"`), the SDK raises
-before your function body executes. ToolBlock is **always Hard**,
-regardless of the budget's `enforcement_mode`.
-
-### What's NOT in a ToolBlock policy
-
-A ToolBlock policy matches **tool name only** — not:
+A ToolBlock rule sees the tool name only. It does not match:
 
 - prompt content or semantic intent
-- the recipient of a payment (use a typed predicate instead)
-- tool arguments beyond the `kwargs` the SDK ships on the wire
-- the tool's runtime sandbox (that's your infrastructure concern)
+- the recipient of a payment
+- any argument beyond the name
+- the tool's runtime sandbox — that is your infrastructure's job
 
-Read operations are never sensitive regardless of the tool. The
-canonical name alone decides.
+A read-only operation needs no special treatment. The canonical name
+alone decides.
 
-### Where the sensitive list lives
+### Where to write the rule
 
-You write the policy in the dashboard under **Policies** (sidebar
-under **Governance**). Click **New policy**, pick **Tool block** as
-the policy type, and the modal shows the **Tool pattern** field
-where you enter the glob(s). The dashboard shows you the canonical
-tool name for every framework integration. Your policy applies to:
+You write the policy in the dashboard under **Governance → Policies**.
+Click **New policy**, pick **Tool block**, and enter the pattern(s)
+in the **Tool pattern** field. The dashboard shows the canonical tool
+name for every framework integration.
 
-- All workflows under the org (default)
-- A specific workflow (scope to `workflow_id`)
-- A specific API key (scope to `api_key_id`)
+A policy applies to:
 
-Per the [aggregation rules](#22-policies):
-ToolBlock patterns **union** across applicable policies — every
-pattern that matches fires.
+- every workflow under the organization, by default
+- one workflow, scoped to it
+
+Patterns **union** across every applicable policy — every pattern that
+matches fires. See
+[Policies → Aggregation](#22-policies).
 
 ### Audit trail
 
-When a sensitive tool is blocked, the **audit log** records the
-block with reason `TOOL_BLOCKED` (SDK `error_code = "NR-T001"`),
-the pattern that matched, and the workflow + api_key + tool_name.
-The audit log is hash-chained — see
-[Audit records](#43-error-handling).
+When a sensitive tool is blocked, the **audit log** records the block.
+The row carries the decision `deny`, the reason code `TOOL_BLOCKED`,
+the pattern that matched, the policy that matched and the tool name.
+The log is hash-chained — see
+[Error handling → Audit trail](#43-error-handling).
 
-This gives you a complete audit trail of every blocked attempt,
-regardless of whether the block came from your policy or from the
-default `TOOL_BLOCKED` rejection of an unknown tool name.
-
-For sensitive tools you want to allow after explicit human review,
-pair them with an **approval rule** instead of removing them from
-the blocking surface. The approval row in the dashboard gives you
-the audit trail, and the SHA-256 `action_digest` ensures the grant
-is bound to the exact action payload the SDK sent on `/gate`. See
-[Human approval](#32-human-approval).
+For a sensitive tool you want to allow after human review, pair the
+approval rule with the ToolBlock rule rather than dropping it from
+the blocking surface. The approval row carries its own audit trail,
+and the digest binds the grant to the exact payload the agent sent.
 
 ### See also
 
-- [Tool policies](#23-tool-policies) — the actual rule structure
+- [Tool policies](#23-tool-policies) — the pattern syntax
 - [Tool catalog](#75-tool-catalog) — recommended
   patterns with risk ratings
-- [Human approval](#32-human-approval) — the safer
-  alternative to disabling a ToolBlock rule
-- [Decorators & context managers](#72-decorators-extractors) —
-  `@protect` wire payload and how the gate receives `kwargs`
-- [Circuit breaker → fail-CLOSED matrix](#21-circuit-breaker)
-
-!!! info "Deep dive"
-
-    A pattern is not a regular expression. Alternatives are
-    separated by a pipe, and a pattern with a single wildcard
-    matches both the bare name and any dotted continuation past
-    it, which is what lets one pattern cover a whole server's
-    namespace. A pattern with several wildcards splits on each one
-    and requires the literal segments between them to appear in
-    order. Matching sees the tool name and nothing else, so two
-    calls to the same tool are indistinguishable at this step
-    whatever their payloads.
-
-    Patterns union across every applicable policy at both org and
-    workflow scope. The most-restrictive-wins rule applies within
-    a single policy type, not across types; across types the gate
-    takes the first outcome other than allow in its fixed order,
-    and tool blocking is evaluated ahead of budget reservation, so
-    a blocked call never receives a spending envelope.
-
-    The block is unconditional. A policy's enforcement mode does
-    not soften it, and when the policy set for a key cannot be
-    read, the call is treated as blocked rather than allowed —
-    the trade-off is a refusal that has to be retried over a
-    silent pass that goes unnoticed. Enforcement also applies on
-    the cost-tracking path, so an SDK that does not declare its
-    tools in the request still has the same rules applied before
-    the call's cost is recorded.
-
-    Rules that depend on arguments are a different mechanism. A
-    tool block cannot inspect a refund amount or a recipient;
-    that needs an approval rule with typed predicates, where the
-    grant is bound to a digest of the exact payload and a later
-    change to that payload invalidates the grant.
+- [Human approval](#32-human-approval) — the safer alternative to
+  removing a ToolBlock rule
+- [Decorators and context managers](#72-decorators-context-managers) — the
+  `@protect` decorator and the payload it sends
 
 
-title: API keys
-maturity: stable
-description: Scopes, two-phase rotation, revocation, and the binding between an API key, its workflow, and its policy cache.
 ## 2.5 API keys
 
 An **API key** is how your code authenticates with the NullRun
-gateway. The key identifies a single workflow, gives the agent the
-permissions it needs, and (optionally) expires on a date you choose.
+gateway. The key identifies one workflow, carries the scopes the key
+may use, and optionally expires on a date you choose.
 
-### Where you see it in the dashboard
+### Where you see it
 
-API keys live under **Access → API keys** in the left sidebar. The
-counter at the top of the page (`N / <plan-cap>`) tells you how many
-keys your org has versus your plan's cap. The page shows every key
-with its name, workflow, last-used timestamp, and expiration date.
+API keys live under **Access → API keys** in the sidebar. The counter
+at the top of the page shows how many keys your organization has
+against your plan's cap.
 
-Per-plan key cap: Lite = 10, Starter = 15, Growth = 100,
-Scale = 350, Enterprise = unlimited (see
-[Billing & Plan → Per-tier caps](#55-billing-plan)). The
-cap is enforced server-side — the create handler rejects with
-`plan_limit_exceeded` once you hit it.
+| Plan | Keys |
+|---|---|
+| Lite | 10 |
+| Starter | 15 |
+| Growth | 100 |
+| Scale | 350 |
+| Enterprise | Unlimited |
 
-### The mental model
-
-Each workflow needs at least one API key to run. The key is what the
-SDK uses to identify itself when it talks to the gateway. The gateway
-uses the key to look up:
-
-- Which workflow is calling (so it can apply the right policies)
-- Which permissions the key has (`gate` / `execute` / `track` / `verify`)
-- Whether the key is still valid (not revoked, not expired)
-
-You mint keys through the dashboard, paste them into your
-application's environment, and the SDK takes care of the rest.
+The cap is enforced by the server. Creating a key past the cap is
+refused with `plan_limit_exceeded`.
 
 ### How to create a key
 
 1. **Access → API keys → New API key**.
-2. Pick a workflow to bind the key to. The dropdown lists every
-   workflow in your org. (Each key is **workflow-scoped** — one key
-   represents one agent run, not one workspace.)
-3. Pick an **Expires** window: **Never** (default), **24 hours**,
-   **7 days**, **30 days**, or **90 days**. Keys without an
-   expiration are valid until revoked.
-4. Click **Create**.
+2. Give the key a **name**. It shows up in the list and in the audit
+   log, so make it descriptive.
+3. Pick the **workflow** the key belongs to. A key belongs to exactly
+   one workflow, and the gateway uses that binding to apply the right
+   policies. The server refuses a key with no workflow.
+4. Pick an **expiration**: **Never**, **24 hours**, **7 days**,
+   **30 days**, or **90 days**. A key with no expiration works until
+   you revoke it.
+5. Click **Create**.
 
-Scopes (`gate` / `execute` / `track` / `verify`) are auto-assigned
-to every new key and are not user-customizable in the dialog — the
-gateway needs all four to do its job.
-
-The dashboard shows the new key value **once** — a string starting
-with `nr_live_...`. Copy it into your secret manager **immediately**.
-The dashboard will never show it again.
+The dashboard shows the key value **once**. Copy it into your secret
+manager immediately.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/api-keys-list-light.png"
@@ -1596,192 +1240,165 @@ The dashboard will never show it again.
   <figcaption class="nr-shot__caption">API keys · New key dialog</figcaption>
 </figure>
 
-### What's in the response
+### What you get back
 
-When you create a key, the dashboard shows:
+| Field | What it is |
+|---|---|
+| **Key** | The public value, starting with `nr_live_`. The SDK sends it on every request. |
+| **HMAC secret** | A second secret that signs requests. The SDK reads it from `NULLRUN_SECRET_KEY`. |
+| **Prefix** | A short non-secret fragment of the key. It identifies the key in list views and logs. |
+| **Workflow** | The workflow the key is bound to. |
+| **Scopes** | The permissions the key carries. |
 
-- **Key** — the public value (`nr_live_xxx...`). Use this in your SDK.
-- **HMAC secret key** — a second 32-byte hex string for request
-  signing. Treat it like a password; never commit it to source
-  control. The SDK stores it under `NULLRUN_SECRET_KEY`.
-- **Key prefix** — the first 12 characters, used in list views.
-- **Workflow** — the bound workflow (you picked this on creation).
-- **Scopes** — the permissions you granted.
+Both secrets are shown exactly once. After you close the dialog they
+are gone. If you lose them, rotate the key.
 
-The dashboard shows the full key and secret **exactly once**. After
-you close the modal, the values are gone forever. If you lose them,
-you must rotate the key (see below).
+### Using the key in the SDK
 
-### How the SDK uses the key
-
-The SDK needs two values from you:
+The SDK reads two environment variables:
 
 ```bash title="env"
 export NULLRUN_API_KEY=nr_live_xxx...
 export NULLRUN_SECRET_KEY=...
 ```
 
-The `api_key` is the public value the SDK sends on every request.
-The `hmac_secret` is used for HMAC-SHA256 request signing — the
-gateway verifies every request came from a holder of the secret.
+```python
+import nullrun
 
-In production deployments, HMAC is required. Without it, every SDK
-request returns 401.
+nullrun.init()  # reads NULLRUN_API_KEY from the environment
 
-The runtime is created lazily on the first `@protect` call from
-`NULLRUN_API_KEY`. Set `NULLRUN_API_KEY` (and `NULLRUN_SECRET_KEY`
-for HMAC) in the environment before the first protected call runs:
-
-```bash title="env"
-export NULLRUN_API_KEY=nr_live_xxx...
-python my_agent.py
+@nullrun.protect
+def my_agent(prompt):
+    return call_llm(prompt)
 ```
 
-The HMAC secret is read from `NULLRUN_SECRET_KEY` in the
-environment. It is set once per process.
+`NULLRUN_API_URL` overrides the gateway URL if you point the SDK at
+your own deployment.
+
+The API key identifies the caller. The HMAC secret proves the request
+came from the holder of that secret: the SDK signs the request and the
+gateway verifies the signature. Set the secret whenever the key has
+one.
+
+The runtime is created lazily on the first `@protect` call. Set the
+environment variables, then start your agent.
 
 ### Scopes
 
-Each key has a list of permissions — what it can do. Only the four
-values below are accepted; any other value is rejected at the API
-key creation step.
+A scope says what a key may do. Every new key gets the full set.
 
 | Scope | What it allows |
 |---|---|
-| `gate` | Call `/api/v1/gate` (the policy decision endpoint). Required for any `@protect`-wrapped call. |
-| `execute` | Call `/api/v1/execute` (the post-approval re-check after a `require_approval` decision). |
-| `track` | Call `/api/v1/track` (the spend tracking endpoint). Required for any LLM call. |
-| `verify` | Call `/api/v1/auth/verify` (the auth handshake on first use). Almost always needed. |
-| `*` | Wildcard — all of the above. The default if you don't specify. |
+| `gate` | Ask the gateway for a policy decision on a protected call |
+| `execute` | Re-check a call after an approval was granted |
+| `track` | Report the token counts and cost of a completed call |
+| `verify` | Complete the authentication handshake on first use |
+| `*` | All of the above |
 
-For most agents, the defaults work. A telemetry-only ingestor needs
-just `track`. A read-only CI checker needs just `verify`.
+Most agents need all four. A telemetry-only ingestor needs `track`.
+A read-only checker needs `verify`.
 
-### How to rotate a key
+### Rotating a key
 
-Rotating creates a new key and invalidates the old one. In-flight
-calls finish normally.
+Rotation issues a **new key value**. The new key keeps the old key's
+name, scopes, workflow binding and HMAC secret, so it does the same
+job — only the value changes.
 
-### How to revoke a key
+The old key keeps working for a grace window. Deploy the new value
+first, confirm the agent still runs, then revoke the old key. Nothing
+breaks in between.
 
-Revoking means deleting the key. Useful when:
+```bash title="shell"
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/api-keys/$KEY_ID/rotate" \
+  -H "Authorization: Bearer $NULLRUN_ADMIN_TOKEN"
+```
 
-- The key was leaked publicly
-- The agent is decommissioned
-- The workflow is being deleted
+The response carries the new key value. It is shown once.
 
-Use `POST /api/v1/orgs/{org_id}/api-keys/{key_id}/rotate` first to
-generate a replacement, then `DELETE` the old one.
+### Revoking a key
 
-The key stops working immediately — no grace period.
+Revoking stops the key. The next request with that key is refused
+with `401 API_KEY_REVOKED`. There is no grace period.
+
+Revoke a key when:
+
+- the key leaked
+- the agent behind it is decommissioned
+- the workflow it belongs to is going away
+
+```bash title="shell"
+curl -X DELETE "https://api.nullrun.io/api/v1/orgs/$ORG_ID/api-keys/$KEY_ID" \
+  -H "Authorization: Bearer $NULLRUN_ADMIN_TOKEN"
+```
+
+Revoking is an audit event. The audit log records who revoked the key
+and when.
 
 ### Listing and searching
 
-The **API keys** page lists every key in your org. You can search
-by name (substring match), filter by workflow, or filter by status
-(active / revoked).
+The **API keys** page lists every key in your organization. You can
+search by name, filter by workflow and filter by status.
 
 Each row shows:
 
-- **Name** — what you set when creating
-- **Workflow** — the bound workflow
-- **Prefix** — first 12 characters of the key (`nr_live_abc...`)
-- **Last used** — when the SDK last made a request with this key
-- **Expires** — when the key stops working (or "Never")
-- **Status** — active / revoked
+- **Name**
+- **Workflow**
+- **Prefix**
+- **Last used** — when the key last made a request
+- **Expires** — the expiry date, or "Never"
+- **Status** — active or revoked
 
-Click a row to see full details. The full key value is never shown
-again — only the prefix.
+The full key value is never shown again. Only the prefix.
 
 ### Common questions
 
 #### "How many keys do I need?"
 
-One per workflow, minimum. For production:
+One per workflow at minimum. For production, one key per environment
+and one key per service. That way you can revoke staging without
+touching production, and rotate one instance without restarting the
+others.
 
-- **One key per environment** — separate keys for production,
-  staging, dev. Makes it easy to revoke staging without affecting
-  production.
-- **One key per service** — if your agent runs in three
-  containers, give each its own key. Makes it easy to rotate one
-  without restarting the others.
+#### "Can one key serve two workflows?"
 
-Do not disable the gate in production — you'll lose enforcement.
+No. A key is bound to one workflow when it is created. If the same
+agent logic runs against two workflows, create two keys and pick
+between them.
 
-#### "Can I share a key between two workflows?"
+#### "What happens when a key expires?"
 
-No. Each key is bound to exactly one workflow at creation time.
-If you need the same agent logic against two workflows (for example,
-A/B testing), create two keys and switch between them based on your
-A/B routing.
-
-#### "What happens when my key expires?"
-
-The key stops working at the expiration timestamp. Calls return
-`401 api_key_expired`. Rotate the key (which generates a new secret
-but keeps the same key value) or create a new key entirely.
+Requests with that key stop working. The error is `401
+API_KEY_EXPIRED`. Rotate to get a new value, or create a new key.
 
 #### "Can I see who used a key?"
 
-The **Last used** column shows the most recent activity. The audit
-log shows every individual call. The audit log records the
-key prefix, not the full key — so you can correlate usage without
-exposing the secret.
+The **Last used** column gives you the most recent activity. The
+audit log gives you every call, keyed by the key's prefix rather than
+its full value.
+
+#### "Should I ever disable the gate?"
+
+No. Without a protected call there is no decision, so nothing is
+enforced and nothing is recorded.
 
 ### See also
 
 - [Workflows](#41-workflow-context) — what the key is bound to
+- [Configuration](#15-configuration) — the
+  environment variables
 - [Troubleshooting](#91-troubleshooting) — "why am I getting 401?"
-- [Configuration](#15-configuration) — env vars
-  for keys
-
-!!! info "Deep dive"
-
-    A key is two independent secrets minted together at creation: the
-    raw key that the SDK sends on every request, and a separate signing
-    secret used for HMAC request signing. The two are generated
-    independently and neither is derived from the other. A signature
-    covers the timestamp, the key, and a hash of the request body, and
-    the gateway compares it in constant time. Because the timestamp is
-    part of the signed material, replay protection is an age check
-    against a sliding freshness window rather than stored nonces.
-
-    Both secrets are shown exactly once. Losing the raw key forces a
-    rotation; losing the signing secret forces regeneration even when
-    the raw key is intact. Signing secrets are multi-version: several
-    versions remain valid at the same time, so an SDK still signing
-    with the previous secret keeps working while everything else has
-    already moved to the new one. Rotation has no downtime window.
-
-    Revocation is two-phase. The key first enters a rotating state,
-    requests already in flight are allowed to finish, and only then
-    does the key become terminal, so a long-running check cannot lose
-    its reservation partway through. If in-flight accounting is
-    unavailable, the request is rejected rather than admitted: the
-    drain guarantee cannot be made, so the call fails closed.
-
-    Key identifiers are minted server-side and bound to the owning
-    organization; caller-supplied identifiers are rejected. A key is
-    bound to exactly one workflow at creation, and the full set of
-    scopes is assigned automatically rather than chosen. Last-used
-    timestamps are refreshed on every authenticated request.
 
 
 # 3. Cost & safety
 
 
-title: Budgets
-maturity: stable
-description: Hard and soft budget enforcement, billing-period rollover, and the reserve / consume invariant that protects against implicit re-reservation.
 ## 3.1 Budgets
 
-A **budget** is the most important number on the dashboard. It's the
-maximum amount of money a workflow is allowed to spend in a billing
-period. Set it too low and your agent stops working. Set it too high
-and a runaway agent burns through real money before you notice.
+A **budget** is the maximum amount of money a workflow may spend in
+one billing period. Set it too low and your agent stops working. Set
+it too high and a runaway agent burns through real money.
 
-This page covers what the budget controls, how the dashboard shows
-it, and what happens at each boundary.
+Amounts are always in **cents**. `$50.00` is `5000`.
 
 ### Where you see it
 
@@ -1796,81 +1413,97 @@ Time to exhaustion         ~16 hours at current rate
 
 Three numbers:
 
-- **Spend this period** — total cents spent since the last period
-  rollover. Resets automatically.
+- **Spend this period** — cents spent since the period started. It
+  resets automatically.
 - **Budget** — the cap. Set this in workflow settings.
 - **Time to exhaustion** — at the current rate of spend, when the
-  budget will run out. Useful for "should I raise the cap?".
+  budget runs out.
 
 ### What the budget covers
 
 The budget covers **spend**, not calls. Calls are rate-limited
 separately — see [Policies](#22-policies).
 
-"Spend" is calculated from token counts reported by your LLM
-provider. The dashboard knows the per-model pricing for every model
-the SDK tracks:
+"Spend" is calculated from the token counts your LLM provider reports
+and the per-model prices the gateway holds:
 
 - **Input tokens** × input rate
 - **Output tokens** × output rate
-- **Cache read** / **cache write** tokens (if your provider exposes
-  them) at their respective rates
-- **Reasoning tokens** for o1/o3-style models at the reasoning rate
+- **Cache read** and **cache write** tokens, at their own rates
+- **Reasoning tokens**, at the reasoning rate
 
-The total spend is the sum across all `@protect` calls inside the
-workflow, across the current period.
+The total is the sum across every `@protect` call in the workflow, for
+the current period.
 
 ### Periods
 
-A "period" is the window after which the spend counter resets.
-NullRun has two period sources:
+A **period** is the window after which the spend counter resets. The
+period comes from the server, not from your agent.
 
 | Plan | Period source | When it resets |
 |---|---|---|
-| **Lite** (free) | Rolling 1-month window anchored at `organizations.created_at` | One month after signup (e.g. signed up Jun 15 → resets Jul 15, Aug 15, …) |
-| **Paid** (Starter / Growth / Scale) | Your billing cycle (Polar subscription) | Set when you subscribed; on renewal |
+| **Lite** (free) | Rolling one-month window anchored at signup | One month after signup (signed up Jun 15 → resets Jul 15, Aug 15, …) |
+| **Paid** (Starter / Growth / Scale) | Your billing cycle | On renewal |
 
-The dashboard shows the period start and end dates next to the
-spend bar. When the period rolls over, the spend counter resets to
-zero and the budget applies fresh.
+The dashboard shows the period start and end dates next to the spend
+bar. When the period rolls over, the counter resets to zero and the
+budget applies fresh.
 
 ### What happens at the boundary
 
 Three scenarios, depending on the workflow's [enforcement
-mode](#22-policies):
+mode](#22-policies).
 
-#### Hard mode (default)
+#### Hard mode
 
 ```
 Spending → $49.95 of $50.00
 Next @protect call:        #2.00 projected
 gate decision:             block
 SDK raises:                 NullRunBudgetError (NR-B004)
-with nullrun.guard():     prints the 4-line dev report, sys.exit(1)
+with nullrun.guard():     prints the developer report, sys.exit(1)
 ```
-<figcaption>Hard mode — the projected cost of the next call exceeds the remaining budget. The gate returns `block` before the model runs.</figcaption>
 
-The agent stops cleanly at the boundary. No partial charge — the
-projected cost is reserved when the gate approves, and the actual
-cost is reported after the LLM returns. If the call is denied, no
-charge happens.
+The agent stops at the boundary. The projected cost of the call is
+reserved while the gate approves it, and the actual cost is booked
+after the LLM returns. A refused call is never charged.
 
 #### Soft mode
 
 Soft mode lets the agent run past its budget when an active chain is
 present, up to the configured overdraft cap
 (`max_overdraft_cents` or `max_overdraft_percent`, whichever is
-lower). The chain returns to standard Hard mode once the cap is
-exhausted. See [Policies → BudgetLimit extra fields](#22-policies)
-for the full configuration contract.
+lower). The chain returns to Hard mode once the cap is exhausted. See
+[Policies → BudgetLimit extra fields](#22-policies).
+
+### Reserve and consume
+
+The gate reserves the projected cost of a call, then books the actual
+cost once the call returns. Three rules hold:
+
+- The counter is **period-bound**. The period comes from the server
+  and is fixed for the call, so a reservation and the later booking
+  always land in the same period.
+- The amount is in **cents**. No floating point, no rounding drift.
+- The booking may exceed the reservation by a **fixed-cent epsilon**
+  only. The default is 1¢, and each policy can set its own
+  `consume_epsilon_cents`. A percentage epsilon is not supported.
+- A retry is safe. The reservation and the later booking are both
+  idempotent, so a retried call reuses the stored result instead of
+  charging twice.
+
+An actual cost above the reservation plus the epsilon is **rejected**:
+the commit returns HTTP **422** with the wire code
+`CONSUME_OVERBUDGET`, and the SDK raises
+`NullRunConsumeOverbudgetError` (`NR-O001`). The call is never
+silently re-reserved. The period counter still shows the real
+spend.
 
 ### How to set the budget
 
-The first time you create a workflow, no budget cap is configured.
-`max_budget_cents == 0` means **"no per-key budget configured"** —
-the gate passes through to the org-level plan cap, not "block
-everything" — so the agent runs against the org's default policy
-until you raise the per-key cap.
+A new workflow has no budget cap. A cap of `0` means **no
+per-workflow budget is configured** — the call passes through to the
+org-level plan cap. It does not mean "block everything".
 
 To set the budget:
 
@@ -1898,105 +1531,52 @@ Reasonable starting budgets:
 | Customer-facing AI feature | $100 (10000 cents) per period, plus an alert at 80% |
 
 The dashboard warns you when spend crosses 80% of the cap and again
-at 100%. Configure alert destinations under **Notifications** in
-the sidebar (Channels + Alert rules + Event subscriptions matrix).
+at 100%. Configure alert destinations under **Notifications** in the
+sidebar.
 
 ### What happens when you change the budget mid-period
 
-- **Raise**: the new cap takes effect immediately. The next gate
-  call uses the new cap.
-- **Lower below current spend**: the agent doesn't get retroactive
-  refunds, but every call from this point onward rejects until the
-  spend drops (which only happens at period rollover, since the
-  counter is monotonic within a period).
-
-### Why cents, not dollars
-
-The dashboard stores everything in cents to avoid floating-point
-rounding in pricing math. The `budget_cents` field in the API is
-always an integer. If you set `budget_cents: 5000`, your cap is
-exactly $50.00, no rounding errors.
-
-### Reservation and consumption
-
-The gate reserves your projected cost before the model runs and
-reconciles the actual cost after. If the LLM call returns a cost
-that meaningfully exceeds the reservation, the `/track` commit
-rejects with `CONSUME_OVERBUDGET` (HTTP **422**, `error_code = "NR-O001"`) — no implicit re-reserve, ever. The tolerance is a
-fixed cents value (`policies.consume_epsilon_cents`, default **1¢**);
-no percentage-based epsilon is supported.
+- **Raise** — the new cap applies to the next gate call.
+- **Lower below current spend** — no refund is issued. Every call
+  from that point is refused until the period rolls over, because the
+  counter does not go down inside a period.
 
 ### Approximate budget endpoint
 
-If you want to show "you've used X of Y" in a custom dashboard or
-notification without enrolling in the full NullRun dashboard, the
-gateway exposes an approximate-spend endpoint:
+To show "you have used X of Y" in a custom dashboard or a
+notification, the gateway exposes an approximate-spend endpoint:
 
 ```bash title="shell"
-curl "https://api.nullrun.io/api/v1/budget/approximate" \
-  -H "Authorization: Bearer ***"
+curl -sS "https://api.nullrun.io/api/v1/budget/approximate" \
+  -H "Authorization: Bearer ${NULLRUN_API_KEY}"
 ```
 
-The response carries `current_spend_cents_estimate`, an
-`is_approximate: true` flag, a `source` field, a `confidence` level
-(`High` / `Medium` / `Low`), and `last_updated_at`. **Use this for
-display only** — never for enforcement, rate-limit logic, or
-agent-side gating. When the source is unavailable the endpoint
-returns `503 BUDGET_DATA_UNAVAILABLE`; render that as "data
-unavailable", never as `≈ $0 spent`.
+The response carries:
+
+| Field | Meaning |
+|---|---|
+| `org_id` | The organization the key belongs to |
+| `current_spend_cents_estimate` | Estimated spend for the current period, in cents |
+| `is_approximate` | Always `true` |
+| `source` | Where the number came from: `redis_period`, `postgres_outbox`, `last_known_redis` or `ui_local_cache` |
+| `confidence` | `high`, `medium` or `low` |
+| `last_updated_at` | ISO-8601 UTC timestamp of the read |
+
+**Use this for display only.** Never for enforcement, rate-limit logic
+or agent-side gating. When no source is available the endpoint returns
+**503** with `error_code = "BUDGET_DATA_UNAVAILABLE"`. Render that as
+"data unavailable", never as `≈ $0 spent` — a missing figure and an
+empty one are different claims.
 
 ### See also
 
 - [Workflows](#41-workflow-context) — where the budget lives
-- [Policies](#22-policies) — rate limits (separate from budget) and soft-mode fields
+- [Policies](#22-policies) — rate limits and the soft-mode fields
+- [Error handling](#43-error-handling) — the exception each refusal
+  raises
 - [Troubleshooting](#91-troubleshooting)
 
-!!! info "Deep dive"
 
-    Spend is counted per organization per billing period. The period
-    start is computed once, server-side, and bound into every
-    reservation made for an execution, so the gate decision and the
-    later commit for the same call always land in the same period even
-    when a rollover happens in between. Spend within a period is
-    monotonic: it returns to zero only when the period ends.
-
-    Enforcement uses the lower of the organization ceiling and the
-    workflow budget, and the organization ceiling is always strict. In
-    soft mode an active chain may overdraw by the lower of the
-    configured cent and percentage allowances, and concurrent chains
-    share that one allowance rather than each earning their own. The
-    gate reserves the projected cost before the model runs; the actual
-    cost is reported afterwards and must fit inside the reserved amount
-    plus a fixed tolerance, one cent by default and configurable per
-    policy. A cost above that tolerance is never silently re-reserved:
-    the commit is rejected with `CONSUME_OVERBUDGET` while the period
-    counter still reflects the real spend. The tolerance is a fixed
-    number of cents rather than a percentage, so the drift a bad
-    projection can absorb does not grow with the size of the budget.
-
-    Reservation and commit are both idempotent. A retry that arrives
-    between a successful reservation and the recording of its result
-    finds the reservation already in place and is told so, rather than
-    reserving twice. A repeated commit for the same reservation either
-    replays the original outcome or repeats the same rejection. The
-    authorized amount is sealed when the gate decides, so a commit
-    cannot re-check it against a cap tightened afterwards; the new cap
-    governs the next call, not the one already in flight.
-
-    The approximate-spend endpoint resolves its answer from the
-    fast-path counter, the durable record, and the last known value, in
-    that order, and reports a confidence level so the caller can
-    qualify the number. It is advisory. When every source is
-    unavailable it returns 503 rather than zero, because a missing
-    figure and an empty one are different claims. A reservation that is
-    never committed expires after a bounded window; a commit arriving
-    after that is reported as a missing reservation, and the caller
-    must gate again to obtain a fresh one.
-
-
-title: Human approval
-maturity: beta
-description: Bind approvals to a typed BusinessImpact predicate and a SHA-256 action_digest so the grant refuses if the action payload drifts.
 ## 3.2 Human approval
 
 Some operations need a human to click **Approve** before they run.
@@ -2004,145 +1584,137 @@ Sending an email to a customer, moving money, deleting a record —
 operations where you want a paper trail and a conscious decision.
 
 In the dashboard, pending approvals live under **Approvals** in the
-sidebar. When the agent hits an approval rule, the call pauses. The
-agent stays paused until a human clicks **Approve** or **Deny**, or
+sidebar. When the agent hits an approval rule, the call parks. The
+agent stays parked until a human clicks **Approve** or **Deny**, or
 the approval times out.
 
 ### Approval rules — separate from ToolBlock
 
-Approval rules are **not** `ToolBlock` policies with an `action =
-require_approval` field. They are a separate concept with these
-fields:
+Approval rules are not `ToolBlock` policies with an `action =
+require_approval` field. They are a separate rule object:
 
 | Field | Purpose |
 |---|---|
 | `name` | Display name for the rule |
 | `tool_patterns` | Glob patterns matching the tool name |
-| `per_call_threshold_cents` | Projected-cost threshold (estimated tokens × model rate) |
+| `per_call_threshold_cents` | Projected-cost threshold |
 | `action_predicate` | Typed `BusinessImpact` predicate |
 | `priority` | Ordering for tied rules |
 | `expires_in_seconds` | How long the operator has to decide |
 | `action_label` | Display label shown in the dashboard |
+| `risk_level` | `LOW`, `MEDIUM` or `HIGH` |
 
-When an SDK calls a tool that matches an approval rule, the gate
-returns `decision = "require_approval"` and parks the SDK on a
-`threading.Event` until the operator clicks Approve / Deny.
+When a protected call matches an approval rule, the gate returns
+`decision = "require_approval"` and the SDK parks until the operator
+decides.
 
 ### Predicate kinds
 
 Two predicate fields can fire the same approval rule:
 
-- **`per_call_threshold_cents`** — projected execution cost in
-  cents, evaluated against the SDK-reported `estimated_tokens`.
+- **`per_call_threshold_cents`** — projected execution cost in cents,
+  evaluated against the estimated tokens the SDK reports.
 - **`action_predicate`** — a typed condition over a structured
-  `BusinessImpact` extracted from the live function call.
+  `BusinessImpact` extracted from the live call.
 
-When both are set, the rule fires only when **both** pass. Either
-may be `None`, in which case it does not contribute. A rule with
-both `None` matches every call.
+When both are set, the rule fires only when **both** pass. Either may
+be absent, in which case it does not contribute. A rule with neither
+matches every call.
 
 #### Typed predicates
 
-Two predicate kinds are supported on `action_predicate`:
+Two predicate kinds are supported on `action_predicate`.
 
-1. **`money_amount`** — per-call monetary threshold.
-   ```json
-   {
-     "kind": "money_amount",
-     "direction": "outflow",
-     "operator": "gt",
-     "threshold_minor": 5000,
-     "currency": "USD"
-   }
-   ```
+**`money_amount`** — a per-call monetary threshold:
 
-2. **`tool_parameters`** — DNF over up to 5 named
-   parameters with Equals / OneOf / NumericRange / Regex / Exists
-   matchers.
+```json
+{
+  "kind": "money_amount",
+  "direction": "outflow",
+  "operator": "gt",
+  "threshold_minor": 5000,
+  "currency": "USD"
+}
+```
 
-   ```json
-   {
-     "kind": "tool_parameters",
-     "trigger_logic": "any",
-     "conditions": [
-       {"param_name": "refund_amount", "matcher": {"kind": "numeric_range", "min": 500, "max": null}},
-       {"param_name": "recipient", "matcher": {"kind": "regex", "pattern": "^(?!internal@).*"}}
-     ]
-   }
-   ```
+**`tool_parameters`** — a disjunction over up to 5 named parameters,
+with `equals`, `one_of`, `numeric_range`, `regex` and `exists`
+matchers:
 
-The `tool_parameters` predicate reads values out of `kwargs` the
-SDK ships on `/execute`. Every `@protect`-decorated function ships
-`tool_name + args + kwargs` on the wire — the predicate references
-the value by `param_name` in the dashboard rule editor and the
-gate evaluates it directly. Positional args are dropped; `float` /
-`set` / custom objects are filtered; PII-masked sentinels like
-`"***"` for `password` / `token` / `api_key` keys are stripped
-before wire. No second decorator is needed to make a tool
-eligible for `tool_parameters` rules.
+```json
+{
+  "kind": "tool_parameters",
+  "trigger_logic": {"logic": "any"},
+  "conditions": [
+    {"param_name": "refund_amount", "matcher": {"type": "numeric_range", "min": 500}},
+    {"param_name": "recipient", "matcher": {"type": "regex", "pattern": "^(?!internal@).*"}}
+  ]
+}
+```
 
-### `action_digest` — tamper-evident binding
+`trigger_logic` takes `{"logic": "any"}`, `{"logic": "all"}` or
+`{"logic": "groups", "groups": [[0, 1], [2]]}`. The groups form lists
+AND-groups of condition indices joined by OR. The default is `any`.
 
-When the gate fires an approval rule with a typed `BusinessImpact`,
-it computes a SHA-256 digest of the canonical-JSON
-`{"kind":"money_amount", direction, operator, threshold_minor,
-currency, extractor_id, extractor_version}` (Money variant) or the
-`ToolCallParams` envelope (ToolCall variant). The digest is stored
-on the approval row.
+The `tool_parameters` predicate reads values out of the arguments the
+SDK ships with every `@protect`-decorated function. The rule
+references a value by `param_name`, and the gate evaluates it
+directly. No extra decorator is needed to make a tool eligible for
+`tool_parameters` rules.
 
-After the operator clicks Approve, the SDK's post-approval `/execute`
-re-check sends the live `business_impact` and `action_digest` back
-to the gate. The grant consume is atomic — concurrent re-checks are
-serialized, and the gate surfaces `Allow` / `DigestMismatch` /
-`NotFound` / `Expired` / `ReplayRejected` outcomes.
+### `action_digest` — the binding
+
+The gate computes a SHA-256 digest of the action's impact payload
+and stores it on the approval row.
+
+After the operator clicks Approve, the SDK sends the live payload and
+its digest back to the gateway on the post-approval call. The gateway
+recomputes the digest from that payload and compares it with the one
+the operator approved. The comparison is atomic, so two concurrent
+re-checks cannot both spend the same grant.
+
+**The digest binds the approval to the exact payload.** A changed
+amount, a changed argument, or a changed tool name makes the digest
+differ from the approved one, and the call is refused:
+
+| Situation | Result |
+|---|---|
+| The payload matches the approved one | The grant is consumed and the call proceeds |
+| The impact payload drifted | Refused, `error_code = "NR-A013"` |
+| The tool digest drifted | Refused, `error_code = "NR-A014"` |
+| The grant was already consumed | Refused, `error_code = "NR-A015"` |
 
 ### Approval resume flow
 
-The complete flow, end-to-end:
+1. The SDK sends the gate request with the live impact payload. The
+   gate evaluates the approval rules and one matches.
+2. The gate creates a pending approval row with the payload, its
+   digest, and an expiry set server-side. It notifies the configured
+   channels.
+3. The gate returns `decision = "require_approval"` with the
+   approval id and the timeout.
+4. The SDK parks until the operator decides.
+5. The operator clicks Approve or Deny in the dashboard.
+6. The gateway publishes the resolution on the WebSocket channel.
+7. The SDK wakes up and resumes with the operator's outcome.
 
-1. SDK sends `/api/v1/gate` with the live `BusinessImpact`. Gate
-   evaluates rules. Match fires.
-2. Gate creates a pending approval record with the `business_impact`,
-   `action_digest`, and an `expires_at` set server-side
-   (clamped `[1, 3600]` s from `expires_in_seconds`). The gateway
-   then emits an `approval_required` alert to configured channels.
-3. Gate returns `decision = "require_approval"` plus `approval_id`,
-   `approval_timeout_seconds`, `approval_expires_at`.
-4. SDK parks on `threading.Event.wait(timeout=approval_timeout_seconds)`.
-5. Operator clicks Approve / Deny in the dashboard (or auto-deny
-   timer fires).
-6. Backend publishes `ApprovalResolved` event on the WS push
-   channel.
-7. SDK wakes the parked thread; agent resumes with the operator's
-   outcome.
-8. SDK auto-consumes the approval row via
-   `POST /api/v1/approvals/{approval_id}/consume` so the row
-   closes on the success path (the prior behaviour left
-   `mode="inline"` rows at `status=APPROVED` past `expires_at`
-   because the consume SQL was only reachable from the
-   `/execute` orchestrator Step 6, which `inline` tools bypass).
-   On the operator-cancel path the row closes via the spawned
-   cancel step instead.
-
-If the WS push is silent for `approval_timeout_seconds`, the SDK
-**fails CLOSED**: `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`)
-is raised and the agent dies. A silent network must not silently
-approve a privileged action. There is no `/status` HTTP-poll
-fallback for approvals — deliberate, the operator's word is final.
+If no decision arrives within the timeout, the SDK **fails closed**
+and raises `NullRunApprovalExpiredError` (`NR-A012`). There is no
+HTTP polling fallback for approvals: a silent network must not
+silently approve a privileged action.
 
 ### What you see in the dashboard
 
-The **Approvals** page lists every pending, approved, denied, and
+The **Approvals** page lists every pending, approved, denied and
 expired request. Each row shows:
 
-- The tool the agent wanted to call (e.g. `send_email`)
+- The tool the agent wanted to call
 - The workflow that requested it
-- The action digest (first 16 hex chars — full digest in tooltip)
-- For typed predicates: the rendered impact summary
-  - `Money`: `Spend $499.00 USD · 4.99× above the $100.00 limit`
-  - `ToolCall`: `tool:stripe.charge` + raw `params` key/value block
+- The action digest — the first 16 hex characters, the full digest in
+  the tooltip
+- For typed predicates, the rendered impact summary
 - How long ago it was created
-- How long until `expires_at`
+- How long until it expires
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/approvals-light.png"
@@ -2154,47 +1726,36 @@ expired request. Each row shows:
   <figcaption class="nr-shot__caption">Approvals</figcaption>
 </figure>
 
-Click an approval to see the full context — what the agent was
-trying to do, the tool's arguments, and any notes you attached.
+Click an approval to see the full context: what the agent was trying
+to do, the tool's arguments, and any notes you attached.
 
 ### How to approve or deny
 
-In the **Approvals** page, click an open request. You see:
-
-1. The agent's goal (what it was trying to accomplish)
-2. The tool it wants to call (e.g. `send_email`)
-3. The typed impact summary or the projected cost
-4. The action digest (the SHA-256 binding)
-5. How long the approval has been pending
+Open a request in the **Approvals** page. You see the agent's goal,
+the tool, the typed impact summary or the projected cost, the action
+digest, and how long the request has been pending.
 
 Two buttons:
 
-- **Approve** — the gate releases the reservation, the agent's
-  call resumes. On `/execute`, the gate re-checks the
-  `action_digest` against the live payload and refuses on mismatch
-  (returns `DigestMismatch`).
-- **Deny** — the gate rejects, the agent sees `WorkflowKilledInterrupt`
-  (alias `NullRunWorkflowKilledError`). The agent can catch it and
-  clean up; most agents don't.
+- **Approve** — the grant is released and the agent resumes. The
+  gateway re-checks the digest against the live payload on the way
+  out and refuses on a mismatch.
+- **Deny** — the gateway rejects and the agent raises
+  `NullRunApprovalDeniedError` (`NR-A011`).
 
-If you don't click either within the approval's `expires_at` window,
-the request expires. The SDK raises `WorkflowKilledInterrupt`
-(alias `NullRunWorkflowKilledError`) after `approval_timeout_seconds`
-(server-clamped `[1, 3600]` s). The agent can retry or give up.
+If neither button is clicked within the request's window, it expires
+and the SDK raises `NullRunApprovalExpiredError` (`NR-A012`).
 
 ### Notification channels
 
-When an approval is created, the gateway notifies every active
-channel configured on your org:
+When an approval is created, the gateway notifies every active channel
+configured on your organization:
 
-- **Slack** — uses your org's installed Slack OAuth.
-- **Webhook** — generic HTTPS POST with HMAC-SHA256 signature
-  (`X-NullRun-Signature`, 5-minute clock-skew tolerance, 10-minute
-  nonce replay defence).
+- **Slack** — through your organization's installed Slack app.
+- **Webhook** — a generic HTTPS POST with an HMAC-SHA256 signature.
 
-Disable a channel per-user or per-channel under
-**Notifications** in the sidebar (the page has Channels, Alert rules,
-and an Event subscriptions matrix).
+Disable a channel under **Notifications** in the sidebar (Channels,
+Alert rules, and an Event subscriptions matrix).
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/approval-rules-light.png"
@@ -2206,146 +1767,109 @@ and an Event subscriptions matrix).
   <figcaption class="nr-shot__caption">Governance · Approval rules · New rule</figcaption>
 </figure>
 
-### Programmatic approval (for automations)
+### Programmatic approval
 
-The dashboard is for humans. If you want a CI bot or on-call rotation
-to approve requests programmatically, the same endpoints are
-exposed via REST:
+The dashboard is for humans. A CI bot or an on-call rotation can
+decide through the same endpoints:
 
 ```bash title="approve_via_api.sh"
 curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/approve" \
-  -H "Authorization: Bearer ***"
+  -H "Authorization: Bearer $NULLRUN_API_KEY"
 
 # Or deny explicitly
 curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/deny" \
-  -H "Authorization: Bearer ***"
+  -H "Authorization: Bearer $NULLRUN_API_KEY"
 ```
 
-Both endpoints are idempotent — calling approve on an already-approved
-request returns `409 approval_already_decided`; calling deny twice on
-the same request is a no-op. Use these in your incident-response
-automation: an approval surfaces in Slack, your bot detects the
-`risk_level = high`, and approves or denies based on your runbook.
+Deciding twice is not an error. Approving an already-decided request
+returns `409 APPROVAL_ALREADY_DECIDED`.
 
 ### When to use approval instead of blocking
 
-Approval makes sense when:
+Approval fits when:
 
-- The operation is sensitive but **you want the agent to be able to
-  do it** under human review (sending customer emails, creating
-  invoices, deploying builds).
-- The blast radius is bounded (a single email vs. an entire
-  database drop).
-- You have someone on-call who can review within minutes.
+- The operation is sensitive but you want the agent to be able to do
+  it under human review.
+- The blast radius is bounded — one email against a whole database
+  drop.
+- Someone is on call and can review within minutes.
 
-Blocking (not approval) makes more sense when:
+Blocking fits when:
 
-- The operation is never legitimate (`db.drop` in a read-only
-  workflow).
-- The blast radius is unbounded (admin operations, mass deletes).
-- No one is on-call to review approvals in time.
+- The operation is never legitimate, such as `db.drop` in a
+  read-only workflow.
+- The blast radius is unbounded.
+- No one can review approvals in time.
 
-Approval is a feature, not a default. Most teams should default to
-blocking and switch specific patterns to approval as the need
-arises.
+Approval is a feature, not a default. Start by blocking, and move
+specific patterns to approval as the need arises.
 
 ### What's logged
 
-Every approval decision is in **Governance → Audit log**. You can
-filter by:
+Every approval decision lands in **Governance → Audit log**. Filter by
+actor (the approver), decision (`approved` or `denied`) and time
+window. The row carries the action digest and the tool name.
 
-- Approver (which user clicked Approve/Deny)
-- Workflow
-- Tool name
-- Time window
-- Outcome (approved / denied / expired)
-
-The audit log is the source of truth for "who approved this?" —
-both for compliance and for incident review. The action digest is the
-immutable anchor that proves the operator approved the exact payload
-the SDK sent on `/gate` (not "any refund" — the exact amount and
-arguments).
-
-### SDK-side envelope
-
-The `action_digest` is **produced** by the SDK on every `@protect`
-call. The envelope is the canonical NoImpact payload
-(`BusinessImpact.no_impact()` — `{"kind": "none"}`); the SDK
-canonicalises it (compact JSON, `nullrun/v1/business_impact:`
-prefix) and SHA-256-hashes it. The digest flows onto the wire on
-both `/gate` and `/execute`, and the backend re-computes the
-digest from the live payload to verify the grant.
-
-The NoImpact envelope is the same for every `@protect` call — the
-SDK is policy-blind and ships only `tool_name + args + kwargs`.
-Approval rules reference `param_name` in the dashboard to read
-argument values for typed predicates (`money_amount` /
-`tool_parameters`). No SDK-side extractor or factory is needed.
-
-A drift between SDK and backend canonicalisation is a P0 security
-regression covered by the SDK's source-pin tests.
+The action digest is the anchor that proves the operator approved the
+exact payload the agent sent — not "any refund", but that amount and
+those arguments.
 
 ### See also
 
-- [Tool policies](#23-tool-policies) — `ToolBlock` rules (no
-  `require_approval` action; that's a separate entity)
-- [Sensitive tools](#24-sensitive-tools) — when blocking is
-  enough
-- [Workflows → operator controls](#41-workflow-context) —
-  Pause / Kill work the same way as approval
+- [Tool policies](#23-tool-policies) — `ToolBlock` rules
+- [Sensitive tools](#24-sensitive-tools) — when blocking is enough
+- [Workflows → How to control one](#41-workflow-context) —
+  Pause and Kill work the same way
 - [API keys](#25-api-keys) — how to mint a key bound to a workflow
 
 
 # 4. Runtime
 
 
-title: Workflows
-maturity: stable
-description: Group agent calls into a named workflow, propagate parent_trace_id, and bind cost to a logical unit instead of a single session.
 ## 4.1 Workflow context
 
-A **workflow** is one agent you run. In the dashboard it shows up
-under **Workflows** in the left sidebar. Each workflow has its own
-budget and its own list of API keys.
+A **workflow** is one agent you run. It appears under **Workflows** in
+the sidebar. Each workflow has its own budget, its own policies and
+its own API keys.
 
 ### What you see in the dashboard
 
-The **Workflows** page lists every workflow you've created. Each
+The **Workflows** page lists every workflow in your organization. Each
 row shows:
 
-- The workflow's name (you picked this when you created it)
-- Whether it's **Active**, **Paused**, or **Killed**
-- Total spend for the current billing period
+- The workflow's name
+- Whether it is **Active**, **Paused** or **Killed**
+- Spend for the current period against the cap
 - How many API keys are bound to it
 - When it last saw traffic
 
-Click a workflow to open its detail page. The detail page has six
-tabs:
+Open a workflow for its detail page. The page has six tabs:
 
 | Tab | What it shows |
 |---|---|
-| **Overview** | Name, status (Active / Paused / Killed), current spend vs. the installed budget cap, applied policies, and the **Pause** / **Resume** / **Kill** / **Delete** controls. This is where you change the budget cap. |
-| **Policies** | The policies scoped to this workflow. Rate limit, budget limit, and tool block entries — same primitives as the org-level Policies page, filtered to this workflow. |
-| **Executions** | Every gate call your agent made — allowed, blocked, rate-limited. The raw list the gate uses to decide what your agent can do. |
-| **Traces** | Hierarchical view of one agent run — each LLM call, each tool call, with timing and cost. |
-| **API keys** | The API keys bound to this workflow. Use **Generate API key** in the top-right to mint one; the raw key value is shown only once at creation. |
-| **Coverage** | MCP servers and tools observed on this workflow in the last 30 days, with the "discovered but not registered" panel for un-enrolled servers. |
+| **Overview** | Name, state, spend against the cap, applied policies, and the **Pause**, **Resume**, **Kill** and **Delete** controls. You change the budget cap here. |
+| **Policies** | The policies scoped to this workflow, filtered to this workflow |
+| **Executions** | Every gate call this workflow made — allowed, blocked, rate-limited |
+| **Traces** | The nested view of one run: every LLM call, every tool call, with timing and cost |
+| **API keys** | The keys bound to this workflow. **Generate API key** mints a new one; the value is shown once. |
+| **Coverage** | The tools and MCP servers observed on this workflow, and what is not governed yet |
 
 ### How to create one
 
-1. In the dashboard sidebar, click **Workflows**.
-2. Click **New workflow** in the top right.
-3. Give it a name (e.g. `"production-support-bot"`). The name shows
-   up everywhere — keep it short. Names are 1–255 characters:
-   letters, digits, space, and `_ . , - & ( )` are allowed.
-4. Optionally set an **External ID** — alphanumeric with `-` and
-   `_`, up to 64 characters — for integrations that need to look up
-   the workflow from your own systems (e.g. a GitHub repo name or a
-   customer account id).
-5. Click **Create**. The budget cap is configured on the
-   **Overview** tab after creation via a budget-limit policy or the
-   installed budget control — there is no starting budget on the
-   dialog itself.
+1. Click **Workflows** in the sidebar.
+2. Click **New workflow**.
+3. Give it a name. Names allow letters, digits, spaces and `_ . , - & ( )`,
+   up to 255 characters.
+4. Optionally set an **External ID** — your own identifier for the
+   workflow, so your systems can look it up.
+5. Click **Create**.
+
+You land on the new workflow's detail page. From there:
+
+- **Mint an API key** under the **API keys** tab. The value
+  (`nr_live_...`) is shown **once**.
+- **Point your SDK at it** by exporting `NULLRUN_API_KEY`. The
+  workflow binding happens server-side.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/workflows-list-light.png"
@@ -2367,168 +1891,118 @@ tabs:
   <figcaption class="nr-shot__caption">Workflows · Create dialog</figcaption>
 </figure>
 
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../assets/images/screenshots/workflow-detail-light.png"
-       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../assets/images/screenshots/workflow-detail-dark.png"
-       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">Workflows · Workflow detail</figcaption>
-</figure>
-
-You'll land on the new workflow's detail page. From there:
-
-- **Mint an API key** under the **API keys** tab. The key value
-  (`nr_live_...`) is shown **once** — copy it into your secret
-  manager immediately.
-- **Point your SDK at it**: export `NULLRUN_API_KEY` and the workflow
-  binding happens server-side.
-
 ### How to control one
 
-Each workflow has three states that you control from the dashboard
-or via the API: **Active**, **Paused**, and **Killed**. Both Pause
-and Kill reach your running SDK over a WebSocket push; the agent
-doesn't have to wait for the next call to learn. See
-[Control plane](#44-control-plane-websocket) for the full contract, the
-exceptions each state raises, and how the signal travels over the
-WebSocket.
+A workflow has three states you control from the dashboard or the API:
+**Active**, **Paused** and **Killed**.
+
+| State | What the agent sees |
+|---|---|
+| Active | Calls run normally |
+| Paused | Protected calls are refused with `WorkflowPausedException` (`NR-W003`) |
+| Killed | Protected calls are refused with the kill signal (`NR-W002`) |
+
+Pause and Kill reach a running agent over a WebSocket push, so the
+agent does not have to wait for its next call to learn. See
+[Control plane](#44-control-plane-websocket) for the full contract.
+
+Killed is terminal. There is no way back to Active from Killed.
 
 ### The workflow's settings
 
-Five things you control per workflow:
-
-- **Budget** — the per-period cap in cents. Set this first. The
-  dashboard shows a horizontal bar of how much you've spent vs. the
-  cap.
-- **Enforcement mode** — `Hard` (block on budget exceeded) or
-  `Soft` (allow over-budget up to an overdraft cap, when there's an
-  active chain). Full configuration in
+- **Budget** — the per-period cap in cents. The dashboard shows a bar
+  of spend against the cap.
+- **Enforcement mode** — `Hard` (block on budget exceeded) or `Soft`
+  (allow a bounded overdraft when a chain is active). See
   [Policies → BudgetLimit extra fields](#22-policies).
-- **Human approvals** — turn on to require operator approval for
-  dangerous tools (payments, deletes, external API mutations).
-  Available on Growth+ plans.
+- **Human approvals** — require operator approval for sensitive
+  tools. Needs the Approvals feature, on Growth and above.
 - **Tool block list** — the patterns the agent must not call. See
   [Tool policies](#23-tool-policies).
-- **Trace retention** — how long to keep detailed per-call traces
-  (default 30 days, plan-gated up to 90).
+- **Trace retention** — how long to keep detailed traces.
 
 ### Chain context
 
-A **chain** is a logical grouping across multiple `@protect` calls
-inside one user request, declared via `with chain(...)`. Chains are
-auto-registered on the first `/gate` call: the chain transitions
-from `null → ACTIVE` atomically.
+A **chain** groups several protected calls that belong to one user
+request. You declare it with the `chain` context manager:
 
-#### When chains end
+```python
+import uuid
+import nullrun
 
-A chain dies on the **first** of:
+chain_id = str(uuid.uuid4())
 
-- `op="end"` is reached in the context manager
-- 5 minutes of `/gate` inactivity (idle TTL)
-- `max_chain_duration_seconds` exceeded (default 3600)
+with nullrun.chain(chain_id, op="start"):
+    research()   # first call opens the chain
+    draft()      # later calls continue it
+```
 
-For long streams, send a `POST /heartbeat` every 30 seconds — see
-[Heartbeat → how-to](#69-stream-responses).
+`chain_id` **must be a UUID v4**. The SDK validates it in your
+process and raises `ValueError` on a malformed value, so a typo or a
+predictable identifier fails locally instead of silently registering a
+new chain on the server. Generate one with `uuid.uuid4()`.
+
+`op` is the chain operation for the first call inside the block:
+
+| `op` | What it does |
+|---|---|
+| `start` | Open the chain |
+| `continue` | Continue an existing chain |
+| `end` | Close the chain in the same call as the gate decision |
+| `auto` | Register the chain if it is not known, otherwise continue it |
+
+The default is `start`.
+
+#### When a chain ends
+
+A chain closes on the **first** of:
+
+- `op="end"`
+- five minutes without a protected call
+- `max_chain_duration_seconds` exceeded, which defaults to 3600
+
+For a long stream, send a heartbeat roughly every 30 seconds. See
+[Heartbeat](#69-stream-responses).
 
 #### Why chains exist
 
-Chains exist primarily to enable **soft-mode budget gating**: with
-an active chain, the gate allows the agent to run past its budget
-up to an overdraft cap (`max_overdraft_cents` or
-`max_overdraft_percent`, whichever is lower). Full soft-mode
-contract in
+Chains exist so the gate can tell "one call that happens to be
+expensive" from "a sequence of calls that together cost more than
+the budget". With an active chain, a Soft-mode policy lets the agent
+run past its budget up to the overdraft cap. See
 [Policies → BudgetLimit extra fields](#22-policies).
 
 ### How the workflow ends
 
-A workflow doesn't have an explicit "end" state in the sense of a
-final commit. Instead:
-
-- The workflow stays **Active** across many agent runs. Each run is
-  a sequence of `@protect` calls.
-- A run is **logically ended** when the agent's loop returns or
-  throws.
-- A workflow is **paused** or **killed** when you decide, or when
-  plan limits (max workflows per plan) cause auto-pause.
-
-There is no "clean up the workflow when done" step. Active workflows
-keep their policy, budget, and key bindings. Re-run the agent next
-week and the same workflow handles it.
+A workflow has no end state. It stays **Active** across many runs, and
+each run is a sequence of protected calls. The workflow keeps its
+policies, budget and key bindings. Run the agent again next week and
+the same workflow handles it.
 
 ### See also
 
-- [Budgets](#31-budgets) — the budget cap and how rollover works
-- [Policies](#22-policies) — what rules attach to a workflow
-- [Control plane](#44-control-plane-websocket) — how Kill / Pause reach your agent
+- [Budgets](#31-budgets) — the budget cap and how the period rolls over
+- [Policies](#22-policies) — the rules attached to a workflow
+- [Control plane](#44-control-plane-websocket) — how Pause and Kill reach the agent
 - [API keys](#25-api-keys) — how to mint a key bound to this workflow
 
-!!! info "Deep dive"
 
-    A workflow combines a durable record with a runtime state that
-    the control plane can move between Active, Paused and Killed.
-    Transitions are validated rather than free-form: Killed is
-    terminal, and there is no path out of it, so a workflow that has
-    been killed has to be created again to be used again. Every
-    transition an operator triggers writes an audit entry and is
-    pushed to the agents attached to that workflow, so a manual kill
-    is visible both in the audit log and in the dashboard.
-
-    Delivery is a WebSocket push to connected agents, and it is
-    authenticated per organisation: frames are signed, an upgrade that
-    tries to carry a credential in the query string is refused, and
-    an envelope belonging to a different organisation is dropped
-    rather than forwarded. An agent that cannot hold a WebSocket open
-    falls back to polling, and that path is bounded by a short
-    server-side cache window, so a workflow observed only by polling
-    reflects the new state at most about a minute late. If both
-    channels are unavailable, the agent learns of the kill on its next
-    gate call, which makes the worst case roughly one LLM call.
-
-    A chain is a separate, opt-in construct. It is created on the
-    first gate call inside the context manager and ends on whichever
-    comes first: the context manager closing, a five-minute idle
-    window, or the configured maximum chain duration. The idle window
-    is fixed rather than configurable, so an agent doing long work
-    between calls has to send a heartbeat roughly every thirty
-    seconds or the chain lapses mid-run. Chains exist to give
-    soft-mode budget gating something to reason about — with an active
-    chain the gate can let an agent run past its budget up to an
-    overdraft cap. Nothing else depends on them, and there is no
-    background sweeper: expiry of the idle window is what reaps a
-    chain that was never closed.
-
-    A single state change fans out to several consumers — connected
-    agents, alerting, the dashboard, and policy cache invalidation —
-    so a pause takes effect consistently across enforcement and
-    reporting rather than in one of them.
-
-
-title: Tracing
-maturity: stable
-description: OpenTelemetry-style spans for every gate decision, with parent_trace_id propagation so the dashboard renders a true waterfall.
 ## 4.2 Tracing
 
-A **trace** is everything that happened during one run of your agent.
-In the dashboard they live under **Executions** and **Traces** in the
-sidebar. Each execution is one agent run; the trace view shows the
-nested structure of every LLM call, every tool call, and how long
-each took.
+A **trace** is one run of your agent. A **span** is one step inside
+it. The dashboard puts traces under **Executions** and **Traces** in
+the sidebar.
 
-If a user reports "the agent did something weird at 14:30", the
-tracing tab is where you go to see exactly what happened.
+When a user reports "the agent did something odd at 14:30", the trace
+is where you look.
 
 ### What you see in the dashboard
 
-The **Executions** page lists every agent run. Each row shows:
-
-- **Workflow** — which workflow ran this
-- **Started at** — timestamp
-- **Duration** — total run time
-- **Status** — completed / failed / killed
-- **Cost** — total cost for this run
-- **LLM calls** — how many LLM invocations
+The **Executions** page lists every gate decision your organization
+made. Each row shows the execution id, the action, the agent, the
+workflow, the model, the tool, the cost and the time. Four counters
+above the table count the outcomes: **Allow**, **Block**, **Pending**
+and **Denied**. The **Export** button downloads the loaded rows.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/executions-light.png"
@@ -2540,6 +2014,11 @@ The **Executions** page lists every agent run. Each row shows:
   <figcaption class="nr-shot__caption">Executions</figcaption>
 </figure>
 
+The **Traces** page lists the runs. Open one and you get a header with
+the workflow, the start and end times, the total duration and the
+number of spans. Under it, a counter strip shows how many spans loaded
+and how many of them were errors, plus the median duration.
+
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../assets/images/screenshots/traces-light.png"
        alt="Traces page with the waterfall of LLM and tool calls for a single execution."
@@ -2550,319 +2029,266 @@ The **Executions** page lists every agent run. Each row shows:
   <figcaption class="nr-shot__caption">Traces · Waterfall</figcaption>
 </figure>
 
-Click an execution to open the **Trace** view. The trace is a
-hierarchical tree:
+The waterfall is the trace. Each row is one span:
 
+- The **name** of the protected function
+- A **duration bar**, positioned against the longest span in the trace
+- A **status** — ok or error
+- The **policy verdict** for that call, when the gate recorded one
+- The **span id**, so you can correlate it with the audit log
+
+Nested calls sit under their parent, so a supervisor that calls
+sub-agents renders as one tree rather than several.
+
+### How spans are created
+
+The SDK emits a span for every protected call. You do not add
+instrumentation yourself.
+
+```python
+import nullrun
+
+@nullrun.protect
+def research(question):
+    return call_llm(question)
 ```
-Run "user-123-research"     2m 14s   $0.42
-├─ Step 1: plan             0.3s    $0.01
-│  └─ llm.call (claude-sonnet-4-5)    0.3s    $0.01
-├─ Step 2: research         45s     $0.18
-│  ├─ llm.call (claude-sonnet-4-5)    12s     $0.06
-│  ├─ tool.call (tavily_search)       8s      —
-│  └─ llm.call (claude-sonnet-4-5)    22s     $0.12
-├─ Step 3: write             30s     $0.12
-│  └─ llm.call (claude-sonnet-4-5)    30s     $0.12
-└─ Step 4: review            17s     $0.11
-   └─ llm.call (claude-sonnet-4-5)    17s     $0.11
-```
 
-Three things you can read off this tree at a glance:
+A call to `research` opens a span and closes it when the call returns.
+A protected call inside another protected call becomes a child span.
 
-- **Where the time went** — the longest step is where to optimise.
-- **Where the money went** — same, but for cost.
-- **What the agent did** — each tool call and LLM call is
-  clickable, showing the full request/response.
+The context managers set the parent, so you control the shape of the
+tree:
 
-### How a trace is built
-
-When you use the SDK's `@protect` decorator or `with workflow(...)`
-context manager, the SDK automatically creates spans:
-
-| Action | What gets a span |
+| Context manager | What it does |
 |---|---|
-| `@protect` decorator | One span per gate call |
-| `with workflow("name"):` | One span for the whole workflow run |
-| `with chain("id"):` | One span for the chain |
-| `with span("phase"):` | One span for the named phase |
+| `with nullrun.workflow("name"):` | Sets the workflow for every call inside the block |
+| `with nullrun.span("phase"):` | Names the phase; calls inside become its children |
+| `with nullrun.agent("name"):` | Attributes the calls to one agent |
 
-You don't have to add tracing manually — it comes from the
-decorators and context managers you already use. The SDK sends
-trace metadata alongside every `/gate` and `/track` call.
+```python
+import nullrun
 
-For nested agent orchestrations (a supervisor calling sub-agents),
-each sub-agent's spans are nested under the supervisor's. The trace
-view shows the tree; the **Cost** column rolls up automatically.
+with nullrun.workflow("support-bot"):
+    with nullrun.span("research"):
+        research(question)
+```
 
-### What each span contains
+LLM calls are reported separately from spans. The SDK sends the token
+counts your provider reports, and the gateway prices them. The call
+is attached to the span that was active when it happened.
 
-Click any span in the trace tree to see:
+### Identifiers
 
-- **Span ID** — unique identifier (UUID)
-- **Parent span ID** — for nesting
-- **Started at** / **Duration** — timing
-- **Status** — completed / failed / killed
-- **Inputs** — the prompt metadata sent to the LLM (truncated if
-  huge). **Prompt content is NOT stored** — NullRun never persists
-  raw prompt text or LLM response bodies. See
-  [Audit records → What is NOT stored](#43-error-handling).
-- **Outputs** — the LLM's response metadata (token counts, model,
-  finish reason). **Raw completions are NOT stored.**
-- **Cost** — input + output tokens × model rate
-- **Tool calls** — every tool the span invoked (with arguments)
-- **Decision** — the gate verdict (`allow` / `block` /
-  `require_approval`) and which policy triggered it
+| Field | What it identifies |
+|---|---|
+| `trace_id` | One run. The same on every span in that run. |
+| `span_id` | One protected call |
+| `parent_span_id` | The span this one sits under |
 
-For blocked calls, the **Decision** row is the most useful — it
-links to the policy that matched and shows the rule.
+Search the dashboard by `trace_id` to pull the whole run, and the same
+value to find its rows in the audit log.
+
+### What is not stored
+
+NullRun never persists prompt content or LLM response bodies. A span
+carries the function name, the timing, the status and the verdict —
+not the text you sent or the text you got back. See
+[Error handling → What is NOT stored](#43-error-handling).
 
 ### How long traces are kept
 
-Trace retention follows your plan's `history_days` window:
+Traces follow your plan's retention window:
 
-| Plan | Trace retention |
+| Plan | Retention |
 |---|---|
 | Lite | 3 days |
 | Starter | 7 days |
 | Growth | 30 days |
 | Scale | 90 days |
-| Enterprise | unlimited |
+| Enterprise | Unlimited |
 
-After the retention window expires, the trace is removed from the
-dashboard; the aggregated cost information stays (it's summarised
-per workflow per period).
+When a trace expires, the aggregated spend survives, summarised per
+workflow per period.
 
-The retention window is independent of the trace *generation* caps
-— Lite also throttles to **10 000 tokens/hour** and **75 000
-executions/month** (see [Billing & Plan → Per-tier caps](#55-billing-plan)),
-so a Lite workflow's traces stop accumulating well before the 3-day
-window applies.
+Retention is separate from the volume caps. Lite also throttles to
+**10 000 tokens per hour** and **75 000 executions per month**, so a
+Lite workflow stops producing traces inside the 3-day window. See
+[Billing & Plan → Caps](#55-billing-plan).
 
-If you need longer retention for compliance, you can export traces
-from the dashboard as JSON via the **Export** button on the
-Executions page. The exported shape matches the wire format.
-
-### Span identifiers and correlation
-
-Each span has three identifiers:
-
-| Field | Purpose |
-|---|---|
-| `trace_id` | The whole agent run — same across every span in one execution |
-| `span_id` | One call — unique per `@protect` invocation |
-| `parent_trace_id` | For sub-agents — the orchestration trace they belong to |
-
-You can search the dashboard by any of these. If a customer reports
-a problem with `trace_id = abc-123`, you can pull the full trace and
-every decision tied to it from the audit log.
-
-### How to use tracing during development
-
-When you're building a new agent, traces tell you:
-
-- **Is the agent slow?** — sort by duration, see which LLM call
-  takes the most time.
-- **Is the agent hitting the budget?** — look for spans with
-  `decision = block / NR-B004`.
-- **Is the agent calling tools you didn't expect?** — the trace
-  shows every tool call with arguments.
-
-When you're debugging a production issue, traces answer:
-
-- **What did the agent do at 14:30 yesterday?** — filter by time
-  range, click each execution, walk the trace.
-- **Why did the call to `send_email` fail?** — the trace shows
-  the call's status and decision. If it was blocked, the linked
-  policy explains why.
-- **How much did this single run cost?** — the top of the trace
-  shows the total; the leaves show the per-call breakdown.
+Export the rows you need; the retention window removes them. The
+**Export** button on the Executions page writes the loaded rows as
+JSON.
 
 ### Common questions
 
 #### "My trace shows nothing"
 
-If the runtime was never created (the first `@protect` call never
-fired) or the API key is missing, the SDK runs in error mode and no
-spans are recorded. Check the SDK logs for
-`NullRunAuthenticationError`.
+The runtime was never created, so no span was ever emitted. Check that
+`NULLRUN_API_KEY` is set and that the first protected call actually
+ran.
 
-#### "My trace is incomplete — only some spans show up"
+#### "My trace is incomplete"
 
-The SDK buffers events and flushes on a timer. If your process
-crashes before the flush, the in-flight spans are lost. `init()`
-auto-registers `nullrun.shutdown(flush=True)` via `atexit`, so a
-clean process exit always reaches the gateway; the explicit call
-only matters when you need an early teardown or a
-`shutdown(flush=False)` flush cancel between tests.
+The SDK buffers events and flushes them on a timer. A process that
+dies with the buffer unflushed loses the spans still in flight.
+`init()` registers a clean shutdown at exit, so a normal exit reaches
+the gateway.
 
-#### "Why are some spans duplicated?"
+#### "One LLM call is counted twice"
 
-The SDK's auto-instrumentation emits one span per LLM call. If you
-also call `track_llm` manually for the same call, you'll see two
-spans. Pick one or the other — the auto-instrumentation is enough for
-the standard OpenAI / Anthropic / Gemini / Cohere clients.
+The SDK's auto-instrumentation already reports the token counts for
+the LLM clients it supports. If you also report the same call with
+`get_runtime().track_llm(...)`, the call is booked twice. Pick one.
+
+#### "Why is my trace missing a step?"
+
+The dashboard shows one span per protected call. A helper function
+that is not decorated with `@protect` produces no span. Decorate every
+call you want to see in the tree.
 
 ### See also
 
-- [Workflow context](#41-workflow-context) — how `workflow()` scopes spans
-- [Error handling](#43-error-handling) — errors that span blocks
-- [Reference → SDK API → track_*](#71-sdk-api) — manual
-  span creation
-
-!!! info "Deep dive"
-
-    Every inbound request is inspected for a W3C `traceparent` header
-    in the usual
-    `version-trace_id-span_id-flags` shape. Extraction is best-effort:
-    a missing or malformed header never blocks ingest, it simply
-    leaves the trace without an external identifier. The
-    SDK-minted identifier remains the canonical identity of a trace
-    and of its audit chain in every case, so a client that does not
-    propagate W3C context is fully supported and still queryable by
-    the id the SDK reports.
-
-    Spans arrive in batches rather than one request at a time. A trace
-    is read as a summary plus a span batch, and a per-trace span cap
-    applies; when a trace exceeds it the response marks the trace as
-    truncated so the dashboard can show that more spans exist. The
-    same cap means a run that emits a very large number of spans
-    displays only the leading part of the tree. Because ingest is
-    buffered, back-pressure during heavy traffic can drop spans
-    rather than slow ingest down, and spans still in flight when a
-    process dies without a clean shutdown are lost.
-
-    Span context nests structurally. The context managers emit the
-    parent span and each protected call emits a child under it, so a
-    supervisor that calls sub-agents shows one tree rather than
-    several. Redaction is applied at the read boundary, before
-    anything is returned: identifier fields needed to reconstruct the
-    tree pass through intact, while names, metadata and error text are
-    filtered. Each span carries a single typed decision drawn from
-    `allow`, `flag`, `block` and `chain`, and that value is what the
-    dashboard and the audit log both display.
-
-    Retention is per plan and independent of the caps that limit how
-    much traffic a plan may generate — a workflow that is throttled
-    stops producing traces well before its retention window elapses.
-    When a trace does expire, the aggregated cost figures survive,
-    summarised per workflow per period, so spend stays reportable after
-    the detail is gone. Exporting before expiry produces JSON in the
-    same shape as the wire format.
+- [Workflows](#41-workflow-context) — the `workflow()` context manager
+- [Error handling](#43-error-handling) — how errors map to spans
+- [Budgets](#31-budgets) — where the cost in a trace comes from
 
 
-title: Error handling
-maturity: stable
-description: The full NullRun exception hierarchy, kill-signal semantics, and the multi-layer fail-CLOSED contract that protects production traffic.
 ## 4.3 Error handling
 
-Errors in NullRun come in three layers, designed for three audiences:
-your code, your monitoring, and your end users. The SDK does most of
-the work — you pick how much of each layer to use.
+Errors in NullRun come in three layers, one for each audience: your
+code, your monitoring, and your end user. The SDK ships all three.
+You pick how much of each to use.
 
-!!! tip "Quick reference"
-    | Audience | Hook / Class | Catches |
-    |---|---|---|
-    | Your code | `except NullRunDecision` | Expected policy outcomes (budget, tool block, pause) |
-    | Your code | `except NullRunInfrastructureError` | Transport / 5xx / auth / config failures |
-    | Your code | `except NullRunWorkflowKilledError` (or `WorkflowKilledInterrupt`) | Operator kill — terminal; caught by `except Exception:`, handle explicitly if you need to checkpoint before exit |
-    | Your monitoring | `@nullrun.on_error` hook | Every `NullRunError`, fired before propagation |
-    | Your end user | `with nullrun.guard():` / `format_user_message` | Friendly text from the catalog |
-
-### Where errors appear in the dashboard
-
-Every error the SDK raises lands in **Governance → Audit log** —
-every decision ever recorded, hash-chained and filterable by
-workflow, time range, decision type, and tool name. The reason
-column shows `BUDGET_HARD_BLOCKED`, `TOOL_BLOCKED`,
-`RATE_LIMIT_EXCEEDED`, etc. Useful both for "what just happened?"
-and for compliance review / incident forensics.
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../assets/images/screenshots/audit-log-light.png"
-       alt="Audit log page listing every gate decision ever made by the org."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../assets/images/screenshots/audit-log-dark.png"
-       alt="Audit log page listing every gate decision ever made by the org."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">Governance · Audit log</figcaption>
-</figure>
-
-The audit log is the source of truth for "did the agent call the
-right thing?". Pair it with [Traces](#42-tracing) for full context.
-
-### The three layers
-
-| Layer | Who consumes it | What they see | Purpose |
-|---|---|---|---|
-| **1. Structured exception** | Your Python code | Exception type, error code, what to do next | Your code decides: retry, fail, surface to UI |
-| **2. `on_error` hook** | Sentry / Datadog / logs | Same exception + context (workflow, tool, stage) | Observability: you see every error in your existing dashboards |
-| **3. `with nullrun.guard():` / `format_user_message`** | End user | One friendly sentence from a catalog | The user gets a clean message, not a stack trace |
-
-The SDK ships all three. You decide how much to use.
+| Layer | Mechanism | Audience |
+|---|---|---|
+| 1. Structured exception | `except NullRunError` | Your code — retry, fail, or surface it |
+| 2. `on_error` hook | `@nullrun.on_error` | Sentry, Datadog, your log aggregator |
+| 3. `guard()` / `format_user_message` | `with nullrun.guard():` | The end user — one clean sentence |
 
 ### Layer 1 — the structured exception
 
-Every NullRun exception carries four fields your code can branch on:
+Every NullRun exception carries four fields:
 
 | Field | What it is | Example |
 |---|---|---|
-| `error_code` | Stable machine-readable identifier | `NR-B004`, `NR-R001`, `NR-T001` |
-| `user_action` | What to do next | `Wait 30s, then retry` |
-| `retryable` | True if retry-after-backoff makes sense | True for rate limit, False for budget |
-| `docs_url` | URL to the per-code docs page | `https://docs.nullrun.io/reference/errors#sdk-exception-hierarchy-python` |
+| `error_code` | Stable machine-readable identifier | `NR-B004` |
+| `user_action` | What to do next | `Wait 30s, then retry the call.` |
+| `retryable` | Whether a backoff retry makes sense | `True` for a rate limit, `False` for a budget |
+| `docs_url` | Link to the code's reference page | `https://docs.nullrun.io/reference/errors` |
 
-The full catalog lives in that reference page; the standard set is:
+#### The hierarchy
 
-- `NR-B004` — workflow budget exhausted
-- `NR-B002` — gateway 5xx
-- `NR-B006` — post-approval budget re-check failed on the same envelope as the original `/gate`. The SDK raises `NullRunBudgetRecheckFailedError`. Operator must re-approve or the workflow can no longer run.
-- `NR-R001` — per-workflow rate limit
-- `NR-R002` — rate-limit Redis unavailable
-- `NR-T001` — tool block list hit
-- `NR-CH001` — chain context invalid
-- `NR-W004` — workflow soft-deleted or killed
-- `NR-A003` — API key rejected
-- `NR-A010` — approval row exists, status `PENDING` — operator has not decided yet
-- `NR-A011` — operator explicitly denied the approval — terminal, request a fresh grant
-- `NR-A012` — approval expired (`expires_at` is in the past)
-- `NR-A013` — business-impact digest drifted since operator approval — re-approval required
-- `NR-A014` — capability digest drifted (silent capability-gain attack surface) — re-approval required
-- `NR-A015` — grant already consumed by a prior `/execute` (replay rejected)
-- `NR-P001` — wire-protocol version mismatch
-- `NR-O001` — actual cost > reservation + ε (HTTP 422)
-- `NR-X001` — generic catch-all raised when a policy block matches a code the SDK does not have a dedicated class for. Match on `NullRunBlockedException` and read `.error_code` if you want specific handling.
+```
+Exception
+└── BreakerError
+    └── NullRunError
+        ├── NullRunDecision          a policy outcome: block, pause, approval
+        │   ├── NullRunBlockedException        generic block (NR-X001)
+        │   │   ├── NullRunBudgetError         (NR-B004)
+        │   │   │   └── NullRunBudgetRecheckFailedError (NR-B006)
+        │   │   ├── NullRunToolBlockedError    (NR-T001)
+        │   │   ├── NullRunDeniedError         (NR-D001)
+        │   │   ├── NullRunApprovalNotYetApprovedError (NR-A010)
+        │   │   ├── NullRunApprovalDeniedError (NR-A011)
+        │   │   ├── NullRunApprovalExpiredError (NR-A012)
+        │   │   ├── NullRunApprovalReplayRejectedError (NR-A015)
+        │   │   ├── NullRunApprovalDigestMismatchError (NR-A013)
+        │   │   ├── NullRunApprovalToolDigestMismatchError (NR-A014)
+        │   │   └── NullRunApprovalToolMismatchError (NR-A017)
+        │   ├── NullRunConsumeOverbudgetError   (NR-O001)
+        │   ├── NullRunChainError               (NR-CH001)
+        │   ├── NullRunWorkflowInactiveError    (NR-W004)
+        │   └── WorkflowPausedException         (NR-W003)
+        ├── NullRunInfrastructureError  a dependency could not be reached
+        │   ├── NullRunTransportError   (NR-B001)
+        │   │   ├── NullRunBackendError (NR-B002)
+        │   │   └── RateLimitError      (NR-R001)
+        │   ├── NullRunProtocolError    (NR-P001)
+        │   ├── NullRunGateIndeterminateError (NR-P004)
+        │   ├── NullRunRateLimitRedisError (NR-R002)
+        │   ├── NullRunConfigError      (NR-C000)
+        │   └── NullRunAuthenticationError (NR-A001)
+        │       └── NullRunAuthError    (NR-A003)
+        └── WorkflowKilledInterrupt    the operator killed the workflow
+            └── NullRunWorkflowKilledError
+```
 
-For the exception classes used to surface these codes, see
-[Reference → Errors → SDK exception hierarchy](#74-error-codes).
+Two things to internalise:
 
-The wire code is still available via the response body or `.status_code`
-when you need it for metrics / dashboards.
+- **`WorkflowKilledInterrupt` is not a `NullRunDecision`.** It sits
+  directly under `NullRunError`. Catch it by name.
+- **`NullRunApprovalDeniedError` and `NullRunApprovalExpiredError`
+  are siblings**, not the same class. One is a decision, the other is
+  a timeout.
 
-You catch a specific exception type and inspect the fields:
+#### Codes you will meet
+
+| Code | Meaning | Retryable |
+|---|---|---|
+| `NR-B001` | The gateway could not be reached (network) | Yes |
+| `NR-B002` | The gateway returned a server error | Yes |
+| `NR-B004` | The workflow budget for this period is exhausted | No |
+| `NR-B005` | The SDK circuit breaker is open | Yes |
+| `NR-B006` | The post-approval budget re-check failed | No |
+| `NR-R001` | The rate limit for this workflow or key is exhausted | Yes |
+| `NR-R002` | The rate-limit store is unreachable | Yes |
+| `NR-T001` | A ToolBlock pattern matched the tool name | No |
+| `NR-CH001` | The chain context is unknown or does not belong to this org | No |
+| `NR-O001` | The actual cost exceeded the reservation plus epsilon | No |
+| `NR-W002` | The workflow was killed by the operator | No |
+| `NR-W003` | The workflow is paused | Yes |
+| `NR-W004` | The workflow was deleted or disabled | No |
+| `NR-A001` | The SDK could not authenticate | No |
+| `NR-A003` | The API key was rejected | No |
+| `NR-A010` | The approval is still pending — nobody has decided | Yes |
+| `NR-A011` | The operator denied the approval | No |
+| `NR-A012` | The approval expired with no decision | Yes |
+| `NR-A013` | The approved action differs from the request | No |
+| `NR-A014` | The approved tool set differs | No |
+| `NR-A015` | The approval grant was already consumed | No |
+| `NR-P001` | The SDK and the gateway speak different protocol versions | No |
+| `NR-X001` | A block with no dedicated exception class | Depends |
+
+The full catalog is in [Reference → Errors](#74-error-codes).
+
+#### Catching
+
+Branch on the exception type when the outcome differs. Otherwise catch
+the parent and read `error_code`:
 
 ```python
-from nullrun.breaker.exceptions import RateLimitError
+import nullrun
+from nullrun import NullRunError, NullRunBudgetError
 
 @nullrun.protect
 def my_agent(prompt):
     try:
         return call_llm(prompt)
-    except RateLimitError as exc:
-        # exc.error_code = "NR-R001"
-        # exc.retryable = True
-        # exc.retry_after = 30  (seconds)
-        # exc.upgrade_url = "..."  (link to upgrade plan)
-        time.sleep(exc.retry_after)
-        return call_llm(prompt)
+    except NullRunBudgetError:
+        return "I have reached my budget for this period."
+    except NullRunError as exc:
+        # exc.error_code, exc.retryable, exc.user_action, exc.docs_url
+        raise
 ```
 
-For most cases you don't need to import specific types — catching
-the parent `NullRunError` and reading `error_code` is enough.
+For a rate limit, the exception carries the wait the server asked for:
+
+```python
+from nullrun import RateLimitError
+
+try:
+    my_agent(prompt)
+except RateLimitError as exc:
+    # exc.retry_after is the number of seconds the server asked for.
+    # exc.upgrade_url points at the plan upgrade page when the limit
+    # is a plan limit.
+    time.sleep(exc.retry_after)
+```
 
 ### Layer 2 — the `on_error` hook
 
-For Sentry / Datadog / your log aggregator, register a hook that fires
-for every `NullRunError` **before** it propagates:
+Register a hook and it fires for every `NullRunError` that
+propagates:
 
 ```python
 import nullrun
@@ -2879,41 +2305,37 @@ def _to_sentry(err, ctx):
     })
 ```
 
-The hook fires **once per error**, in registration order. Hook
-exceptions are caught and logged at DEBUG — a misbehaving Sentry
-can't break your agent.
+The hook fires once per error, in registration order. A hook that
+raises is caught and logged — a broken Sentry integration cannot break
+your agent.
 
-The context object (`ctx`) carries: `stage` (init / transport /
-track / gate), `workflow_id`, `tool_name`, `api_key_prefix` (first
-12 chars of the API key, never the full value), `correlation_id`
-(per-request UUID), `timestamp`, `extra` (vendor-specific dict).
+The context object carries:
 
-Multiple hooks are supported:
+| Field | Meaning |
+|---|---|
+| `stage` | Where the error fired: `init`, `auth`, `policy_fetch`, `execute`, `track`, `gate`, `check`, `sensitive_tool`, `org_status`, `ws`, `transport` |
+| `workflow_id` | The active workflow, or `None` if the error fired with no workflow bound |
+| `tool_name` | The tool that triggered the error, or `None` |
+| `api_key_prefix` | A short non-secret fingerprint of the key in use |
+| `correlation_id` | Per-request identifier |
+| `timestamp` | When the error fired |
+| `extra` | Free-form dict for stage-specific metadata |
 
-```python
-@nullrun.on_error
-def _to_sentry(err, ctx): ...
+**The kill signal does not fire the hook.** A kill is a control-plane
+action, not an SDK failure. See [Kill signal](#kill-signal).
 
-@nullrun.on_error
-def _to_log(err, ctx):
-    log.warning("NullRun error", extra={"code": err.error_code})
-```
+Registering several hooks is fine. Each returns a callable that
+unregisters it.
 
-The hook fires for every `NullRunError` subclass — **including the
-kill signal** (`WorkflowKilledInterrupt` and its typed alias
-`NullRunWorkflowKilledError`). If you want to skip kill inside the
-hook, filter on `error_code` (`"NR-W002"`).
+### Layer 3 — `guard()` and `format_user_message`
 
-### Layer 3 — `with nullrun.guard():` and `format_user_message`
-
-For scripts that just want "run the agent and print a friendly
-message on failure", use the no-boilerplate helpers. The first
-`@protect` call lazily creates the runtime:
+For a script that should print a friendly message and stop, wrap the
+call:
 
 ```python
-from nullrun import protect
+import nullrun
 
-@protect
+@nullrun.protect
 def my_agent(prompt):
     return call_llm(prompt)
 
@@ -2923,43 +2345,31 @@ if __name__ == "__main__":
         print(my_agent("What does NullRun do?"))
 ```
 
-What your terminal looks like on a rate-limit hit. `guard()` prints
-the structured four-line developer report (catalog headline +
-`[error_code]` + `what` + `where` + `why` + `how to fix`):
+`guard()` catches every `NullRunError` raised inside the block,
+prints a developer report to stderr, and exits with code 1. The report
+has the catalog headline plus the code, the endpoint, the cause, and
+the fix:
 
 ```
-$ python my_agent.py
 Too many requests. Please wait a moment and try again.
-  [NR-R001] what: rate limit (retryable)
-           where: endpoint=gate status=429 source=GATEWAY_ERROR
+  [NR-R001] what: gate (retryable)
+           where: endpoint=/api/v1/gate status=429 source=GATEWAY_ERROR
            why: Per-workflow rate limit exceeded; retry after 30s.
            how to fix: Wait 30s, then retry the call.
-$ echo $?
-1
 ```
 
-`with nullrun.guard():` catches every `NullRunError` raised inside
-the block, prints the structured report to stderr, and exits with
-code 1. The kill signal (`WorkflowKilledInterrupt` /
-`NullRunWorkflowKilledError`) is the one exception — `guard()`
-re-raises it unchanged so kill always reaches the top of the
-agent loop. To handle kill distinctly (for example, checkpoint
-state before exit), use the un-`guard()` form and add your own
-`except NullRunWorkflowKilledError:` arm.
+`guard()` accepts `exit_code` if you want a different status.
 
-`guard()` is the recommended form: it gives a clearer scope,
-accepts an `exit_code` argument, and the four-line report is what it
-always renders.
-
-`guard()` is for scripts and one-shots. For
-long-running services you want explicit handling — see
-[Server frameworks](#server-frameworks) below.
+**One exception propagates unchanged: the kill signal.** `guard()`
+re-raises `WorkflowKilledInterrupt` so a kill reaches the top of the
+agent loop instead of turning into a graceful exit. A non-NullRun
+exception also propagates — your own bugs deserve an honest
+traceback.
 
 #### Branded wording
 
-If you want your own error messages (e.g. "You've used all your
-support credits" instead of the default wording), call
-`set_user_message` once at the top of your entry point:
+Override the user-facing sentence for one code at the top of your
+entry point:
 
 ```python
 import nullrun
@@ -2970,18 +2380,16 @@ nullrun.set_user_message(
 )
 ```
 
-Overrides live in a per-process dict. They don't persist across
-processes and aren't synced to the gateway — they're presentation
-sugar on top of the catalog.
+Overrides live in a per-process dict. They do not persist across
+processes and they are not synced to the gateway.
 
 ### Server frameworks
 
-For FastAPI / aiohttp / Flask / Django, you don't want `guard()`
-(it exits the process). Instead,
-catch the exception in your request handler and return an appropriate
-HTTP status:
+`guard()` exits the process, so it does not fit a request handler.
+Catch the exception and map it to an HTTP status yourself:
 
 ```python
+import nullrun
 from nullrun import NullRunError
 
 @app.post("/chat")
@@ -2989,67 +2397,27 @@ async def chat(req: ChatRequest):
     try:
         return await run_agent(req.message)
     except NullRunError as exc:
-        # Return the catalog wording as the user-facing message,
-        # log the structured fields server-side.
         raise HTTPException(
             status_code=exc.status_code or 503,
-            detail={"message": nullrun.format_user_message(exc), "code": exc.error_code}
+            detail={
+                "message": nullrun.format_user_message(exc),
+                "code": exc.error_code,
+            },
         )
 ```
 
-The mapping from exception to HTTP status is documented in
-[Reference → Errors → Decision subclasses to HTTP](#74-error-codes).
-
-### Audit trail
-
-Every decision is recorded in the audit log; you can fetch the full
-log via the API. The audit log is the source of truth for "did the
-agent call the right thing?". Pair it with [Traces](#42-tracing) for
-full context.
-
-### What is NOT stored
-
-NullRun never persists:
-
-- **Prompt content** or **LLM response payloads**. The gate
-  receives only `model`, `tool`, `tools`, `estimated_tokens`, and
-  optional `business_impact` typed payload.
-- **Tool arguments** beyond the typed `BusinessImpact` extraction.
-  Operators do not write JSONPath rules over tool payloads.
-- **MCP interaction payloads** — only the canonical tool name is
-  logged.
-- **Card numbers, CVC, expiry month/year** — Polar is the
-  merchant of record. Subscriptions carry only `payment_method_brand`
-  and `payment_method_last4`.
-- **OAuth refresh tokens** — the IdP owns session lifetime.
-
-Email addresses and prompts are hashed or redacted at the log and
-trace-span boundary so plaintext does not reach the structured log
-store. Uppercase `KEY=VALUE` pairs are rewritten to `KEY=[REDACTED]`
-before bytes reach stdout.
+`format_user_message(exc)` always returns a non-empty string that is
+safe to show an end user.
 
 ### Kill signal
 
-The operator kill signal arrives as `WorkflowKilledInterrupt` or its
-typed alias `NullRunWorkflowKilledError` (recommended). Both inherit
-from `NullRunError`, so a bare `except Exception:` arm catches the
-kill alongside every other SDK error:
+The operator can kill a running workflow. The signal arrives as
+`WorkflowKilledInterrupt`, or its typed alias
+`NullRunWorkflowKilledError`. Catch it by name when you need
+kill-specific handling:
 
 ```python
-try:
-    my_agent(prompt)
-except Exception:
-    log.error("agent failed", exc_info=True)
-# WorkflowKilledInterrupt IS caught here.
-```
-
-If you want kill-specific handling — checkpointing state, notifying
-a supervisor, exiting with a clean reason — catch the typed alias
-**explicitly** and re-raise it after handling (the kill contract is
-"operator's word is final"):
-
-```python
-from nullrun import NullRunWorkflowKilledError
+from nullrun import NullRunError, NullRunWorkflowKilledError
 
 try:
     my_agent(prompt)
@@ -3060,497 +2428,311 @@ except NullRunError:
     log.error("agent failed", exc_info=True)
 ```
 
-`guard()` re-raises the kill signal — kill is a control-plane
-action, not an SDK failure, and must reach the top of the agent
-loop. `with nullrun.guard():` catches every other `NullRunError`
-and exits 1, but the kill signal passes straight through. To keep
-the process alive on kill (checkpoint, notify a supervisor, then
-exit), use bare `@protect` with your own `except NullRunWorkflowKilledError:`
-arm above.
+A kill is a control-plane action, so it behaves differently on the two
+`@protect` flavours:
+
+| Flavour | What reaches your code |
+|---|---|
+| async `@protect` | The raw `WorkflowKilledInterrupt` propagates. The `on_error` hook stays silent. |
+| sync `@protect` | It arrives re-wrapped as `NullRunBlockedException` with `error_code = "NR-W002"`. The hook fires. |
+
+`guard()` re-raises the kill either way, so a kill never turns into a
+graceful exit. To keep the process alive after a kill — checkpoint,
+notify a supervisor, then exit — use a bare `@protect` with your own
+`except NullRunWorkflowKilledError:` arm.
+
+### Fail closed
+
+Every check on the enforcement path **refuses** when it cannot be
+evaluated. A refusal is a refusal, not a pass. The body of a
+protected function does not run on a refused call.
+
+| Situation | Result |
+|---|---|
+| The gateway cannot be reached | The body does not run. `NullRunBlockedException` with a transport code: `NR-B001` network, `NR-B002` gateway 5xx, `NR-A003` auth, `NR-B005` breaker open |
+| The rate-limit store cannot be reached | HTTP 503 `RATE_LIMIT_REDIS_UNAVAILABLE` |
+| The budget store cannot be reached | HTTP 402 `BUDGET_REDIS_UNAVAILABLE` |
+| A `ToolBlock` policy cannot be evaluated | HTTP 403 `TOOL_BLOCKED` |
+| The approval window closes with no decision | `NullRunApprovalExpiredError` (`NR-A012`) |
+
+The SDK circuit breaker is the one local exception. After repeated
+transport failures it stops calling the gateway and keeps the pending
+work on disk. See [Circuit breaker](#21-circuit-breaker).
+
+### Audit trail
+
+Every gate decision lands in **Governance → Audit log**. Each row
+carries the decision, the reason code, the matched rule, the policy,
+the execution id and the tool name. It answers "why did my agent stop
+working at 14:32?".
+
+The **Audit log** page needs the plan's Audit log feature. A plan
+without it does not record gate decisions.
+
+Pair it with [Traces](#42-tracing) for the request behind the decision.
+
+### What is NOT stored
+
+NullRun never persists:
+
+- **Prompt content** or **LLM response payloads**. The gate receives
+  only the model name, the tool name, the tool list, an estimated
+  token count and an optional typed `business_impact` payload.
+- **Tool arguments** beyond the typed `business_impact` extraction.
+  Operators do not write JSONPath rules over tool payloads.
+- **MCP interaction payloads** — only the canonical tool name is
+  logged.
+- **Card numbers, CVC, expiry month or year.** Subscriptions carry
+  only the payment method brand and its last four digits.
+- **OAuth refresh tokens.** The identity provider owns session
+  lifetime.
+
+Email addresses and prompts are hashed or redacted at the log and
+trace-span boundary, so plaintext does not reach the structured log
+store. Uppercase `KEY=VALUE` pairs are rewritten to `KEY=[REDACTED]`
+so plaintext never reaches stdout.
 
 ### See also
 
-- [Reference → Errors](#74-error-codes) — full catalog
-- [Troubleshooting](#91-troubleshooting) — common questions and
-  their fixes
-- [Use with FastAPI](#64-use-with-fastapi) — exception handling
-  inside ASGI handlers
+- [Reference → Errors](#74-error-codes) — the full catalog
+- [Troubleshooting](#91-troubleshooting) — common failures and fixes
+- [Use with FastAPI](#64-use-with-fastapi) — exception handling in
+  ASGI handlers
 - [Tracing](#42-tracing) — how errors map to spans
 
-!!! info "Deep dive"
 
-    Error codes come from a single catalog, and the wire string is a
-    stable contract: the SDK branches on the code, so adding a code
-    is a minor change while renaming one breaks clients. HTTP status
-    is assigned per code — money-math answers 402, ownership and
-    security answer 403, a lookup miss is 404, a rate limit is 429,
-    and semantic validation is 422. The response envelope carries
-    the code, a human-readable message, details, and the retry delay
-    in milliseconds. The gate is a pre-flight probe that returns a
-    normal status with the decision in the body, while the execute
-    endpoint returns the same block body with a 4xx status, so a
-    client that branches on status first still sees the block.
-
-    Codes group into three families: decisions, which describe an
-    `allow`, `block`, or `require_approval` outcome; infrastructure,
-    which reports a dependency being unreachable; and transport,
-    which reports a malformed request. The `error_code` field is the
-    stable machine-readable identifier, and the `retryable` flag and
-    retry delay drive the SDK's backoff loop. Approval-flow codes
-    share the 403 and 404 buckets with other ownership and
-    authentication failures, so match on the code rather than the
-    status when you need to tell them apart.
-
-    Every gate rejection is fail-closed. Checks short-circuit on the
-    first non-allow decision, so a blocked call never mints a budget
-    envelope, and a storage partition surfaces as a fast rejection
-    rather than a hang. Idempotency is handled on the gate and
-    tracking endpoints: a network retry returns the stored response
-    instead of a fresh reservation. When budget data is
-    unavailable, the API says so rather than reporting a zero
-    spend — a zero would be a false statement about money the agent
-    may already have spent.
-
-    The kill signal inherits from `NullRunError`, so a bare
-    `except Exception:` arm catches it, and `guard()` re-raises it
-    so kill always reaches the top of the agent loop. The
-    `@nullrun.on_error` hook fires for every `NullRunError`,
-    including kill; filter on the kill error code if you would
-    rather not see it in your error tracker.
-
-
-title: Control plane (real-time control)
-maturity: stable
-description: Real-time WebSocket channel for kill, pause, and approval_resolved — the operator's runtime control surface for live agents.
 ## 4.4 Control plane (WebSocket)
 
-The **control plane** is the live channel between the dashboard and
-your running agent. When you click **Pause**, **Resume**, or **Kill**
-in the dashboard, the signal reaches your SDK through the WebSocket
-push channel. Without the control plane, the dashboard would only
-tell the agent something happened on its next `/gate` call. With it,
-the agent learns in real time.
+The **control plane** is the live channel between the dashboard and a running agent. An operator clicks **Pause**, **Resume**, or **Kill**, and the agent reacts while it runs.
 
-### What the dashboard can do
+### What the operator can do
 
-From the workflow detail page (or the top-level **Workflows** list):
-
-| Action | Effect on the agent |
+| Action | What the agent does |
 |---|---|
-| **Pause** | Every call starts raising `WorkflowPausedException` (a `NullRunError` subclass). Resume to undo. |
-| **Resume** | Unpause — calls resume normally. |
-| **Kill** | Every call raises `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`). The agent loop dies. |
+| **Pause** | Every protected call raises `WorkflowPausedException` (`NR-W003`). The agent can catch it, save state, and wait. |
+| **Resume** | Protected calls run normally again. |
+| **Kill** | Every protected call raises `WorkflowKilledInterrupt` (`NR-W002`). |
 
-For the agent, the difference between Pause and Kill:
+Kill is terminal. A killed workflow does not run again.
 
-- **Pause** — recoverable. The agent can catch `WorkflowPausedException`,
-  do clean-up, and either retry or wait.
-- **Kill** — terminal. The exception inherits from `NullRunError` and
-  is caught by `except Exception:` like every other SDK error — handle
-  it explicitly if you need to checkpoint state before the process exits.
+Pause is recoverable. The agent can catch the exception, checkpoint, and try again.
 
-The agent doesn't have to wait for the next `@protect` call to learn.
-If it's mid-LLM-call when you click Kill, the SDK raises the
-exception at the next yield boundary inside the agent's loop.
+### How the signal reaches the SDK
 
-### How the signal reaches your SDK
+The SDK opens a WebSocket to `wss://api.nullrun.io/ws/control/{organization_id}` on its first protected call. The connection is authenticated with the same API key the SDK uses for every other request.
 
-The dashboard pushes signals over a WebSocket connection that the SDK
-opens automatically on the first `@protect` call. The connection is
-authenticated with the same API key the SDK uses for `/gate` and
-`/track`, plus HMAC signature verification.
+The SDK keeps a copy of the control-plane state for each workflow it tracks:
 
-The SDK keeps the connection alive with background heartbeats. If
-the WebSocket disconnects (network blip, firewall, gateway restart),
-the SDK falls back to polling `GET /api/v1/status/:workflow_id` once
-per second until the WebSocket comes back. From the agent's
-perspective, the control plane still applies — kill/pause still
-arrive on the next gate or yield boundary.
+- With the WebSocket connected, the server pushes every state change.
+- Without a pushed state, the SDK reads the workflow state over HTTP from `GET /api/v1/status/{workflow_id}`.
 
-The control-plane transport is auto-negotiated by the SDK — WS push
-in production traffic with HTTP-polling fallback when the WS
-connection drops repeatedly. You don't need to opt in or pass any
-flag; the SDK handles both transports internally. For most agents
-this is invisible: the first `@protect` call opens the WS, and the
-gateway's Pause / Kill / `approval_resolved` signals arrive in
-real time without any further setup.
+Set `NULLRUN_TRANSPORT=http` to run the HTTP poll instead of the WebSocket. The poll runs once per second and suits environments where the WebSocket endpoint is blocked.
 
-### What your agent sees {#how-the-sdk-reacts}
+The SDK chooses the transport for you. You do not pass a flag to enable the control plane.
 
-The two exceptions your agent code will encounter:
+### What the agent sees
+
+Two exceptions cover the whole control plane:
+
+| Exception | Code | Meaning |
+|---|---|---|
+| `WorkflowPausedException` | `NR-W003` | The operator paused the workflow. |
+| `WorkflowKilledInterrupt` | `NR-W002` | The operator killed the workflow. `NullRunWorkflowKilledError` is a typed subclass with the same code. |
+
+`WorkflowPausedException` carries `resume_after`: the number of seconds the pause lasts. It is `None` when the pause carries no duration.
+
+#### Sync and async behave differently
+
+The decorator translates the signal differently in a synchronous function and in a coroutine.
+
+| Protected function | What propagates |
+|---|---|
+| Sync | The signal is re-wrapped as `NullRunBlockedException` with `error_code` `NR-W002` or `NR-W003`. The `on_error` hook fires. |
+| Async | The raw `WorkflowKilledInterrupt` or `WorkflowPausedException` propagates. The `on_error` hook does not fire. |
+
+An async framework cancels a task on the original exception type, so the async wrapper leaves it alone.
 
 ```python
-from nullrun import WorkflowKilledInterrupt
+import nullrun
+from nullrun import WorkflowKilledInterrupt, WorkflowPausedException
+
+nullrun.init(api_key="nr_live_...")
+
 
 @nullrun.protect
 def my_agent_step(prompt):
     # ... agent logic ...
     return result
 
+
 try:
     my_agent_step("do something")
-except NullRunWorkflowKilledError:
-    # Operator killed the workflow. Re-raise, or checkpoint then re-raise.
+except WorkflowKilledInterrupt:
+    # The operator killed the workflow. Checkpoint, then re-raise.
     raise
 except WorkflowPausedException:
-    # Operator paused the workflow. Wait or exit cleanly.
+    # The operator paused the workflow. Save state and wait.
     raise
 ```
 
-Both signals inherit from `NullRunError`. `with nullrun.guard():`
-catches `WorkflowPausedException` (prints the structured four-line
-developer report, exits 1) and re-raises `WorkflowKilledInterrupt`
-— kill is a control-plane action, not an SDK failure, and must reach
-the top of the agent loop. To handle kill distinctly — checkpoint
-state, notify a supervisor, then exit — wrap the un-`guard()` call
-in your own try/except. See
-[Error handling → Kill signal](#43-error-handling)
-for the recommended handler shape.
-
-For Pause, you have more flexibility. Most production agents catch
-`WorkflowPausedException`, save their state to durable storage,
-wait a few seconds, and resume. Some simply exit and let a
-supervisor process restart them when the workflow is unpaused.
+`nullrun.guard()` handles the pause: it prints the developer report and exits with status 1. It lets the kill through, because a kill has to reach the top of the agent loop.
 
 ### Approval events
 
-The same WebSocket push channel carries the second event type the SDK
-needs: **`approval_resolved`**. When the gate returns
-`decision = require_approval` on a `/gate` call, the parked SDK
-agent's thread waits on a `threading.Event` until the operator
-clicks Approve or Deny on the dashboard. The `approval_resolved` WS
-push wakes the event; the SDK resumes the agent with the operator's
-outcome.
+The same WebSocket carries approval decisions. When the gate returns `require_approval`, the parked agent waits for the operator. The decision arrives over the control plane and the agent resumes with the outcome.
 
-The complete approval flow is documented in
-[Human approval → Approval resume flow](#32-human-approval).
-If the approval timeout expires, the SDK raises
-`WorkflowKilledInterrupt`. There is no silent approval — operators
-must decide explicitly.
+If the approval window expires, the SDK raises `NullRunApprovalExpiredError` (`NR-A012`). An approval never resolves silently.
 
-### What if the SDK is disconnected?
+The full approval flow is in [Human approval](#32-human-approval).
 
-If the WebSocket is down and polling is also blocked, the SDK can't
-learn about a kill until the next `/gate` call. In practice this
-window is at most one LLM-call duration — typically seconds, never
-minutes.
-
-The dashboard records the kill timestamp. When the SDK reconnects,
-it queries the workflow's state and acts on the most recent kill —
-even if the kill happened during the disconnection. The agent picks
-up the kill on the next call, with the original timestamp preserved
-in the audit log.
-
-### Common operations
+### Operator steps
 
 #### Pause a runaway agent
 
 1. Open **Workflows** in the sidebar.
-2. Find the row whose status is **Active** but whose spend is
-   suspiciously climbing.
-3. Click the row, then click **Pause**.
-4. The dashboard shows "Pause sent" with the timestamp.
-5. Within ~1 second, the agent stops calling LLM.
+2. Open the workflow row.
+3. Click **Pause**.
+4. The workflow status changes, and the agent stops at its next protected call.
 
-#### Resume after a pause
+#### Resume a paused agent
 
-1. Same workflow page.
+1. Open the workflow.
 2. Click **Resume**.
-3. The agent's next call succeeds.
+3. The next protected call succeeds.
 
-#### Kill an agent that won't stop
+#### Kill an agent
 
-1. **Workflows** → workflow row → **Kill**.
-2. The agent receives `WorkflowKilledInterrupt` (or its typed alias
-   `NullRunWorkflowKilledError`) on the next yield point inside its
-   loop. See [Error handling](#43-error-handling).
-3. The signal inherits from `NullRunError`, so a bare `except Exception:`
-   arm catches it. If you want a clean shutdown on kill, catch the
-   typed exception **explicitly** and re-raise it — the kill contract
-   is "operator's word is final".
+1. Open the workflow.
+2. Click **Kill**.
+3. The agent receives `WorkflowKilledInterrupt` at its next protected call.
 
-#### Verify the signal arrived
-
-After clicking Pause / Kill, the workflow's status flips
-immediately in the dashboard. If the agent doesn't respond, check
-the SDK logs — the WebSocket connection state is logged at startup
-and on every reconnect.
+Catch the kill explicitly and re-raise it. A bare `except Exception:` arm swallows the signal.
 
 ### See also
 
-- [Workflows → how to control one](#41-workflow-context)
-- [Human approval](#32-human-approval) — similar flow for tool
-  approvals
-- [Troubleshooting](#91-troubleshooting) — "why did my workflow
-  pause without me doing anything?"
-
-!!! info "Deep dive"
-
-    The control plane is a WebSocket connection authenticated with
-    the same credentials the SDK uses for gate and tracking calls.
-    API keys are never accepted in the query string, because query
-    parameters are routinely captured in access logs and referrer
-    headers. The connection subscribes to the organization's event
-    channel, and every frame is signed per organization. A frame
-    older than the maximum accepted age is rejected, so a receiver
-    whose clock drifts by more than that window will drop
-    otherwise-valid signals. Frames sent before the handshake
-    completes, along with keepalive replies, are unsigned by design.
-
-    Each frame carries a sequence number, which lets a reconnecting
-    SDK notice that it missed events and ask for a full resync.
-    State-change frames for pause and kill also carry a message
-    identifier the SDK can acknowledge, so a lost kill frame is not
-    silently lost. Every envelope is checked against the connecting
-    organization before it is converted for the wire; an envelope
-    naming a different organization is dropped rather than
-    delivered.
-
-    State transitions are validated at the source, and the killed
-    state is terminal — no transition leads out of it, and a killed
-    workflow cannot be reactivated. Kill and pause follow the same
-    route: the transition is recorded, the state change is
-    published, the push channel carries it, and the SDK raises the
-    matching exception at its next yield point. The polling
-    fallback re-reports the current state on every call, so a
-    reconnecting SDK picks up a kill that happened while it was
-    disconnected, with the original timestamp preserved in the audit
-    log.
-
-    Push delivery is the fast path, in the sub-100ms range, while
-    the fallback polls once per second. A workflow observed only by
-    polling can reflect a new state as much as a minute late,
-    because the poll reads through a cached workflow-activity
-    value. If both transports are blocked, the SDK learns of a kill
-    on the next gate call, so the worst case is one LLM-call
-    duration. Approval resolution rides the same channel and is
-    requested by the SDK when an agent parks on `require_approval`;
-    fan-out of that event to other replicas is best-effort, and a
-    publish that does not land is recovered by the next
-    reconciliation pass.
+- [Workflows](#41-workflow-context) — where a workflow runs
+- [Human approval](#32-human-approval) — the approval round trip
+- [Error handling](#43-error-handling) — the exception each refusal raises
 
 
 ## 4.5 MCP servers (Action sources)
 
-The **MCP servers** page in the dashboard is the operator's view of
-the Model Context Protocol servers your agents actually call. Each
-row in the page is one **action source** — the gateway's canonical
-name for "one MCP server (or built-in provider) that the SDK has
-talked to". The page lives under **Governance → Action Sources** in the
-sidebar.
+An **MCP server** is a source of tools for your agent. The agent discovers the server's tools, and each call is evaluated by the gate like any other tool call.
 
-This page covers:
+### Tool names
 
-- What an Action Source is and where it comes from.
-- How the dashboard splits **verification** (operator-registered,
-  probe-driven) from **observation** (SDK-driven, last 30 days).
-- What **drift** means, the four states that qualify, and the one
-  state that looks like drift but isn't.
-- How to **enroll** a discovered source and how to **write an
-  approval rule** straight from a catalog action.
+An MCP tool has a canonical name that carries the server it came from:
 
-For the canonical tool-name format (`mcp://server/tool`) used in
-policies and approvals, see [Tool policies](#23-tool-policies). For
-how tool patterns and approval rules differ, see
-[Human approval](#32-human-approval).
+```
+mcp://{server}/{tool}
+```
 
-### What an Action Source is
+| Example | Server | Tool |
+|---|---|---|
+| `mcp://github/create_issue` | `github` | `create_issue` |
+| `mcp://filesystem/read_file` | `filesystem` | `read_file` |
 
-An Action Source is one entry in the unified table the dashboard
-renders for "every MCP-style server we know about". A row appears
-either because:
+The server name is the first segment. The rest is the tool name, and it may contain slashes.
 
-- **You registered it** with a probe URL (`Add action source`),
-  and the scheduler polled it and got a tool catalog back.
-- **The SDK called it** in the last 30 days. The observation
-  helper fires on every `/check` call and adds the source
-  automatically.
+These names work everywhere a tool name works. A [tool policy](#23-tool-policies) pattern can match them, and an [approval rule](#32-human-approval) can require review for one. See [Tool policies](#23-tool-policies) for the full name format.
 
-A row from the first path has a `verification` block; a row from
-the second path has only an `observation` block and sits in the
-"Discovered but not registered" panel below the main list with an
-explicit **Enroll** CTA.
+### Deciding which tools run
 
-### Page layout
+The **MCP servers** page in the dashboard lists the servers your agents call and the tools they expose. Each tool carries one decision:
 
-The page header reads **Action sources** and shows the count of
-distinct sources in the observation window:
-
-- **N action sources in the last 30 days**, or
-- **No MCP action sources yet** when the org is brand new.
-
-The right-side action button is **Add action source** — clicking it
-opens a dialog where you paste the MCP probe URL and (optionally)
-a label. The scheduler polls new sources every 60 seconds until
-the first successful probe lands.
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../assets/images/screenshots/action-sources-light.png"
-       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../assets/images/screenshots/action-sources-dark.png"
-       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">MCP servers · Add action source</figcaption>
-</figure>
-
-#### Metric strip
-
-Four cards above the list give the operator a glance at the
-state of the org's tool surface:
-
-| Card | What it counts |
+| Decision | What it means |
 |---|---|
-| **Action sources** | Total registered or observed in the window. |
-| **Verified** | Sources whose last probe returned a catalog matching observation. Sub-label shows `N unverified — verify now` (a deep link to `?filter=unverified`) or `all sources verified`. |
-| **Tool calls** | Total SDK-driven calls across every source in the last 30 days. |
-| **Drift** | Real drift only — see below. Sub-label distinguishes `N verification pending — not drift` from `Tools match the upstream catalog`. |
+| **allow** | The tool runs. |
+| **ask** | The tool does not run until an operator approves it. |
+| **block** | The tool never runs. |
 
-While the page is loading, every card shows `—` rather than `0` —
-the dashboard never confuses "I don't know yet" with "the answer is
-zero".
+A tool with no decision does not run. The operator has to choose.
 
-#### Filter bar
+The gate also compares the tool's current definition with the definition that was approved. A changed definition is refused even when the decision is **allow**, and a tool the server has dropped is refused too.
 
-Two controls above the list:
+### Refusals
 
-- **Search source or action** — substring match against the
-  source URL or any catalog action name.
-- **Status chips** — `All` / `Unverified` / `Stale` / `Drift`. Deep
-  links via `?filter=<id>` so e.g. the dashboard's "verify now"
-  affordance drops the operator on the right view.
+The gate refuses an MCP call with one of these codes:
 
-### What each row contains
+| Wire code | SDK class | Meaning |
+|---|---|---|
+| `MCP_TOOL_BLOCKED` | `NullRunToolBlockedError` | The operator set the decision to block. |
+| `MCP_TOOL_REMOVED` | `NullRunToolBlockedError` | The server no longer offers the tool. |
+| `MCP_TOOL_APPROVAL_REQUIRED` | `NullRunMcpApprovalRequiredError` | The decision is ask and no operator has approved the call. |
+| `MCP_TOOL_DECISION_REQUIRED` | `NullRunMcpApprovalRequiredError` | The operator has not chosen a decision for this tool. |
+| `MCP_DEFINITION_DRIFTED` | `NullRunApprovalToolDigestMismatchError` | The tool's definition changed after the operator approved it. |
+| `MCP_REGISTRY_UNAVAILABLE` | `NullRunBackendError` | The registry could not be read. The call is refused and can be retried. |
 
-Each row is a hairline-divided tile with three blocks side by side
-or stacked:
+Three MCP-specific codes exist in the SDK:
 
-#### Verification block
+| SDK code | SDK class | Meaning |
+|---|---|---|
+| `NR-MCP01` | `NullRunMcpDestructiveBlockedError` | A destructive tool was blocked. |
+| `NR-MCP02` | `NullRunMcpReadonlyBypassBlockedError` | A read-only bypass was blocked. |
+| `NR-MCP03` | `NullRunMcpApprovalRequiredError` | The call needs an operator approval. |
 
-The left block answers "did the probe succeed?":
+`NR-MCP01` and `NR-MCP02` belong to the MCP umbrella policies. The gate evaluates the per-tool decision instead, and the gate does not read the umbrella policies. The two codes stay reserved so an SDK can tell the refusal families apart.
 
-- **Verified** — the last probe returned a catalog and it matches
-  observation. Sub-line shows `Last verified <timestamp> ·
-  re-polls every <interval>`.
-- **Stale** — the last probe succeeded but is older than the
-  re-poll interval. The next scheduled probe will refresh.
-- **Failed** — the last probe errored. The first 200 chars of the
-  error body are shown inline (errors are usually JSON Schema
-  validation payloads, multi-line HTML, or stack traces); a
-  `Show full body` toggle reveals the rest.
-- **Never polled** — source was just added; first poll is pending.
-- **No probe URL registered** — the source exists only because
-  the SDK called it. An inline **Enroll** CTA opens the same
-  dialog used by `Add action source`.
+`NR-MCP03` is what the SDK raises when the gate refuses with `MCP_TOOL_APPROVAL_REQUIRED` or `MCP_TOOL_DECISION_REQUIRED`.
 
-#### Observation block
+### Calling an MCP tool from the SDK
 
-The middle block answers "did the SDK actually use this?":
+`MCPAdapter` is the helper that gates MCP calls. It wraps a connected MCP client, discovers the server's tools, and routes every call through the gate before the client runs.
 
-- **N distinct actions called** plus **M total calls in the last
-  30 days** when the SDK is active.
-- "The SDK hasn't called any action from this source yet" when
-  the source is registered but unused.
+```python
+import nullrun
+from nullrun.toolbox.mcp import MCPAdapter
 
-#### Catalog drilldown
+nullrun.init(api_key="nr_live_...")
 
-A `<details>` toggle below the row, labelled `Actions known (N)`,
-expands the catalog. Every row in the catalog shows:
+# Your own MCP client — the adapter does not open the connection.
+client = your_mcp_client_library.connect(url="https://your-mcp-server")
 
-- The action name (`mcp://server/tool`).
-- An **Origin** badge: `Probe` (came from a successful probe),
-  `Observed` (came from an SDK call), or `Probe + observed` (both).
-- A **Create approval rule** deep link to
-  `/control-center/policies/approval-rules?prefill_source=…&prefill_action=…`
-  so the operator can write a typed-predicate rule for one
-  specific action without typing the path.
+adapter = MCPAdapter(server_name="github", mcp_client=client)
 
-### Drift — and what isn't drift
+result = adapter.call_tool(
+    "create_issue",
+    {"repo": "acme/api", "title": "Crash on checkout"},
+)
+```
 
-The Drift card counts **real drift only**. There are three states
-that qualify as drift:
+What the adapter does on every call:
 
-1. **`unannounced` mismatch** — the SDK called actions the last
-   probe never listed. Either the upstream catalog moved or
-   someone added tools without re-probing. Write approval rules
-   for any destructive verb before they are used.
-2. **`disappeared` mismatch with prior SDK activity** — the
-   probe succeeded at least once AND the SDK has called this
-   source before, but the calls have stopped in the last 30
-   days. Usually means an upstream server upgrade. Review to
-   confirm it isn't the agent silently failing over to a
-   different server.
-3. **`schema_drift === true`** — an action's input schema (keys
-   and types of its argument bag) changed within the window. Pin
-   the new schema before allowing the action.
+- Checks the call against the gate. A blocked call raises `NullRunBlockedException` and the MCP client is not invoked.
+- Reads the server's tool list and forwards the tool's annotations to the gate. The `readOnlyHint`, `destructiveHint`, and `openWorldHint` hints become the gate's read-only, destructive, and open-world flags.
+- Derives the action digest from the tool name and the exact argument bag it forwards, so an operator approval binds to that payload.
 
-A **`disappeared` source with no prior SDK activity** is NOT
-drift — it is verification-pending. The probe never landed and
-the SDK never called anything, so we have no baseline to compare
-against. The Drift card surfaces these as `N verification pending
-— not drift`; the `Unverified` filter is the right view to work
-through them.
+Two constructor options matter:
 
-A row that meets any of the three drift criteria renders a
-red-bordered **Drift callout** above the catalog drilldown, with
-a per-cause title and one-sentence body explaining what changed
-and what to do.
+| Option | Effect |
+|---|---|
+| `cache_seconds` | How long the tool list is cached. Must be `0` or at least `30`. `0` re-reads the tool list on every call. |
+| `runtime` | The runtime to gate through. Pass one to use a specific runtime; leave it unset to use the global one. |
 
-### Discovered but not registered
+When the tool list cannot be read, the adapter tells the gate that the annotations are unknown. It never presents a stale hint as the server's current answer.
 
-Below the main list, sources the SDK called but you have not
-enrolled show up in a separate panel with the heading **Discovered
-but not registered**. Each row has an **Enroll** button that opens
-the add-source dialog pre-filled with the URL the SDK last used.
-Enrolling moves the source into the main list and starts the
-probe scheduler on it.
+### Approving an MCP call
 
-### Where to read next
+When the gate needs an approval, the call raises `NullRunMcpApprovalRequiredError`. Its `error_code` is `NR-MCP03`, and the refusal is retryable: the same call succeeds once the operator decides.
 
-- [Tool policies](#23-tool-policies) — the `mcp://server/tool`
-  canonical-name format and the `ToolBlock` matching rules.
-- [Human approval](#32-human-approval) — how to write a typed
-  approval rule for one action (the deep link in the catalog
-  drilldown lands here).
-- [Sensitive tools](#24-sensitive-tools) — recommended starter
-  patterns for destructive actions.
+```python
+from nullrun import NullRunMcpApprovalRequiredError
 
-!!! info "Deep dive"
+try:
+    adapter.call_tool("create_issue", {"repo": "acme/api"})
+except NullRunMcpApprovalRequiredError as exc:
+    # Wait for the operator's decision, then call again.
+    approval_id = exc.details.get("approval_id")
+    ...
+```
 
-    Each row on the page is one action source with two independent
-    halves: a verification half for a source the operator registered
-    with a probe URL, and an observation half for what the SDK has
-    actually called in the last 30 days. The two halves are always
-    evaluated separately, so a source can be verified and unused, or
-    observed and never successfully probed.
+The wire contract for the approval is in [Human approval](#32-human-approval).
 
-    Probing is a synchronous JSON-RPC exchange over the MCP
-    Streamable HTTP transport: an initialize request followed by a
-    tool listing, with a 10-second wall-clock budget. A sweep runs
-    every 60 seconds and re-probes any source whose own interval has
-    elapsed. The interval stored per source governs that source's
-    cadence; the sweep interval governs only how often sources are
-    considered. Only `http://` and `https://` probe URLs are
-    accepted. When upstream is slow the probe gives up rather than
-    blocking, so a slow server surfaces as a probe timeout instead
-    of a stalled request. Observation recording is fire-and-forget
-    and adds no latency to a gate call.
+### See also
 
-    Drift is computed from hashes. The schema hash covers the shape
-    of an action's argument bag — keys sorted, with type tags but
-    not values — so an argument typed as an integer and the same
-    argument typed as a string are different schemas, while two
-    argument bags that differ only in key order collapse to the same
-    digest. The description hash is a literal hash of the text, so
-    whitespace matters and a trailing space counts as drift. That
-    asymmetry is deliberate: a value that flips while the shape holds
-    is not a contract change, but a key that appears or disappears
-    is.
-
-    The 30-day observation window is fixed, and the drift check
-    reads every source belonging to the organization rather than one
-    page of them, so a large tenant pays proportionally more sweep
-    work while its own footprint stays bounded.
+- [Tool policies](#23-tool-policies) — the tool-name format and matching rules
+- [Human approval](#32-human-approval) — writing an approval rule for one tool
+- [Sensitive tools](#24-sensitive-tools) — starter patterns for destructive tools
 
 
 # 5. Organization
@@ -3558,1180 +2740,752 @@ probe scheduler on it.
 
 ## 5.1 Approvals (UI surface)
 
-The **Approvals** page is where a human reviews and decides every
-`require_approval` decision the gate returns. It lives at
-`/control-center/approvals` (sidebar badge counts pending requests)
-and is gated by the `approvals` plan feature — Growth and above.
+An **approval** is a tool call that an agent wants to make and a human has to authorise. The call parks until an operator decides, and the operator sees it on the **Approvals** page.
 
-This page covers the **UI surface** — terminal-feed rows, the
-friction-level approve flow, the click-to-Dialog detail panel, and
-the history tab. The wire contract (action_digest, typed
-predicates, plan-tier gating) lives in [Human approval](#32-human-approval).
-Programmatic decision-making (REST endpoints, idempotency, retry
-semantics) is at the bottom of this page; the API reference is in
-[HTTP API → approvals](#73-http-api).
+The approvals feature is on Growth and above. On a lower plan the sidebar entry carries a lock, and the page shows an upgrade prompt.
 
-### Page layout — terminal feed
+This page covers the review surface: what a request shows, how to decide, and what the agent sees afterwards. The rule format, the typed predicates, and the wire contract live in [Human approval](#32-human-approval).
 
-The pending queue renders as a **terminal feed**: hairline-divided
-rows in the spirit of the audit log + terminal-window vocabulary,
-not bordered cards. Each row reads as a continuous log line; the
-operator's eye locks onto the icon-prefix marker before parsing the
-rest of the row.
+### What a pending request shows
 
-#### Status prefix markers
+Each pending row carries:
 
-The first character of every row is a marker that encodes status
-and tone:
+| Field | What it tells you |
+|---|---|
+| **Tool and arguments** | The exact tool the agent wants to call and the arguments it wants to pass. |
+| **Why it needs approval** | The rule that matched, in plain language. |
+| **Risk** | `LOW`, `MEDIUM`, or `HIGH`. |
+| **Time left** | How long the operator has to decide. |
+| **Workflow** | The workflow that raised the request. |
 
-| Marker | Tone | Status |
-|---|---|---|
-| `●` | state-block | `pending` |
-| `✓` | state-allow | `approved` (history tab) |
-| `✗` | state-flag | `denied` (history tab) |
-| `⌧` | fg-muted | `expired` / `consumed` (history tab) |
+The pending feed refreshes every 30 seconds, and the badge next to **Approvals** in the sidebar carries the pending count.
 
-#### Row anatomy
+Click a row to open the full detail: the action fingerprint, the execution id, the rule, the tool patterns, the threshold, the review window, and the rendered predicate.
 
-From left to right:
+### Approving
 
-1. **Prefix marker + workflow name + actor label** ("requested by X").
-2. **Hero amount** — for money-kind approvals, the spend line is
-   on the row with the ▲ N× above $X limit relationship encoder
-   so the operator sees both the value and why it's over the
-   limit in one glance. Tabular-nums at 28px semibold.
-3. **Why this needs approval** — the rule label, deep-linkable to
-   the rule's config page.
-4. **Inline live countdown** — a colour-shifting bar + pipe +
-   tabular `mm:ss` label that shrinks as the review window runs
-   out. Colour flips green → amber → coral at 40% / 15% of the
-   remaining window.
-5. **Action button(s)** — see below.
+The approve button names the amount or the action, so nobody approves a value they cannot see.
 
-For **tool-call approvals** (money kind = `tool_call`), the hero
-amount is replaced by the operator-approved tool name + the raw
-parameter bag, so the operator sees exactly what the SDK is about
-to run. The `action_digest` is the tamper-evident binding, not a
-display artefact — the dashboard shows the bag verbatim, never
-reconstructed from the digest.
+| Risk | What the operator does |
+|---|---|
+| **LOW** | Click **Approve**. |
+| **MEDIUM** | Click **Approve**, then type the amount. |
+| **HIGH** | Click **Approve**, then type the amount, then type the action label. |
 
-When the SDK forwarded `tool_class="mcp"` annotations, the row
-also renders a class badge (`MCP tool` / `builtin` / `custom` /
-`unknown`) plus a chip row for `destructive`, `read-only`,
-`open-world` (each chip shows `yes` / `no` / `unknown`).
+A request with no money amount has no amount to type. MEDIUM and HIGH requests then confirm on the action label alone. The action label is the tool name, or the action when the request carries no tool.
 
-### Friction-level approve flow
+On approve, the grant is released and the agent resumes.
 
-The action button label encodes the friction level — operators
-never fire an action without seeing the value they are approving:
+### Denying
 
-- **Low risk** → single-click `[ approve ]`.
-- **Medium risk** → `[ approve ]` → `[ type 499.00 to confirm ]`.
-- **High risk** → `[ approve ]` → `[ type 1,000.00 ]` →
-  `[ type refund_customer to confirm ]`.
+Deny takes the same path at every risk level. The operator types a reason for the denial, then confirms it.
 
-The amount being approved is surfaced inside the button label
-itself, not only in the confirmation step. The deny path is a
-single click on every risk level — see the human-approval page for
-why deny is unconditional.
+The agent raises `NullRunApprovalDeniedError` (`NR-A011`) and the call does not run.
 
-### Click-to-Dialog
+### Expiry
 
-Clicking anywhere on a row (outside the action button) opens a
-Dialog with the full detail panel:
+Every approval carries a review window, set by the rule that fired. When the window closes with no decision, the request expires and the agent raises `NullRunApprovalExpiredError` (`NR-A012`).
 
-- Hero summary (amount / tool name + parameter bag).
-- **Why this needs approval** — the matched rule's human-readable
-  predicate (`amount ≥ $50 USD`, `ANY(amount ≥ 5000, region IN [EU,US])`).
-- **Technical details** accordion — open by default. Rows:
-  Action fingerprint, Execution ID, Rule + rule label, Tool
-  patterns, Per-call threshold, Rule priority (lower = higher),
-  Review window, Trust level chip (`typed impact` /
-  `LLM-cost only`), Rule created, and the rendered Action
-  predicate.
+An approval never resolves silently. The operator has to click.
 
-The Dialog intentionally has **no Approve / Deny controls** — the
-friction-level flow lives on the row, and the Dialog is for
-review, not decision.
+### How the grant binds to the payload
 
-### History tab
+An approval is a grant for one exact action, not for a tool name.
 
-The history view is the same page at `?tab=history` — a tab strip
-in the page header switches between **Pending** (default) and
-**History**.
+When the request is raised, the gate computes a SHA-256 digest of the action's impact payload and stores it on the approval row. On the call that follows an approval, the gate recomputes the digest from the live payload and compares it with the approved one. The comparison is atomic, so two concurrent re-checks cannot both spend the same grant.
 
-History rows are filtered to the last 30 days by default and
-support the same search / status filters as the pending feed.
-Resolved rows are grouped by outcome (`approved`, `denied`,
-`expired`, `consumed`) with the same prefix-marker vocabulary
-(✓ / ✗ / ⌧) so an operator can scan a week of decisions in one
-glance.
+| Situation | Result |
+|---|---|
+| The payload matches | The grant is consumed and the call proceeds |
+| The impact payload changed | Refused, `NR-A013` |
+| The tool digest changed | Refused, `NR-A014` |
+| The grant was already consumed | Refused, `NR-A015` |
 
-#### Bulk toolbar
+A changed amount, a changed argument, or a changed tool name all break the digest. The operator approved that amount and those arguments, and nothing else.
 
-A hairline-divided toolbar above the feed exposes **Approve all**
-and **Deny all** when more than one row is selected. Both bulk
-actions require the same friction-level confirmations as the
-single-row flow.
+### History
 
-### Page chrome
+The **History** tab holds the whole approval record. It has two sections:
 
-- **Plan gate** — the page itself renders a `TierGate` upgrade
-  prompt for plans without the `approvals` feature. The sidebar
-  link is also hidden for those plans.
-- **SSE live update** — every new approval request lands in the
-  feed within a few seconds without refresh; the badge count in
-  the sidebar updates in lockstep.
-- **Audit trail** — every approve / deny decision is recorded in
-  the audit log (`Audit log` under **Governance**) with the
-  decided_by UUID, decided_at timestamp, and the operator label
-  (or `System` for server-side expiry).
+| Section | Rows |
+|---|---|
+| Awaiting decision | Requests with no decision yet. |
+| Decided | Requests that were approved, denied, expired, or consumed. |
+
+The search box filters the rows by workflow, action, tool, reason, actor, or comment. The filter is part of the URL, so a filtered history can be shared as a link.
+
+### Deciding in bulk
+
+The toolbar above the pending queue counts the low-risk pending requests that are eligible for a bulk action. **Approve all N** opens a confirmation that lists each request. Nothing is sent until the operator confirms.
+
+Medium- and high-risk requests are not eligible for a bulk approval. Each one takes its own type-to-confirm step.
 
 ### Programmatic approval
 
-For CI bots and on-call rotations, the same endpoints are exposed
-via REST and the page chrome has no opinion:
+A CI bot or an on-call rotation can decide through the same endpoints:
 
 ```bash title="approve_via_api.sh"
 curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/approve" \
-  -H "Authorization: Bearer ***"
+  -H "Authorization: Bearer $NULLRUN_API_KEY"
 
 # Or deny explicitly
 curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/approvals/$APPROVAL_ID/deny" \
-  -H "Authorization: Bearer ***"
+  -H "Authorization: Bearer $NULLRUN_API_KEY"
 ```
 
-The full endpoint catalog — idempotency rules (`409
-approval_already_decided`), the post-approval `/execute`
-binding, and digest-mismatch drift cases — is in
-[HTTP API → approvals](#73-http-api).
+Deciding twice is not an error. Approving a decided request returns `409 APPROVAL_ALREADY_DECIDED`.
 
-### Where to read next
+### Audit trail
 
-- [Human approval](#32-human-approval) — wire contract, action
-  digest, typed predicates, plan-tier gating.
-- [HTTP API → approvals](#73-http-api) —
-  REST endpoints for programmatic decision-making.
-- [Audit log](#43-error-handling) — every decision
-  lands in the hash-chained audit log; the operator + `decided_by`
-  UUID + `decided_at` are searchable.
+Every approve and deny lands in the audit log with the operator, the timestamp, and the outcome. The action digest on the row proves which payload the operator approved.
 
-!!! info "Deep dive"
+### See also
 
-    The approval flow is two-phase. The gate returns
-    `require_approval`, the operator decides, and the waiting SDK is
-    resumed by a push once the decision lands. Each approval row is
-    bound to a digest of the action payload it was raised for, and the
-    post-approval execute re-check recomputes that digest and refuses
-    any call that does not match. An approved grant therefore cannot be
-    redirected at a different action before it is spent.
-
-    A decision is applied atomically: the outcome and the consumption
-    stamp move together, so no reader can observe a half-decided row.
-    Approving releases the pending reservation and decrements the
-    outstanding-approval count as part of the same operation. Rows are
-    scoped to the organization when they are read, so an identifier
-    belonging to another organization reads as absent rather than
-    forbidden, and the response gives away nothing about whether it
-    exists.
-
-    Expiry runs on a sweep rather than on the reader clock. Pending
-    rows past their window become expired and are attributed to the
-    system; approved rows that are no longer usable are closed
-    separately, and closing them preserves the original decider and
-    timestamp so a later automated transition cannot overwrite an
-    explicit human decision.
-
-    The push to the waiting SDK is best-effort, and a missed push is
-    recovered by a periodic reconciliation pass. Audit emission is
-    also best-effort: a transient failure there never blocks the
-    decision itself. The stored decision is a typed value rather than
-    free text, and the friction level the operator had to clear is
-    recorded alongside it. Denial is terminal, and the SDK raises
-    `WorkflowKilledInterrupt`. The auto-consume path reports consumed,
-    already-consumed, and not-approved distinctly, and the SDK treats
-    all three as success.
+- [Human approval](#32-human-approval) — approval rules, typed predicates, and the wire contract
+- [Tool policies](#23-tool-policies) — blocking a tool outright
+- [Notifications](#52-notifications) — where an approval request is announced
+- [HTTP API → approvals](#73-http-api) — the REST endpoints
 
 
 ## 5.2 Notifications
 
-The **Notifications** page is the configure surface for every
-outbound signal NullRun sends. It lives at
-`/control-center/notifications` in the sidebar and is gated by the
-Starter plan and above.
+The **Notifications** page configures every outbound signal NullRun sends. It lives under **Notifications** in the sidebar.
 
-The page has three sections in this order:
+Notifications are on Starter and above. On Lite the sidebar entry carries a lock, and the page shows an upgrade prompt.
 
-1. **Channels** — where signals can land (Slack / Email / Webhook).
-2. **Alert rules** — threshold rules that fire when a value crosses.
-3. **Event subscriptions** — which events reach which channels.
+The page has three sections:
 
-It is the **configure** surface for [Alerts](#53-alerts) (the read
-surface); channels created here appear in the Alert rules editor,
-and alerts dismissed on the Alerts page keep their wire-side
-notification enabled.
+1. **Channels** — where signals land.
+2. **Alert rules** — thresholds that fire when a value crosses.
+3. **Event subscriptions** — which events reach the channels.
+
+The **Alerts** page is the read surface. Channels created here appear in the alert rules editor, and an alert that fires shows on both.
 
 ### Channels
 
-The top section is a 2-up grid of channel cards. Each card carries:
+Two channel types exist.
 
-- **Icon tile** + **Channel name**.
-- **Masked URL** in mono for webhook channels; Slack channels show
-  the channel name. See the Email variant note below.
-- **Status dot** — neutral for idle, faint for `last_sent` (so
-  the operator can see at a glance whether the channel has fired
-  recently).
-- **Edit link** + **Send test** icon-btn + **On / off** switch row.
+| Type | What it is |
+|---|---|
+| **Slack** | A Slack channel connected through the Slack app. |
+| **Webhook** | A generic HTTPS endpoint that receives a JSON POST. |
+
+There is no email channel, no PagerDuty channel, and no Discord channel.
 
 #### Adding a channel
 
-Click **+ Add channel** in the section header. The dialog supports:
+Click **+ Add channel** and pick a type.
 
-- **Slack** — OAuth-branded setup with Slack-specific help text.
-  Pre-pivot rows that store `installation_id` / `channel_id` in
-  config are preserved on edit so the existing connection
-  doesn't break.
-- **Webhook** — generic HTTPS POST. The signing secret is
-  optional; if set, the receiver verifies `X-NullRun-Signature`
-  (HMAC-SHA256, 5-minute clock-skew tolerance, 10-minute nonce
-  replay defence).
+For a **webhook**, paste the HTTPS URL and give the channel a name. The signing secret is optional. With a secret set, every delivery carries three headers:
 
-Both Slack and generic webhook store on the backend as
-`channel_type: "webhook"` with `config: { type: "webhook", url: ... }`
-— Slack incoming webhooks accept POST JSON out of the box, so no
-Block Kit transform is needed for MVP.
+| Header | Meaning |
+|---|---|
+| `X-NullRun-Signature` | HMAC-SHA256 over the timestamp, the nonce, and the body, in that order. |
+| `X-NullRun-Timestamp` | When the payload was signed. |
+| `X-NullRun-Nonce` | A one-shot value that makes the delivery unique. |
 
-!!! note "Email variant"
-    The Email channel type is not available in the dialog. The
-    channel list may contain read-only rows from prior installs;
-    new channels use Slack or Webhook.
+A receiver should reject a timestamp that differs from its own clock by more than five minutes, and should remember a nonce for ten minutes. Compare the signature in constant time.
+
+A channel marked test-only receives synthetic payloads only. Test payloads never reach a production destination.
 
 #### Send test
 
-The **Send test** button on each card posts a synthetic payload
-to the channel; the toast reports success or surfaces the
-backend's error message. Use this after creating or editing a
-channel to confirm your URL / OAuth installation actually
-delivers before relying on it for production signals.
+The **Send test** button on each channel card posts a synthetic payload and reports the outcome. Use it after creating or editing a channel, to confirm the endpoint delivers.
 
 ### Alert rules
 
-The middle section is a list of threshold rules. Each rule
-renders as a card with:
+A rule watches one value and fires when it crosses a threshold.
 
-- **Left-border accent by severity** — info / warning / critical.
-- **Inline gauge bar** showing `last_observed_value / threshold_cents`
-  live from the wire.
-- **Last-fired timestamp** + **enabled toggle** + **delete link** on
-  the right.
+| Field | Meaning |
+|---|---|
+| **Type** | What the rule watches. |
+| **Threshold** | The value that triggers the rule. Spend rules use cents. Error-rate rules use a count of events. |
+| **Window** | How far back the rule looks, in minutes. |
+| **Severity** | `info`, `warning`, or `critical`. The severity of the alert the rule produces. |
+| **Enabled** | Whether the rule fires at all. |
 
-Rule editing is a form inside an `AlertRulesSection` dialog. The
-form shape mirrors the wire contract — name, severity, threshold in
-cents, and which channels the rule routes to.
+The rule types are:
 
-### Event subscriptions matrix
+| Type | Watches |
+|---|---|
+| `daily_spend` | Spend over a day. |
+| `hourly_spend` | Spend over an hour. |
+| `error_rate` | The count of failed calls in the window. |
+| `per_key_spend` | Spend by one API key. |
 
-The bottom section is the matrix that decides which event reaches
-which channel. Events are grouped by area:
+Each rule card shows the last value it observed against its threshold, and when it last fired.
 
-- **Workflow activity** — `workflow.killed`, `workflow.paused`,
-  `workflow.resumed`, `workflow.created`.
-- **Governance & access** — `approval.created`, `approval.decided`,
-  `policy.changed`, `key.created`, `key.revoked`.
-- **Team** — `member.invited`, `member.joined`, `member.removed`.
-- **Digest** — weekly spend digest, monthly quota report.
+### Event subscriptions
 
-Each event is a row; each channel is a column. A cell shows a
-chip-dot when the event is enabled for that channel; no chip means
-the event is disabled for that channel. The right edge of each row
-has a master on/off toggle that flips every channel at once.
+The matrix decides which events reach which channels. Each row is an event. Each column is a channel. A filled dot means the channel receives that event.
 
-A footer legend explains the chip-dot semantics (`●` = enabled, no
-chip = disabled).
+The events are:
 
-### Plan gating
+| Group | Event | Fires when |
+|---|---|---|
+| Workflow activity | `execution_quota_warning` | The organization approaches its execution limit. |
+| Workflow activity | `workflow_budget_warning` | A workflow exceeds its budget. |
+| Workflow activity | `loop_detected` | A workflow makes repeated identical calls. |
+| Workflow activity | `policy_violation` | An action is blocked by policy. |
+| Workflow activity | `workflow_killed` | A workflow is terminated. |
+| Governance & access | `approval_required` | A new approval is requested. Off by default. |
+| Governance & access | `api_key_created` | An API key is created. |
+| Team | `member_invite` | A new member is invited. |
+| Digest | `daily_summary` | The previous day's activity digest. |
+| Digest | `weekly_summary` | The previous week's activity digest. |
 
-The Notifications page itself renders a `TierGate` upgrade prompt
-for plans without Starter; the sidebar link is also hidden. The
-upgrade card links to **Billing & Plan** (`/control-center/billing`)
-and to the public pricing page (which hosts the comparison table)
-so operators can inspect feature deltas before committing.
+The toggle on the right of a row switches the event on or off for every channel. The dots are read-only indicators of where the event lands.
 
-The plan-tier gate is enforced server-side on every
-`/api/alert_channels` and `/api/alert_rules` handler — a Lite user
-cannot POST to the API directly even if the page itself doesn't
-render.
+### API
 
-### API hooks
+The same actions are available over REST.
 
-For automations, the same actions are exposed via REST:
+| Method | Path |
+|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/alert-channels` |
+| `POST` | `/api/v1/orgs/{org_id}/alert-channels` |
+| `PATCH` | `/api/v1/orgs/{org_id}/alert-channels/{channel_id}` |
+| `DELETE` | `/api/v1/orgs/{org_id}/alert-channels/{channel_id}` |
+| `POST` | `/api/v1/orgs/{org_id}/alert-channels/{channel_id}/test` |
+| `GET` | `/api/v1/orgs/{org_id}/alert-rules` |
+| `POST` | `/api/v1/orgs/{org_id}/alert-rules` |
+| `PATCH` | `/api/v1/orgs/{org_id}/alert-rules/{rule_id}` |
+| `DELETE` | `/api/v1/orgs/{org_id}/alert-rules/{rule_id}` |
+| `GET` | `/api/v1/orgs/{org_id}/notification-settings` |
+| `PATCH` | `/api/v1/orgs/{org_id}/notification-settings` |
 
-- `GET /api/alert_channels` / `POST` / `PATCH /{id}` / `DELETE /{id}`.
-- `POST /api/alert_channels/{id}/test` — fire a synthetic payload.
-- `GET /api/alert_rules` / `POST` / `PATCH /{id}` / `DELETE /{id}`.
+The plan gate is enforced on the server. A Lite organization cannot create a channel by calling the API directly.
 
-The full endpoint catalog is in
-[HTTP API → alert channels](#73-http-api) (and the
-alert-rules section, when split out).
+### See also
 
-### Where to read next
-
-- [Alerts](#53-alerts) — the read surface for what fired.
-- [Audit log](#43-error-handling) — every channel and
-  rule mutation is recorded as an audit row.
-
-!!! info "Deep dive"
-
-    Two channel types carry signals: Slack, and a generic webhook
-    that posts JSON to any HTTPS receiver. Both receive the same
-    body, so a Slack channel needs no transformation. A channel
-    marked test-only is partitioned away before delivery, so
-    synthetic test payloads never reach a production destination.
-
-    A webhook channel with a signing secret gets three headers:
-    `X-NullRun-Signature`, `X-NullRun-Timestamp`, and
-    `X-NullRun-Nonce`. The signature is an HMAC-SHA256 over the
-    timestamp, the nonce, and the body joined in that order, and it
-    is compared in constant time. A receiver should reject a
-    timestamp that differs from its own clock by more than five
-    minutes, and should remember a nonce for ten minutes. The
-    nonce ledger expires on the same horizon as the accepted
-    timestamp window, so it can never outlive a timestamp it exists
-    to defend.
-
-    Delivery is throttled per organization and per detector, at one
-    alert per fifteen minutes per bucket, which means a burst of
-    different alerts sharing a detector collapses into one. Each
-    organization can also opt out of individual event classes; the
-    default is on, and a failure to read that setting is treated as
-    opt-out rather than as a reason to amplify delivery during a
-    dependency blip. A dispatch failure never blocks the producer
-    that raised the alert, and a fan-out that does not land is
-    picked up by a later pass.
-
-    Every alert is recorded for the Alerts page before delivery is
-    attempted and before the channel list is consulted, so an
-    organization with no channels configured still sees the full
-    history of what fired.
+- [Alerts](#53-alerts) — what fired and what to do about it
+- [Approvals](#51-approvals-ui-surface) — where an approval request is announced
+- [HTTP API](#73-http-api) — the full endpoint catalog
 
 
 ## 5.3 Alerts
 
-The **Alerts** page surfaces every operational signal the gateway
-fires that the operator should look at — blocked incidents,
-threshold breaches, system events. It lives at
-`/control-center/alerts` and is gated by the `alerts` plan feature
-(Starter and above). On Lite plans the sidebar link is hidden and
-direct URLs render an upgrade prompt.
+The **Alerts** page shows the signals an operator has to look at: a threshold the spend crossed, an action the gate stopped, an event about the organization.
 
-The page reads from the same `alerts` feed that drives the
-sidebar bell badge (count next to **Alerts**), so dismissing or
-snoozing on the page brings the badge in line immediately.
+Alerts are on Starter and above. On Lite the sidebar entry carries a lock, and the page shows an upgrade prompt.
 
-### Page header
+The page reads the same feed as the badge next to **Alerts** in the sidebar, so a dismiss or a snooze brings the badge in line.
 
-The header reads **Alerts** with a running subtitle that breaks
-down the live state:
+### Reading the feed
+
+The header carries one number per quantity:
 
 ```
-12 active · 5 resolved · 3 critical · 6 warning · 2 info
+3 active of 5 · 2 snoozed · 1 of 2 critical
 ```
 
-Zero-count tiers collapse out of the subtitle so a clean org
-shows just `0 active · 0 resolved` with no visual noise. The
-counts cover every severity tier, so the **info** tier is
-counted alongside critical and warning — all three severities
-surface to operators.
-
-The header action is **Dismiss all (N)** when at least one active
-alert exists; clicking it opens a confirmation Dialog
-("Dismiss N active alerts? This action cannot be undone.") with
-Cancel and the destructive confirm button.
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../assets/images/screenshots/alerts-light.png"
-       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../assets/images/screenshots/alerts-dark.png"
-       alt="Alerts page — header with active / resolved / info counts, Dismiss all action, severity and category filters, Set up alerts entry point."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">Alerts · Set up alerts</figcaption>
-</figure>
-
-### Metric strip — not a row of four cards
-
-The four tiles above the filter chips are:
-
-| Tile | Sub-line example |
+| Part | Meaning |
 |---|---|
-| **Action sources** | `Add one to begin` / `registered or observed` |
-| **Verified** | `3 unverified — verify now` (deep link to `?filter=unverified`) / `all sources verified` |
-| **Tool calls** | `Last 30 days across all sources` |
-| **Drift** | `Tools match the upstream catalog` / `4 verification pending — not drift` |
+| `3 active of 5` | Rows visible under the current filters, of the organization's active total. The second number appears when a filter narrows the view. |
+| `2 snoozed` | Alerts that are open but snoozed. The table hides them. |
+| `1 of 2 critical` | Visible critical alerts, of the organization's critical total. |
 
-If the list is still loading, every tile shows `—` rather than
-`0`, so the operator never confuses "I don't know yet" with "the
-answer is zero".
+The header also offers **Dismiss all (N)**. N counts every open alert, snoozed included.
 
-### Filter chips — two orthogonal dimensions
+### Filters
 
-Two filter dimensions run side by side above the list:
+| Filter | Values |
+|---|---|
+| **Severity** | All, Critical, Warning, Info |
+| **Source** | All, Prevented, System |
+| **State** | All, Active, Digests |
 
-- **Severity** — `All` / `Critical` / `Warning` / `Info`.
-- **Category** — `All` / `Prevented` / `System`.
+**Prevented** alerts are the ones the gate stopped: a tool block, a budget block. **System** alerts are about the organization: a spend threshold, a killed workflow, a revoked key.
 
-Severity is applied client-side (small enum, response shape
-unchanged); Category is also pushed to the server via
-`useAlerts({ category })` so the wire doesn't even ship the
-filtered-out rows. The combination of the two narrows the list
-independently — `Critical + Prevented` is the typical "what
-incidents did the breaker actually stop today" view.
+Severity and source are independent. A prevented incident can be critical, and a system event can be informational.
 
-### Alert row anatomy
+### A row
 
-Each row is an `AlertCard` rendered as a hairline-divided block.
-The components from top to bottom:
+Each row shows the severity, what happened, the workflow it belongs to, and when it happened. Two actions:
 
-- **Severity left-border** — critical/warning/info accent.
-- **Icon-avatar** — incident type (Wallet for budget_block,
-  ShieldAlert for tool_block, Gauge for spend thresholds).
-- **Title + body** — structured for `budget_block` rows:
-  "Projected vs budget" stats + a horizontal threshold bar
-  (current spend over threshold_cents, live from the wire).
-- **Timestamp + workflow name** — when the alert is workflow-
-  scoped; system alerts omit the workflow chip.
-- **Snooze dropdown** — `1h` / `4h` / `24h` / `3d` / `7d`. The
-  snoozed row is hidden from the active list until the snooze
-  expires; a "Snoozed until …" footer line plus a live countdown
-  appears on the row while the snooze is active.
-- **Dismiss** — single click, the row collapses into the
-  Resolved section.
+| Action | Effect |
+|---|---|
+| **Snooze** | Hides the row for 1 hour, 24 hours, or 7 days. The row shows a countdown until it returns. |
+| **Dismiss** | Closes the alert. It moves to the resolved list. |
 
-### Resolved section
+Beneath the active list, a **Resolved today (N)** section holds the alerts dismissed during the current day. Dismissed rows carry no actions.
 
-Beneath the active list, a **Resolved today** section shows
-dismissed alerts from the current calendar day. Each row renders
-the same `AlertCard` with a `resolved` flag — icon, title, body,
-but no Snooze / Dismiss actions. The resolved section is
-collapsed automatically when there are no resolved alerts.
+### What raises an alert
 
-### How to wire up alerts
+#### Threshold rules
 
-The **Set up alerts** button in the top-right of the header takes
-the operator to **Notifications** (`/control-center/notifications`)
-where they can:
+You write these on the **Notifications** page. Each rule watches one value in a window.
 
-- Add Slack, Email, or Webhook channels.
-- Configure threshold rules (e.g. "spend reaches 80% of cap").
-- Subscribe the org's events to the enabled channels.
+| Rule type | Watches |
+|---|---|
+| `daily_spend` | Spend over a day. |
+| `hourly_spend` | Spend over an hour. |
+| `error_rate` | The count of failed calls in the window. |
+| `per_key_spend` | Spend by one API key. |
 
-The Alerts page is the **read** surface; Notifications is the
-**configure** surface. They share the same wire, so a channel
-that fires lands both in the page and in the channel that the
-operator subscribed to.
+A rule has a threshold, a window in minutes, a severity, and an enabled switch. A spend rule uses cents. An error-rate rule uses a count of events.
 
-### API hooks
+#### The budget ladder
 
-For automations, the same actions are exposed via REST and are
-mirrored in the audit log:
+Spending against a monthly budget raises alerts at fixed points:
 
-- `POST /api/orgs/alerts/{id}/snooze` — `{ hours: number }` body.
-- `POST /api/orgs/alerts/dismiss-all` — dismiss every active
-  alert for the org in one call. Use sparingly; the gateway
-  still writes one audit row per dismissal.
+| Spend | Severity |
+|---|---|
+| 80% of the budget | Warning |
+| 95% of the budget | Warning |
+| 100% of the budget | Critical |
 
-The plan-tier gate (`alerts` feature) is enforced server-side on
-every handler — a Lite user cannot dismiss alerts by hitting the
-API directly even if the page itself doesn't render.
+#### Events
 
-### Where to read next
+The event subscriptions on the **Notifications** page decide which of these reach your channels and which show on this page:
 
-- [Notifications](#52-notifications) — how to add channels and
-  subscribe events.
-- [Audit log](#43-error-handling) — every dismiss /
-  snooze is recorded as an audit row.
+- Approaching the execution limit.
+- A workflow over its budget.
+- A workflow making repeated identical calls.
+- An action blocked by policy.
+- A workflow terminated.
+- An API key created.
+- A member invited.
 
-!!! info "Deep dive"
+### Configuring alerts
 
-    Severity and category answer different questions, and the two
-    dimensions are orthogonal. Severity is urgency: three tiers exist,
-    critical, warning, and info, with nothing in between, so the colour
-    ladder is the only in-band signal available. Category is ownership:
-    a prevented incident can be critical, and a system event can be
-    purely informational. Spend-threshold alerts follow a fixed ladder
-    where 80% and 95% of the cap are warnings and 100% is critical;
-    key revocation is a warning. System-scope alerts are never bound to
-    a workflow, and that invariant is enforced before the record is
-    written rather than checked at read time.
+The **Set up alerts** button in the header opens the **Notifications** page, where you add channels and write rules. The Alerts page is the read surface; Notifications is the configure surface. They share the same feed, so an alert that fires shows on both.
 
-    The header counts and the listed rows are produced by the same
-    query under the same category filter, so a count can never disagree
-    with what is on screen. An alert counts as active when it is not
-    dismissed and either carries no snooze or its snooze has expired;
-    that one predicate drives both the list and every per-severity
-    count. A category filter value that is not recognised is rejected
-    with a 400 that names the supported set instead of being ignored.
+### API
 
-    Dismissal is idempotent: dismissing an already-dismissed alert
-    changes nothing, and every dismissal writes exactly one audit row.
-    Dismiss-all is organization-wide, and there is no per-workflow bulk
-    path, so an operator cleaning up a single workflow dismisses row by
-    row. A burst of system events of the same kind collapses rather
-    than flooding the feed, so rapid repeated emissions are dropped at
-    the channel layer. The per-row snooze actor is not surfaced on the
-    alerts view; who snoozed and when is recorded in the audit log.
+| Method | Path |
+|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/alerts` |
+| `POST` | `/api/v1/orgs/{org_id}/alerts/{alert_id}/snooze` — body `{"hours": 24}`, clamped to 1–168 hours. |
+| `POST` | `/api/v1/orgs/{org_id}/alerts/{alert_id}/dismiss` |
+| `POST` | `/api/v1/orgs/{org_id}/alerts/dismiss-all` |
+
+Dismiss-all covers the whole organization. There is no per-workflow bulk path, so cleaning up one workflow means dismissing its rows one by one.
+
+### See also
+
+- [Notifications](#52-notifications) — channels and rules
+- [Budgets](#31-budgets) — the spend behind a spend alert
+- [Policies](#22-policies) — what produces a blocked action
 
 
 ## 5.4 Team
 
-The **Team** page is the org-membership surface. It lists every
-member and every pending invite, surfaces the per-role capability
-matrix, and lets owners + admins invite or remove people. It lives
-at `/control-center/team` in the sidebar under **Access** and is
-gated by the `team` plan feature (Growth and above).
+The **Team** page lists everyone in the organization, every invite that has not been accepted yet, and what each person is allowed to do.
 
-### Roles and what each can do
+The team feature is on Starter and above. On Lite the sidebar link is
+hidden and the page shows an upgrade prompt.
 
-There are four roles, ranked from most to least permissive:
+### Roles
 
-| Role | Capabilities |
+There are four roles. They are ranked: every role can do what the roles below it can do.
+
+| Role | Can do |
 |---|---|
-| **Owner** | Everything an admin can do, plus transfer org ownership, delete the org, manage billing. There is always at least one owner; the last owner cannot be demoted. |
-| **Admin** | Invite / remove members, change roles for non-owner members, edit all policies, manage API keys, configure notifications. Cannot delete the org or change billing. |
-| **Operator** | Use the dashboard read/write — view workflows, executions, traces, audit log; approve / deny pending requests; create / edit policies and API keys. Cannot change team membership or billing. |
-| **Viewer** | Read-only — view workflows, executions, audit log, MCP servers, but cannot mutate anything (including approve / deny). |
+| **Viewer** | Read the dashboard: workflows, executions, traces, the audit log, API keys, and the decision history. Export the audit log is not included — that needs Operator. |
+| **Operator** | Everything a Viewer can do, plus pause and kill workflows, decide approvals, simulate a policy, export the audit log, and run a decision-history replay. |
+| **Admin** | Everything an Operator can do, plus create and edit workflows, policies, API keys and approval rules, edit the organization, manage MCP servers, and invite and remove members. |
+| **Owner** | Everything an Admin can do, plus change a member's role, manage billing and SSO, and delete the organization. |
 
-The full capability matrix is also rendered as a section inside
-the page (so an admin can confirm what they're granting before
-sending an invite).
+An organization always has at least one owner. The last owner cannot be demoted or removed.
 
-### Members table
+Role-based access control arrives on Growth. On Starter an admin has no
+effective authority — the owner carries it alone.
 
-The members table is sortable by role (asc / desc) and shows:
+### Inviting someone
 
-- **Avatar** (initials in colour tile, or OAuth avatar for
-  GitHub / Google users).
-- **Name + email** (masked via `maskEmail` for non-self rows to
-  prevent screen-shoulder disclosure).
-- **Role** (select dropdown for owner / admin; non-owners show a
-  select for the other three roles).
-- **Joined at** (RFC-3339 timestamp; older rows predating the
-  migration render `—`).
-- **Remove** button (with confirmation dialog; the last owner
-  cannot be removed).
+1. Open **Team** in the sidebar.
+2. Enter the person's email address.
+3. Pick the role they should have.
+4. Send the invite.
 
-Owners and the current user are pinned near the top of the list
-regardless of sort order, so an admin never accidentally scrolls
-past themselves.
+The invite arrives by email and points at `https://nullrun.io/invite?token=<token>`. The link stays the same until the invite is accepted or revoked.
 
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../assets/images/screenshots/team-light.png"
-       alt="Team page — invite panel above the members table, with Email field, role selector, and Send invite button in the top right."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../assets/images/screenshots/team-dark.png"
-       alt="Team page — invite panel above the members table, with Email field, role selector, and Send invite button in the top right."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">Team · Send invite</figcaption>
-</figure>
+An invite is refused when:
 
-### Invites
+- The address is already a member of the organization.
+- An invite to that address is still pending.
+- The seat quota is full.
 
-Above the members table is the **Invite** panel with an email
-field + role selector. The dialog rejects:
+### Pending invites
 
-- **Self-invites** — `You cannot invite yourself`.
-- **Existing members** — `This person is already a member`.
-- **Duplicate pending invites** — `Invite already sent to this
-  email`.
+Invites that have not been accepted are listed under the members. Each row shows the address, the role, the invite link, and whether the last delivery attempt succeeded. You can resend the invite or revoke it.
 
-Only owners and admins see the invite panel; operators and
-viewers see a read-only members list.
-
-After sending, the invite appears in a separate **Pending
-invites** section below the members table. Each pending row
-shows:
-
-- **Email + role** + **Token** (copyable deep link).
-- **Last send status** — `pending` / `sent` / `failed` (with
-  SMTP error text on `failed`).
-- **Last successful delivery** timestamp.
-- **Resend** and **Revoke** buttons.
-
-The invite link is `<APP_URL>/invite?token=<token>`; the deep
-link is stable until the invite is revoked or accepted.
+A revoked invite stops working immediately.
 
 ### Seat quota
 
-The page header shows `N / <plan-cap> seats used`. The seat count
-includes both active members and pending invites, so an admin
-sees the quota cost of every outstanding invite in real time.
+The header shows how many seats the organization uses against the plan's allowance. Members and pending invites count together, so an outstanding invite shows its cost before it is accepted.
 
-When the org hits the seat cap, the invite panel disables the
-send button and surfaces an upgrade prompt — `Team seat limit
-reached — N of N seats used` — that links to **Billing & Plan**
-(`?tab=plan`).
+When the quota is full, the invite button is disabled and the page links to **Billing & Plan** to buy more seats.
 
-### Plan gating
+### Removing a member
 
-The Team page itself renders a `TierGate` upgrade prompt for
-plans without the `team` feature; the sidebar link is also hidden.
-Lite users cannot view the page, and the backend rejects every
-member / invite mutation with `403 seat_feature_disabled`.
+Owners and admins can remove a member from the members list. Removing someone ends their sessions for the organization, so a live session cannot outlive the membership.
+
+The last owner cannot be removed.
+
+### Changing a role
+
+Only an owner can change a member's role. Changing your own role is not possible, and the last owner cannot be demoted.
 
 ### Audit trail
 
-Every invite send, resend, revoke, role change, and removal is
-recorded in the audit log with the actor's `decided_by` UUID.
-Admins can search the audit log by `action = team.*` to reconstruct
-who did what to whom.
+On Growth and above, every invite, resend, revoke, role change, and removal is recorded in the audit log with the actor and the timestamp. Filter by the team action to reconstruct who did what.
 
-### Where to read next
+The audit log is a plan feature. Lite and Starter have none.
 
-- [Organization](#56-organization) — for changing the org name,
-  contact email, and DPA acceptance.
-- [Billing & Plan](#55-billing-plan) — the Plan tab is where seat
-  upgrades are purchased.
-- [Audit log](#43-error-handling) — every team
-  mutation leaves a row.
+### See also
 
-!!! info "Deep dive"
-
-    Roles are ranked rather than a flat set: viewer sits below
-    operator, operator below admin, admin below owner, and a
-    capability check compares tiers instead of matching names.
-    Operator is a tier in its own right — allowed to approve,
-    not allowed to change membership — and where a role crosses
-    into organization storage it is recorded as an ordinary
-    member rather than passed along as a tier comparison.
-
-    Owner authority is granted when the organization is created
-    and does not depend on the plan, so a downgrade leaves the
-    owner in place. Admin authority does depend on the plan. If
-    the plan cannot be resolved the check refuses with a retry
-    hint rather than returning a permissive answer, and a member
-    row claiming admin on a plan that does not carry the
-    capability grants nothing.
-
-    Seats count active members and pending invites together, so
-    an outstanding invite shows its cost before it is accepted.
-    An invite that would cross the cap is refused with a distinct
-    error that the page renders as an upgrade prompt.
-    Self-invites, duplicate pending invites, and invitations to
-    existing members are each rejected outright rather than
-    folded into an existing row. The last owner cannot be demoted
-    or removed, and removing anyone ends their sessions for that
-    organization so a live session cannot outlive the membership.
-
-    A membership belongs to exactly one organization, and an
-    invite token binds its recipient to that organization only.
-    Seat limits are carried by the plan, and an active trial is
-    measured against the trial's own cap; a trial past its term
-    resolves to the standard cap.
+- [Organization](#56-organization) — the organization's name, contact email, and DPA acceptance
+- [Billing & Plan](#55-billing-plan) — where seats are bought
+- [Audit log](#43-error-handling) — every team change leaves a row
 
 
 ## 5.5 Billing & Plan
 
-The **Billing & Plan** page combines subscription / payment /
-invoice history with quota / plan-comparison / feature-gate
-information under one URL. It lives at
-`/control-center/billing` in the sidebar.
+The **Billing & Plan** page covers two things: the subscription and the plan. It lives under **Billing** in the sidebar and has two tabs.
 
-The two questions a plan change raises — "can I afford the next
-tier" and "how do I pay for it" — share one fetch and one loading
-state, so the operator never waits on two round-trips to answer
-them.
+| Tab | Answers |
+|---|---|
+| **Billing** | Which plan, at what price, paid how, with which invoices. |
+| **Plan** | How much of the plan is used, and what a different plan gives. |
 
-The active tab is encoded in the URL via `?tab=billing|plan` so the
-view is shareable + reload-safe. `?tab=plan` is the common inbound
-from upgrade prompts (the at-risk banner, the `TierGate`, and the
-`/control-center/plan` URL, which redirects here). Anything
-else — and the default — is the **Billing** tab.
+The tab is part of the URL: `?tab=billing` or `?tab=plan`. **Billing** is the default. Every upgrade prompt in the dashboard opens `?tab=plan`, so a comparison comes before a payment.
 
-### The Billing tab
+### Plans and prices
 
-Default landing. The header reads **Billing** with the subtitle
-"Subscription, payment method and invoice history."
+| Plan | Monthly | Yearly | Per month, billed yearly |
+|---|---|---|---|
+| Lite | $0 | — | — |
+| Starter | $29 | $278 | $23 |
+| Growth | $99 | $950 | $79 |
+| Scale | $299 | $2 870 | $239 |
+| Enterprise | Contact sales | Contact sales | Contact sales |
 
-The hero card surfaces:
+Yearly billing costs 20 % less than twelve monthly payments. Lite is free and has no paid cycle.
 
-- **Plan name + price** (e.g. `Starter · $29/mo · Renews Sep 30`).
-- **Status pill** — `Active` / `Past due` / `Cancelled` / `Expired`
-  (4-state machine; `Trialing` is not a state — paid plans go
-  straight to `Active` after Polar checkout; Lite is free forever
-  with no trial).
-- **Manage subscription** button (see the customer-portal note
-  below).
-- **Update payment method** button.
+### What a plan includes
 
-Below the hero:
+A plan sets two things: the caps on what an organization may create, and the features it may use.
 
-- **Current period end** — RFC-3339 timestamp.
-- **Payment method** — `Brand · last4` (Visa, Mastercard, Amex).
-  Full PAN and CVC are never persisted; Polar is the merchant of
-  record.
-- **Invoice history** — table of `Date / Invoice number / Amount /
-  Status / Download`. Each PDF download wraps the blob in
-  `URL.createObjectURL` and opens it; `window.open` can't attach
-  the bearer token.
-
-!!! note "Customer portal"
-    NullRun does not operate a self-service customer portal. Both
-    **Manage subscription** and **Update payment method** controls
-    render a `mailto:support@nullrun.io` deep-link with a pre-filled
-    subject + body. Auto-checkout on first mount (when
-    `pending_checkout_plan` is set in sessionStorage) is preserved.
-
-#### Lite orgs
-
-Lite is the free tier — there is no active `billing_subscriptions`
-row (a row in `Cancelled` or `Expired` status is also treated as
-Lite: no Polar anchor, no live payment method). The hero reads
-`$0/mo · Free tier` and the payment-method / invoices sections
-collapse.
-
-### The Plan tab
-
-Default landing when `?tab=plan` is set. The header reads **Plan**
-with the subtitle "Quota usage, plan comparison and feature
-availability."
-
-The tab surfaces:
-
-- **Quota usage cards** — every plan cap (workflows, policies,
-  api_keys, seats, executions, tokens/hour, requests/second,
-  approval rules) with `used / limit` and a percentage. The
-  executions card surfaces `executions_period_kind` so the operator
-  knows whether the reset is the **Lite rolling 1-month window**
-  anchored at `organizations.created_at` (Lite) or the **Polar
-  billing-cycle anchor** (paid plans). `calendar_month` only
-  appears as a Postgres-failure fallback when the org-row lookup
-  fails.
-- **At-risk banner** — when `quota.at_risk` is true, the page
-  renders a callout with the projected hit date
-  (`projected_hit_in_days`) and a CTA to upgrade.
-- **Plan comparison table** — every public plan catalog row, with
-  the per-tier feature column (Approval rules, Audit log, MCP
-  servers, Notifications, …). The current plan row is highlighted
-  and disabled.
-- **Per-tier feature-gate panel** — a tighter view of which
-  features are on/off at the current plan, with upgrade CTAs.
-
-#### Per-tier caps
-
-Canonical cap values per plan (from the `plans` table — single
-source of truth, surfaced via `GET /api/v1/plans`):
+#### Caps
 
 | Cap | Lite | Starter | Growth | Scale | Enterprise |
 |---|---|---|---|---|---|
-| Workflows | 3 | 8 | 50 | 200 | unlimited |
-| API keys | 10 | 15 | 100 | 350 | unlimited |
-| Seats | 1 | 3 | 10 | 75 | unlimited |
-| Policies | 3 | 10 | 25 | 150 | unlimited |
-| Approval rules | 0 | 0 | 20 | unlimited | unlimited |
-| Tokens / hour | 10 000 | 25 000 | 300 000 | unlimited | unlimited |
-| Executions / month | 75 000 | 100 000 | 750 000 | 2 000 000 | unlimited |
-| Requests / second | 5 | 10 | 50 | 300 | 1 000 |
+| Executions per month | 75 000 | 100 000 | 750 000 | 2 000 000 | Unlimited |
+| Workflows | 3 | 8 | 50 | 200 | Unlimited |
+| Policies | 3 | 10 | 25 | 150 | Unlimited |
+| API keys | 10 | 15 | 100 | 350 | Unlimited |
+| Seats | 1 | 3 | 10 | 75 | Unlimited |
 
-Lite has the `team`, `approvals`, and `audit log` features
-disabled; Starter unlocks team workspaces and alerts; Growth
-unlocks approvals, audit log, custom policies, and command
-palette; Scale adds saved-cost-share and unlimited workflows;
-Enterprise removes every cap.
+An approval rule counts against the policy cap. A policy that carries its own approval rule counts once, as a policy.
 
-The catalog comes from `GET /api/v1/plans`, which is
-unauthenticated and lives outside the `createApiClient` factory,
-so the page shell fetches it once and threads it through both
-tabs.
+#### Features
 
-#### Billing period toggle
+| Feature | Lite | Starter | Growth | Scale | Enterprise |
+|---|---|---|---|---|---|
+| Team | — | Yes | Yes | Yes | Yes |
+| Alerts | — | Yes | Yes | Yes | Yes |
+| RBAC | — | — | Yes | Yes | Yes |
+| Human approvals | — | — | Yes | Yes | Yes |
+| Audit log | — | — | Yes | Yes | Yes |
+| Custom policies | — | — | Yes | Yes | Yes |
+| Replay | — | — | Yes | Yes | Yes |
+| SSO | — | — | — | Yes | Yes |
+| History retention | 3 days | 7 days | 30 days | 90 days | Unlimited |
 
-Above the comparison table, a `BillingPeriodToggle` switches
-between **Monthly** and **Yearly** price columns. The yearly
-column is computed via `computeYearlyPriceCents` so the discount
-matches the public pricing page. The wire string for the yearly
-period is `"year"` (not `"yearly"`) — `BillingPeriod::Yearly.as_str()`
-returns the short form to match the frontend
-`BillingData.billing_cycle: "monthly" | "year"` type.
+### The Lite trial
 
-!!! note "Plan IDs on the wire"
-    The canonical id for Enterprise is `"enterprise_unlimited"`.
-    The id `"enterprise"` carries Scale content. `GET /api/v1/plans`
-    returns the canonical id; the dashboard renders it as the
-    **Enterprise** plan name. If you query the catalog by id, use
-    `enterprise_unlimited`.
+A new Lite organization gets Scale for 14 days. The Plan tab shows a countdown while the trial runs and a banner when it ends. The organization keeps its Lite plan and its Lite caps when the trial ends.
 
-### Auto-checkout (post-signup)
+### The period
 
-When a user lands on `/control-center/billing` directly with a
-`pending_checkout_plan` in sessionStorage (post-signup flow), the
-Billing tab is the right destination — it shows the
-**Manage subscription** portal button after a successful checkout
-returns. The Plan tab doesn't get this side effect because the Plan
-tab is a comparison, not a payment surface.
+The executions counter runs over a period, and the period decides when the counter resets.
 
-### Upgrading from anywhere
+| Plan | The period |
+|---|---|
+| Lite | A rolling 30 days, anchored at the day the organization was created. |
+| Paid | The billing cycle. Monthly or yearly, as billed. |
 
-The same Billing & Plan page is where every upgrade prompt in the
-dashboard lands. The redirect contract is:
+The Plan tab states the period under the Executions card: `rolling 30 days · resets in N days` for Lite, `resets on your billing day · in N days` for a paid plan.
 
-- TierGate on a gated page → `?tab=plan`.
-- At-risk banner (any page) → `?tab=plan`.
-- `Upgrade plan` button in a feature empty-state → `?tab=plan`.
+### Reading the usage
 
-All three deep links land on the Plan tab so the user sees the
-comparison table before being asked to pay.
+The Plan tab opens with five quota cards, one per counter.
 
-### Where to read next
+| Card | Counts | Resets |
+|---|---|---|
+| Executions | The decisions the organization took in the period. | On the period boundary. |
+| Workflows | Saved workflows. | Never. |
+| API keys | API keys. | Never. |
+| Policies | Policies, plus the approval rules that count against the policy cap. | Never. |
+| Team members | Members and pending invites. | Never. |
 
-- [Pricing page](https://nullrun.io/pricing) — public plan
-  catalog (the Billing page reads from the same endpoint).
-- [Workspace & Org](#56-organization) — for changing the org
-  name / contact email / DPA acceptance.
+Each card shows the count, the cap, and the share used. A card with room left shows `N remaining`. A card on an unlimited cap shows `Unlimited`.
 
-!!! info "Deep dive"
+Deleting a workflow, a policy, or an API key frees its slot at once.
 
-    Plan identity and subscription state are both small state machines.
-    A subscription is always in one of four states â€” active, past due,
-    cancelled, or expired â€” and only a few moves between them are
-    valid: active may go to past due, cancelled, or expired, and past
-    due may go back to active or onwards to cancelled or expired.
-    Anything else is rejected rather than coerced, so status never
-    rewinds implicitly and a failed renewal cannot silently restore a
-    cancelled plan. A free org has no subscription row at all, and that
-    absence is what marks the free tier; a subscription sitting in
-    cancelled or expired status counts as free too.
+#### The at-risk banner
 
-    Prices and capabilities are read from the plan catalog rather than
-    embedded in the page, so the dashboard, the public pricing page,
-    and any direct query against the catalog agree by construction. The
-    catalog is readable without authentication and is cacheable, which
-    is what lets the page shell fetch it once and share the result
-    across both tabs. Yearly pricing is derived from the same monthly
-    figure by a single computation, so the discount shown in the
-    comparison table matches the public pricing page exactly.
+When the organization is on pace to reach its execution cap before the period ends, a banner states the number of days and links to a larger plan. Once the cap is reached, every execution is refused until the period resets.
 
-    The Enterprise plan carries the wire identifier
-    `enterprise_unlimited`. Query the catalog by that identifier; the
-    shorter `enterprise` identifier does not name the Enterprise tier.
-    Paid plans have no trial state â€” checkout moves a plan straight to
-    active â€” and the free tier stays free indefinitely.
+### The plan comparison table
 
-    There is no self-service customer portal and no self-service
-    cancellation: both subscription management and payment-method
-    updates resolve to a support contact, and an invoice is downloaded
-    through a credentialed request rather than handed to a new window.
-    Every upgrade entry point in the product â€” the prompt on a gated
-    page, the at-risk banner, and the upgrade action in a feature empty
-    state â€” deep-links to the Plan tab, so a comparison is always shown
-    before a payment is requested. The Plan tab stays
-    comparison-only; payment actions live on the Billing tab.
+The Plan tab carries a table with one column per plan and one row per cap or feature: Price, Executions per month, Workflows, Policies, API keys, Seats, Team, RBAC, Human approvals, Audit log, History. The current plan's column is marked, and its button is disabled.
+
+A **Monthly** / **Yearly** toggle sits above the table. It switches the price row between the monthly and the yearly figure.
+
+### The Billing tab
+
+#### The plan card
+
+The card names the plan and the price.
+
+| Plan | Reads |
+|---|---|
+| Lite | `Free • Forever`, with a **Free tier** chip. |
+| Paid | `$29/mo` or `$278/yr`, with an **Active subscription** chip. |
+
+A paid organization on the monthly cycle also gets a **Save 20 %** banner that links to the yearly prices.
+
+#### Subscription details
+
+| Field | Meaning |
+|---|---|
+| Status | `active`, `past_due`, `cancelled`, or `expired`. |
+| Subscription ID | The short identifier of the subscription. |
+| Started | The day the subscription began. |
+| Next renewal | The day the current period ends. |
+
+A Lite organization has no subscription, and the card reads **No active subscription**.
+
+#### Payment method
+
+The card shows the card on file as `Brand •••• last4`. **Update payment method** opens an email to support.
+
+#### Invoices
+
+The invoice table has one row per invoice.
+
+| Column | Meaning |
+|---|---|
+| Date | When the invoice was issued. |
+| Invoice | The invoice number. |
+| Amount | The amount charged. |
+| Status | `paid`, `open`, or `pending`. |
+| Download | The invoice PDF. |
+
+An organization with no invoices reads **No invoices yet**.
+
+#### Contacting support
+
+NullRun has no self-service customer portal. **Contact support** and **Update payment method** both open an email to `support@nullrun.io` with the details filled in.
+
+### Changing the plan
+
+**Upgrade plan** on the plan card opens the Plan tab, where each other tier carries its own button. An upgrade takes effect at once.
+
+A downgrade to a plan with lower caps asks what to do with the objects that no longer fit. The preview lists every group that is over its new cap.
+
+| Group | Choice |
+|---|---|
+| Workflows | Archive, Delete, or Keep. |
+| Policies | Archive, Delete, or Keep. |
+| Members | Archive. |
+| Slack installs | Archive. |
+| API keys | Revoke. |
+
+A downgrade takes effect at the end of the current billing period. The Plan tab shows a banner with the date and the target plan until then.
+
+### Plan identifiers
+
+The plan identifiers on the wire are `lite`, `starter`, `growth`, `scale`, and `enterprise_unlimited`.
+
+| Plan | Identifier |
+|---|---|
+| Lite | `lite` |
+| Starter | `starter` |
+| Growth | `growth` |
+| Scale | `scale` |
+| Enterprise | `enterprise_unlimited` |
+
+Query the plan catalog by `enterprise_unlimited` for the Enterprise tier.
+
+### API
+
+The plan catalog is public. It needs no authentication.
+
+| Method | Path |
+|---|---|
+| `GET` | `/api/v1/plans` |
+
+### See also
+
+- [Budgets](#31-budgets) — the money the plan pays for
+- [Team](#54-team) — the seats the plan carries
+- [Organization](#56-organization) — the workspace the plan belongs to
 
 
 ## 5.6 Organization
 
-The **Organization** page is the workspace-level config surface —
-the org's display name, slug, billing contact email, DPA
-acceptance, and the irreversible delete flow. It lives at
-`/control-center/organization` in the sidebar (no plan gate; every
-plan can edit).
+An **organization** is the workspace that holds everything: workflows, policies, approval rules, API keys, members, and spend. Every plan has one. Nothing on this page is gated.
 
-This page is **not** the billing surface — that lives at
-[Billing & Plan](#55-billing-plan). This page covers org identity and
-legal/compliance metadata only.
+The **Organization** page covers the organization's identity and its legal metadata. The plan and the seats live under [Billing & Plan](#55-billing-plan), and the people live under [Team](#54-team).
 
 ### Identity
 
-The top section is the org identity form:
+| Field | What it does |
+|---|---|
+| **Name** | The display name in the dashboard, in email headers, and in audit rows. An owner can change it. |
+| **Slug** | The URL-safe identifier. It is fixed for the life of the organization. |
+| **Contact email** | The address billing and security messages go to. An owner can change it. |
 
-- **Name** — the display name shown in the dashboard header,
-  email headers, and audit rows. Editable by owners; takes effect
-  immediately on save.
-- **Slug** — the URL-safe identifier; immutable post-creation.
-  Used in deep links, invite URLs, and webhook URLs.
-- **Contact email** — the address Polar and our support team
-  contact for billing and security notifications. Owners can edit;
-  the change triggers a confirmation re-auth (password or 2FA).
+Changing the contact email asks for a confirmation — a password or a two-factor code — before the change lands.
 
-The Save button is disabled when the form is unchanged or when
-the current user lacks the `owner` role. The success toast shows
-the new name; the page does not navigate.
+### Data Processing Agreement
 
-### DPA / Compliance
+The **DPA / Compliance** section shows whether the organization has accepted the current Data Processing Agreement.
 
-A dedicated section surfaces the org's Data Processing Agreement
-acceptance status. The section reads:
+The latest acceptance reads as a version and a date, for example `accepted v2026-06-25 on 2026-08-15`. An organization that has never accepted reads `not yet accepted`, and the section shows an **Accept DPA** button.
 
-- `accepted v2026-06-25 on 2026-08-15` (the **latest** acceptance),
-  or
-- `not yet accepted` (when the org has never accepted).
+Every earlier acceptance stays visible underneath, with the version, the date, and how it was accepted:
 
-Below the latest line, a history of every prior acceptance —
-`version · accepted_at · accepted_method`. Acceptance methods on
-the wire are `in_product` (clicked through the dashboard) or
-`signed_pdf` (an offline acceptance that ops imported).
+| Method | Meaning |
+|---|---|
+| `in_product` | Accepted by clicking through the dashboard. |
+| `signed_pdf` | Accepted offline and recorded by support. |
+| `signup_checkbox` | Accepted on the sign-up form. |
+| `checkout_step` | Accepted during checkout. |
+| `sdk_api` | Accepted through the API. |
 
-When the latest version is unaccepted, the section renders an
-inline **Accept DPA** button. Acceptance is idempotent on
-`(org_id, dpa_version)` so a re-click is harmless — the backend
-returns the existing row with `created: false`. The
-`accepted_method` for the dashboard button is `in_product`.
+Accepting the same version twice is harmless. The organization keeps its first acceptance.
 
-DPA fetch + acceptance failures do not block the page render —
-the section shows an inline retryable error and the rest of the
-page stays interactive.
+### Closing the organization
 
-### Members (linked from here)
+At the bottom of the page, the **Danger zone** closes the organization. Only an owner sees the button, and only when nobody else is a member.
 
-The page does not host the members table itself — the link in
-the team section takes the operator to the **Team** page
-(`/control-center/team`) under **Access**. Plan-gated to
-Growth+.
+To close an organization that still has other members, transfer ownership to one of them first. The request is refused with `ORG_HAS_MEMBERS` and the member count.
 
-### Delete organization (irreversible)
+The confirmation asks you to type the organization name.
 
-At the bottom of the page, the **Danger zone** section exposes
-the irreversible delete flow. The button is **Delete
-organization** and is only rendered when the current user has
-the `owner` role AND is the only remaining owner; otherwise the
-button is hidden and a one-line explainer tells the operator
-which precondition is missing.
+What closing the organization does:
 
-The confirmation dialog requires the operator to type the org
-name verbatim into a confirm field — `Type "acme-ai" to confirm`.
-Submitting fires a single `DELETE /api/v1/orgs/{org_id}` that
-cascades:
+- Marks the organization as closed. The workflows, executions, traces, policies, approval rules, alerts, API keys, memberships, and invites go with it.
+- Ends the owner's session access to the organization. Other members lose access at the same time.
+- Leaves the audit rows in place. They are kept for the retention window so a forensic question can still be answered afterwards.
 
-- All workflows, executions, traces.
-- All policies, approval rules, alerts, audit rows.
-- All API keys (server-minted; the org loses access immediately).
-- All team memberships + invites.
+#### The 60-day grace period
 
-The dashboard then signs the operator out and redirects to
-`nullrun.io`.
+A closed organization can be restored. The grace period is 60 days.
 
-There is no undo. The 30-day audit-log retention still applies —
-audit rows are tombstoned rather than destroyed, so a
-post-delete forensic query through support is still possible
-within the retention window. After 30 days, the audit rows are
-purged.
+| Action | Effect |
+|---|---|
+| **Restore** | Puts the organization back in front of the gate. The spend counters for the period survive, so a restored organization does not get a second allowance. |
+| **Transfer ownership** | Hands the organization to another member. The remaining members keep access. |
+
+When the grace period ends, the data is purged. The restore route is `POST /api/v1/orgs/{org_id}/restore`, and the ownership transfer is `POST /api/v1/orgs/{org_id}/transfer-ownership`.
 
 ### Audit trail
 
-Every identity change (name, contact email) and every DPA
-acceptance is recorded in the audit log with the actor's
-`decided_by` UUID. The irreversible delete-org flow writes a
-single audit row before cascade, marked `action = org.delete`,
-which is retained for the full retention window regardless of
-subsequent tombstones.
+Every name change, contact email change, and DPA acceptance is recorded in the audit log with the actor and the timestamp. Closing the organization writes one row of its own.
 
-### Where to read next
+### See also
 
-- [Team](#54-team) — invites, role matrix, seat quota.
-- [Billing & Plan](#55-billing-plan) — for changing the plan or seat
-  count.
-- [Audit log](#43-error-handling) — every identity
-  change leaves a row.
-
-!!! info "Deep dive"
-
-    Organization identity is read as a single aggregate: the org
-    record, the caller's effective plan including any trial
-    entitlements, the member count, and the count of active
-    workflows. Only active workflows count toward the plan cap,
-    so archived and deleted ones cannot inflate the apparent
-    load an org is carrying.
-
-    Updates require at least one of the name or the contact
-    email; an empty submission is rejected rather than silently
-    bumping the modification timestamp. Changing the contact
-    email requires a confirmation re-auth, by password or
-    two-factor. A caller who is not an owner receives the same
-    not-found answer as a caller naming an organization that
-    does not exist, so a guessed identifier cannot be used to
-    probe for the existence of other orgs.
-
-    Deletion is permitted only when the caller is an owner and
-    the organization has no other members; anything else is
-    refused with a remediation hint pointing at ownership
-    transfer, and no automated path bypasses that transfer.
-    Deletion cascades to workflows, executions, traces,
-    policies, approval rules, alerts, API keys, memberships, and
-    invites. The organization then sits in a grace period during
-    which it remains addressable and can be deleted for good or
-    restored; when the grace period ends the data is purged. The
-    audit rows it wrote are tombstoned rather than destroyed and
-    survive to the end of the retention window, so a forensic
-    query through support is still answerable afterwards.
-
-    Deleting an organization deliberately leaves the caller's
-    session intact, because the account deletion step may follow
-    immediately in the same flow; other members lose access at
-    the data layer. Acceptance of a Data Processing Agreement is
-    keyed on the organization and the agreement version, so
-    re-submitting the same version returns the existing record
-    instead of a second one. Versions increase over time, which
-    is why every earlier acceptance remains visible as history
-    alongside the method that produced it — acceptance in the
-    product or an offline signature. A failure to fetch or record
-    acceptance is reported inline and leaves the rest of the page
-    interactive.
+- [Team](#54-team) — members, roles, and seats
+- [Billing & Plan](#55-billing-plan) — the plan and the invoices
+- [Profile settings](#57-profile-settings) — your own account
+- [Audit log](#43-error-handling) — every organization change leaves a row
 
 
 ## 5.7 Profile settings
 
-The **Profile settings** page is the per-user surface: personal
-info, two-factor auth, password, sessions, and the
-delete-account flow. It lives at `/control-center/profile` in the
-sidebar (no plan gate).
+The **Profile settings** page is about you: the person signed in. It lives under **Profile** in the sidebar and is on every plan.
 
-This page is **not** the org-level **Organization** page — that
-one edits org identity, slug, billing email, and DPA acceptance.
-Profile is the *person* who is currently signed in.
+This is not the [Organization](#56-organization) page. The organization page edits the workspace. This page edits your account.
 
-### Profile hero
+### Your details
 
-The hero card shows:
+| Field | What it does |
+|---|---|
+| **Display name** | How you appear in the dashboard and in audit rows. |
+| **Email** | The address you sign in with and where notifications reach you. |
+| **Avatar** | Your initials on a colour tile, or the avatar from your identity provider when you signed in with one. |
 
-- **Avatar** — initials on a colour tile (chosen server-side via
-  `avatar_color`), OR the OAuth avatar (populated for GitHub /
-  Google users, null for email-registered users). The OAuth
-  image takes precedence over the initials fallback when both
-  exist.
-- **Display name + email** + **Member since** timestamp.
+Changing the email asks for a confirmation — a password or a two-factor code — and sends a verification message to the new address. The address is not live until you click the link in it. A **Resend verification email** button appears while the address is unverified.
 
-### Personal info
+### Password
 
-A two-column form with:
+The password section appears when your account has a password. Signing up with an identity provider instead gives you a **Set password** action.
 
-- **Display name** — editable; saves on submit.
-- **Email** — editable, but the change triggers a confirmation
-  re-auth (password or 2FA) and a verification email to the new
-  address. Until the operator clicks the verification link, the
-  email chip reads `Verification pending`.
-- **Resend verification email** — visible when the email is
-  unverified. Disabled for 60 seconds after each click.
+Changing a password asks for the current one. Every session ends, so every device has to sign in again.
 
-A **Saved** indicator next to the Save button acknowledges the
-last write without taking up screen space.
+### Two-factor authentication
 
-### Security
+Two-factor authentication adds a one-time code from an authenticator app to every sign-in.
 
-A two-column security section covers:
+| State | What you can do |
+|---|---|
+| **Not configured** | **Enable 2FA** shows a secret and a QR code. The first code confirms the enrolment. |
+| **Enabled** | **Disable 2FA**, **Regenerate backup codes**, and **Regenerate secret**. Each asks for the current password and a fresh code. |
 
-- **Password** — visible when the user has a password (email-
-  registered users). OAuth-only users (no `has_password` flag)
-  see a one-line explainer + a **Set password** button that
-  links to the password-set flow.
+Enabling it asks for the current password before it issues a secret. Backup codes are shown once, at the point the first code confirms the enrolment. Only the number of codes left and the time of the last use stay visible.
 
-  The password change form requires the **current** password and
-  validates the **new** password server-side. The dialog does not
-  unmount on success — the user can change another field without
-  re-entering the password.
-
-- **Two-factor auth (TOTP)** — three states:
-  - **Not configured** — `Enable 2FA` opens a modal that
-    generates a TOTP secret, renders a QR code, and asks for the
-    first 6-digit code to confirm. The current password is
-    required (`requireCurrentPassword`) before the secret is
-    shown.
-  - **Enabled** — `Disable 2FA` and `Regenerate backup codes`
-    (and `Regenerate secret`, depending on the build). Both
-    require the current password and a fresh TOTP code.
-  - **Pending recovery** — for users who lost their device;
-    the `Regenerate` flow can also be used to rotate secrets.
-
-  The 2FA status object (`{ enabled: boolean, backup_codes_remaining: number, last_used_at: string | null }`) drives the chip
-  in the section header.
+If you lose the device, the recovery flow lets you disable two-factor authentication without it.
 
 ### Sessions
 
-The **Session section** is a read-only card showing the
-information security needs to know:
+The session section shows:
 
-- **Last login** timestamp and IP.
-- **Active session count** (the current browser + every other
-  logged-in device the user has).
-- **Sign out of all other devices** — single click, immediately
-  invalidates every other session but keeps the current browser
-  signed in. The action is logged in the audit log under
-  `action = session.terminate_all`.
-- **Log out** — single click, signs out the current browser only.
+- The last sign-in time and address.
+- The number of active sessions.
 
-### Display preferences
+Two actions:
 
-The Display preferences section is reserved for per-user view
-options. Backend billing is always USD-cents; every cost surface
-carries a `USD` suffix to make that explicit.
+| Action | Effect |
+|---|---|
+| **Sign out of all other devices** | Ends every session except the one you are using. |
+| **Log out** | Ends the session in this browser. |
 
-### Danger zone
+Signing out of the other devices is recorded in the audit log.
 
-The **Delete account** button at the bottom of the page opens a
-modal that:
+### Deleting your account
 
-- Requires typing the user's display name verbatim
-  (`Type "Anatolii" to confirm`).
-- Requires entering the current TOTP code **if 2FA is enabled**
-  (otherwise just the password).
-- Calls `DELETE /api/v1/me`, which tombstones the user, removes
-  every session, and invalidates every API key the user
-  personally minted. Org-level data (workflows, policies, audit
-  rows) is untouched — that is the **Organization → Delete
-  organization** flow, not this one.
-- Signs the operator out and redirects to `nullrun.io`.
+At the bottom of the page, the **Danger zone** deletes your account. The endpoint is `DELETE /api/v1/auth/account`.
 
-There is no undo. Audit rows authored by the deleted user
-remain in the org's audit log (`decided_by` UUID preserved) so a
-post-delete forensic query still works within the retention
-window.
+The request asks for:
 
-### Where to read next
+| Field | When it is needed |
+|---|---|
+| **Confirmation** | Your display name, typed exactly. Your email address is accepted as a fallback. |
+| **Current password** | When your account has a password. |
+| **Two-factor code** | When two-factor authentication is on. |
+| **Ownership decision** | For every organization you own that has other members. |
 
-- [Organization](#56-organization) — the org-level identity page
-  (different from this per-user page).
-- [Audit log](#43-error-handling) — every profile
-  change (password / 2FA / email / sessions) leaves a row.
+An ownership decision has two shapes:
 
-!!! info "Deep dive"
+| Decision | What happens |
+|---|---|
+| Transfer | The organization moves to another member. |
+| Delete and notify | The organization closes and its members are told. Their sessions end. |
 
-    This surface acts on the person identified by the current
-    session, and a change of credential, address, or device list
-    applies to that person alone and never reaches organization
-    records. Every such mutation is written to the audit log
-    through the same typed path, so a profile change is as
-    visible there as a governance change.
+Leaving a decision out is refused with `OWNERSHIP_DECISION_REQUIRED`, and the response lists the organizations with their members so you can decide in place.
 
-    Two-factor enrolment requires the current password before a
-    secret is issued, and the account stays in a pending state
-    until a first code confirms it. Recovery codes are shown once
-    at that point and are not retrievable afterwards; only their
-    remaining count and the time of last use stay visible. A
-    challenge issued partway through a sign-in is honoured by the
-    next request, so an interrupted login does not force the user
-    to start over.
+What deletion does:
 
-    Account deletion requires the display name typed verbatim,
-    plus the current TOTP code when two-factor is on or the
-    password when it is not. For every organization the user
-    owns alongside others, an explicit decision is required:
-    transfer ownership to a named member, or delete the
-    organization and notify its members. Omitting one is
-    rejected, with the member roster supplied so the decision can
-    be made in place. Each owned organization is decided and acted
-    on in a single pass, so there is no window in which a transfer
-    succeeds and the deletion does not. If any session revocation
-    in the cascade fails, the whole operation aborts and nothing
-    is deleted, since the alternative leaves live sessions
-    pointing at an owner who no longer exists.
+- Removes your account. You cannot sign in again.
+- Ends every session you hold.
+- Writes one audit row per organization you were a member of.
 
-    Deletion tombstones the account, ends every session it holds,
-    and invalidates the API keys the user minted personally;
-    organization data is untouched. A tombstoned account cannot
-    sign in again. Audit rows the user authored remain in the
-    organization's log with the actor identifier intact, so
-    forensic questions stay answerable for the retention window.
-    Two-factor secrets are encrypted at rest, and rotating the
-    encryption key requires an operator runbook because it
-    invalidates both enrolled secrets and signed webhooks.
+Organization data is untouched. Closing an organization is a separate action on the [Organization](#56-organization) page.
+
+If a session cannot be ended, the whole operation stops and nothing is deleted. A half-finished deletion would leave live sessions pointing at an account that no longer exists.
+
+### See also
+
+- [Organization](#56-organization) — the workspace, its members, and closing it
+- [Team](#54-team) — other people in the organization
+- [Audit log](#43-error-handling) — every profile change leaves a row
 
 
 # 6. How-to
@@ -4739,12 +3493,18 @@ window.
 
 ## 6.1 Protect a LangGraph agent
 
-The SDK auto-patches LangGraph on the **first `@protect` call** —
-no manual wrapper needed for the common case.
+The SDK attaches to LangGraph on its own. Instrumentation goes in when
+`init()` runs, and again on the first `@protect` call, so a graph that
+is compiled after either point is covered.
+
+No vendor extra is needed. Install LangGraph and whatever chat model
+client you use next to the SDK.
 
 ```bash title="shell"
 pip install nullrun langgraph langchain-openai
 ```
+
+### The wiring
 
 ```python title="langgraph_agent.py"
 from langchain_openai import ChatOpenAI
@@ -4752,13 +3512,13 @@ from langgraph.graph import END, MessagesState, StateGraph
 
 from nullrun import protect
 
-# The runtime + LangGraph Pregel hook are attached lazily on
-# the first @protect call.
 llm = ChatOpenAI(model="gpt-4o-mini")
+
 
 @protect
 def chat(state: MessagesState):
     return {"messages": [llm.invoke(state["messages"])]}
+
 
 graph = StateGraph(MessagesState)
 graph.add_node("chat", chat)
@@ -4769,49 +3529,70 @@ app = graph.compile()
 result = app.invoke({"messages": [{"role": "user", "content": "Hi"}]})
 ```
 
-Every LLM call inside the graph is now cost-attributed and gated by
-your workspace policy. The same auto-instrumentation path works for
-any LangChain `Runnable` and most LangGraph node types.
+Every LLM call in the graph is cost-attributed and gated. The
+`@protect` wrapper on the node is the gate boundary: the gateway
+decides before the node body runs.
 
-### Manual wrapper
+### When the automatic attachment misses the graph
 
-If you need to attach the callback manually — e.g. inside a library
-that re-compiles graphs after the runtime was created — the explicit
-form is:
+Two cases need a different wiring:
 
-```python title="langgraph_manual_wrapper.py"
-from nullrun.instrumentation.auto import patch_langgraph_compiled
+- the graph is compiled in a worker thread, or
+- LangGraph is imported after the first `@protect` call has already
+  run.
 
-patch_langgraph_compiled()  # idempotent — safe to call repeatedly
+Wrap the entry point instead of the graph. Every invocation passes
+through that function, so the gate fires once per run:
+
+```python title="langgraph_entrypoint.py"
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, MessagesState, StateGraph
+
+from nullrun import protect
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+def chat(state: MessagesState):
+    return {"messages": [llm.invoke(state["messages"])]}
+
+
+graph = StateGraph(MessagesState)
+graph.add_node("chat", chat)
+graph.add_edge("chat", END)
+graph.set_entry_point("chat")
 app = graph.compile()
+
+
+@protect
+def run_agent(prompt: str) -> str:
+    result = app.invoke({"messages": [{"role": "user", "content": prompt}]})
+    return result["messages"][-1].content
 ```
 
-`patch_langgraph_compiled` wraps every compiled app's `.invoke` and
-`.stream` methods to inject the NullRun callback into the LangChain
-`config["callbacks"]` list per call. The control-plane kill/pause
-subscription is **independent** — it starts on the first `@protect`
-call and works for every protected call in the process regardless of
-whether you used the manual patch or the auto-instrumentation path.
+This also keeps `app` a plain compiled graph, so an `isinstance` check
+against the graph class in your own code keeps working.
 
 ### See also
 
 - [Quickstart](#14-quickstart)
+- [LLM frameworks](#65-llm-frameworks) — the other supported frameworks
 - [Examples → LangGraph](https://github.com/nullrunio/nullrun-examples/blob/master/examples/langgraph_basic.py)
 
 
 ## 6.2 Use with OpenAI Agents
 
-Install (the OpenAI Agents framework hook is the only one that
-needs a vendor package — `openai-agents`):
+Install the framework next to the SDK. There is no NullRun vendor extra
+for it.
 
 ```bash title="shell"
 pip install nullrun openai-agents
 ```
 
-Wrap the `Runner.run_sync` call (or any sync / async runner) with
-`@protect`. The runtime + `openai-agents` `RunHooks` /
-`RunStreamedHooks` patch are attached lazily on the first `@protect`
-call:
+The SDK attaches to the framework on its own. Instrumentation goes in
+when `init()` runs, and again on the first `@protect` call.
+
+### The wiring
 
 ```python title="openai_agents_protect.py"
 from agents import Agent, Runner
@@ -4832,32 +3613,35 @@ def ask(prompt: str) -> str:
 print(ask("What is the capital of France?"))
 ```
 
-`@protect` tracks every tool call the agent makes and halts the run
-if the workflow exceeds budget, hits a sensitive tool, or is
-rate-limited by the policy.
+`@protect` runs the gate before the agent starts. The run is refused if
+the workflow is out of budget, if a tool the agent calls is blocked, or
+if the policy rate-limits the call.
+
+The framework hook reports the token counts of every model call the
+agent makes, so the spend lands on the workflow without any manual
+tracking.
 
 ### See also
 
+- [LLM frameworks](#65-llm-frameworks) — the other supported frameworks
 - [Examples → OpenAI Agents](https://github.com/nullrunio/nullrun-examples/blob/master/examples/openai_agents_basic.py)
 
 
 ## 6.3 Use CrewAI
 
-Install (the SDK declares `crewai>=0.80,<2.0`; the guide targets
-**CrewAI 1.15+**, which exposes the EventBus subsystem used for
-lifecycle event tracking):
+Install CrewAI next to the SDK. There is no NullRun vendor extra for
+it.
 
 ```bash title="shell"
 pip install nullrun crewai
 ```
 
-The patch subscribes to the crewai `EventBus` and translates each
-lifecycle event into a `nullrun.get_runtime().track(...)` call. The
-runtime and the crewai EventBus hook are attached lazily on the
-first `@protect` call:
+The SDK attaches to CrewAI on its own. The attachment happens on
+`init()` and on the first `@protect` call.
+
+### The wiring
 
 ```python title="crewai_crew.py"
-import nullrun
 from crewai import Agent, Crew, Task
 from nullrun import protect
 
@@ -4884,148 +3668,97 @@ def run_crew() -> str:
 print(run_crew())
 ```
 
-The CrewAI integration automatically tracks crew / agent / task /
-tool lifecycle events. Token totals still come from the crew's usage
-metrics after kickoff — the SDK reports the canonical
-`(model, prompt_tokens, completion_tokens)` tuple on every billable
-row.
+`@protect` runs the gate once, at the start of the crew run. The run
+is refused if the workflow is out of budget, if the policy rate-limits
+the call, or if the workflow is paused or killed.
 
-When crewai's events module is not importable (a stripped-down
-third-party build), only the per-event span bridge is
-skipped; the post-run cost attribution still works.
+Individual CrewAI tool executions are reported as events. They are not
+evaluated against the tool policy on their own.
+
+### What the SDK reports
+
+| Source | What it reports |
+|---|---|
+| The CrewAI event bus | Crew, agent, and task lifecycle events |
+| `crew.usage_metrics` | One LLM cost row per model, read after the run returns |
+
+The event bus path needs CrewAI 1.15 or newer. On an older release the
+lifecycle events are skipped and the usage totals still arrive.
 
 ### See also
 
 - [LLM frameworks](#65-llm-frameworks)
+- [Multi-agent orchestration](#68-multi-agent-orchestration)
 - [Quickstart](#14-quickstart)
 
 
 ## 6.4 Use with FastAPI
 
-Install FastAPI alongside `nullrun`:
+Install FastAPI next to the SDK.
 
 ```bash title="shell"
 pip install nullrun fastapi uvicorn
 ```
 
-`nullrun.integrations.fastapi.install(app)` is a one-line setup that
-turns every NullRun exception in your agent API into a clean JSON
-response. Kill signals, budget caps, transport outages, and tool
-blocks all render as proper HTTP responses with end-user-safe text
-in the body.
+`nullrun.integrations.fastapi.install(app)` registers the NullRun
+exception handlers and the kill middleware on your app. Every refusal
+the gate raises becomes a JSON response with an HTTP status.
 
 ```python title="fastapi_app.py"
-from fastapi import FastAPI
 import nullrun
+from fastapi import FastAPI
 from nullrun.integrations.fastapi import install
 
-nullrun.init(api_key="nr_live_...")
+nullrun.init(api_key="nr_live_replace_me")
+
 app = FastAPI()
 install(app)
+
+
+def run_agent(message: str) -> str:
+    """Your agent call goes here."""
+    return message
+
 
 @app.post("/chat")
 @nullrun.protect
 def chat(message: str) -> dict:
-    return {"reply": agent.run(message)}
+    return {"reply": run_agent(message)}
 ```
 
 ### What `install()` registers
 
-`install(app)` wires the SDK exceptions to FastAPI's handler
-chain: every `NullRunError` subclass — including `WorkflowKilledInterrupt`
-/ `NullRunWorkflowKilledError` — is routed to the appropriate
-`app.add_exception_handler` based on its category.
+| Registration | Handles | HTTP |
+|---|---|---|
+| Exception handler for `NullRunDecision` | Budget, tool block, rate limit, pause, chain errors | Per `error_code` |
+| Exception handler for `NullRunInfrastructureError` | Transport, backend, auth, config errors | `503` |
+| ASGI middleware `NullRunMiddleware` | `WorkflowKilledInterrupt` | `503` |
 
-| Exception | Mechanism | HTTP | Body |
-| --- | --- | --- | --- |
-| `NullRunError` (budget, tool block, rate limit, soft block, etc.) | `app.add_exception_handler` | per `error_code` | `user_message`, `category: "decision"`, `retryable` |
-| Infrastructure errors (transport, 5xx, auth, config) | `app.add_exception_handler` | `503` | `user_message`, `category: "infrastructure"`, `retryable` |
-| `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) | `NullRunMiddleware` (ASGI) | `503` | `user_message`, `category: "killed"` |
+The kill middleware sits outside the exception handler chain. A kill
+that fires after the response has started cannot be rewritten, so the
+middleware re-raises it and the connection drops.
 
-`Retry-After` is set on the response whenever the exception carries a
-`retry_after` (gateway 429) or `resume_after` (workflow pause)
-attribute.
+### Status mapping for decisions
 
-### HTTP status mapping
+The integration reads `error_code` on the exception and picks a
+status.
 
-The status codes below come from `_DECISION_STATUS` and
-`_DEFAULT_DECISION_STATUS = 429` / `_DEFAULT_INFRASTRUCTURE_STATUS = 503`
-in `nullrun.integrations.fastapi`. SDK exception classes (`exceptions.py`)
-carry an `error_code` attribute; the integration maps it to HTTP at
-install time.
+| `error_code` | HTTP | Meaning |
+|---|---|---|
+| `NR-B004` | `429` | Budget exhausted |
+| `NR-L001` | `429` | Loop detected |
+| `NR-R001` | `429` | Rate limit hit |
+| `NR-T001` | `403` | Tool blocked |
+| `NR-X001` | `403` | Generic block |
+| `NR-W003` | `503` | Workflow paused |
+| Any other decision code | `429` | Default |
 
-| `error_code` | Category | HTTP | Notes |
-| --- | --- | --- | --- |
-| `NR-B004` | decision | `429` | `retryable: false`. Covers all budget-exhausted outcomes. |
-| `NR-R001` | infrastructure | `503` | `Retry-After` from `.retry_after`. Rate-limit window hit. |
-| `NR-R002` | infrastructure | `503` | `retryable: true` — rate-limit aggregate unavailable (fail-CLOSED). |
-| `NR-T001` | decision | `403` | The action itself is forbidden |
-| `NR-W004` | decision | `429` | Workflow soft-deleted or killed. |
-| `NR-W003` | decision | `503` | Workflow paused — override default to signal server-driven resume |
-| `NR-CH001` | decision | `429` | Chain context invalid. |
-| `NR-X001` | decision | `403` | Generic block (catch-all decision) |
+Every infrastructure error maps to `503`.
 
-`WorkflowKilledInterrupt` always maps to `503` (caught by the ASGI
-middleware, not the exception-handler chain — kill can fire from
-control-plane WebSocket pushes and background tasks that aren't part
-of the active request lifecycle). See
-[Reference → Errors](#74-error-codes) for the full catalog.
+The response carries a `Retry-After` header when the exception has a
+`retry_after` value (rate limit) or a `resume_after` value (pause).
 
-### Custom exception mapping
-
-If you want to override `install()`'s defaults for a single endpoint
-(rare), wrap the agent call and map the exception yourself:
-
-```python title="custom_mapping.py"
-from fastapi import HTTPException
-from nullrun import WorkflowKilledInterrupt, format_user_message
-from nullrun.breaker.exceptions import (
-    NullRunDecision,
-    NullRunInfrastructureError,
-    WorkflowPausedException,
-)
-
-@app.post("/chat")
-@nullrun.protect
-def chat(message: str) -> dict:
-    try:
-        return {"reply": agent.run(message)}
-    except WorkflowPausedException as exc:
-        # Not a NullRunDecision status — it carries .resume_after
-        # rather than .status_code.
-        raise HTTPException(
-            status_code=503,
-            detail={"message": format_user_message(exc),
-                    "code": exc.error_code},
-            headers={"Retry-After": str(int(exc.resume_after or 0))},
-        )
-    except NullRunDecision as exc:
-        # Expected policy outcome — pass it to the client as-is.
-        # .status_code is absent on some decision classes, hence
-        # the getattr fallback.
-        raise HTTPException(
-            status_code=getattr(exc, "status_code", None) or 403,
-            detail={
-                "message": format_user_message(exc),
-                "code": exc.error_code,
-                "retryable": exc.retryable,
-            },
-        )
-    except NullRunInfrastructureError as exc:
-        # System failure — log to Sentry, return generic 503
-        sentry_sdk.capture_exception(exc)
-        raise HTTPException(
-            status_code=getattr(exc, "status_code", None) or 503,
-            detail={"message": format_user_message(exc), "code": exc.error_code},
-        )
-```
-
-`WorkflowKilledInterrupt` is caught by the `NullRunError` handler
-chain and surfaced as a `503` with `category: "killed"`. Catch it
-explicitly in your endpoint if you need to checkpoint before the
-response is returned.
-
-### Response body shape
+### Response body
 
 ```json
 {
@@ -5036,36 +3769,116 @@ response is returned.
 }
 ```
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `error_code` | `string` | Stable machine-readable identifier |
-| `user_message` | `string` | End-user-safe text. Safe to render verbatim in a UI |
-| `category` | `"decision"` \| `"infrastructure"` \| `"killed"` | Coarse classification for client-side branching |
-| `retryable` | `bool` | Mirrors the SDK exception's `.retryable` |
+| Field | Type | Meaning |
+|---|---|---|
+| `error_code` | string | Stable machine-readable code |
+| `user_message` | string | End-user-safe text. Safe to render in a UI |
+| `category` | `decision`, `infrastructure`, `killed` | Coarse class for client branching |
+| `retryable` | bool | Mirrors the exception's own flag |
 
-### Per-deployment wording overrides
+The kill response has no `retryable` field.
 
-To brand the wording for a single deployment, call
-`nullrun.set_user_message(...)` once at the top of your entry point:
+### Mapping one endpoint yourself
+
+Use your own handler when an endpoint needs different wording or a
+different status.
+
+```python title="custom_mapping.py"
+from fastapi import HTTPException
+from nullrun import (
+    NullRunDecision,
+    NullRunInfrastructureError,
+    WorkflowPausedException,
+    format_user_message,
+)
+
+
+def run_agent(message: str) -> str:
+    """Your agent call goes here."""
+    return message
+
+
+@app.post("/chat")
+@nullrun.protect
+def chat(message: str) -> dict:
+    try:
+        return {"reply": run_agent(message)}
+    except WorkflowPausedException as exc:
+        # .status_code is absent here. .resume_after carries the wait.
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": format_user_message(exc),
+                "code": exc.error_code,
+            },
+            headers={"Retry-After": str(int(exc.resume_after or 0))},
+        )
+    except NullRunDecision as exc:
+        # .status_code is absent on some decision classes, so read it
+        # defensively.
+        raise HTTPException(
+            status_code=getattr(exc, "status_code", None) or 403,
+            detail={
+                "message": format_user_message(exc),
+                "code": exc.error_code,
+                "retryable": exc.retryable,
+            },
+        )
+    except NullRunInfrastructureError as exc:
+        raise HTTPException(
+            status_code=getattr(exc, "status_code", None) or 503,
+            detail={"message": format_user_message(exc), "code": exc.error_code},
+        )
+```
+
+Two classes carry no `status_code` attribute: `WorkflowPausedException`
+and `WorkflowKilledInterrupt`. Read the attribute with `getattr` and
+supply your own fallback.
+
+### Per-deployment wording
+
+Brand the message for one error code with `set_user_message`:
 
 ```python
+import nullrun
+
 nullrun.set_user_message(
     "NR-B004",
-    "You've used all your support credits. Upgrade to keep chatting.",
+    "This workflow is out of budget. Raise the cap in the dashboard.",
 )
 ```
 
-### Limitations
+### Two things to know
 
-- `app.add_exception_handler` is last-wins — if you already register
-  a `NullRunError` handler, `install()` overwrites it. Re-order
-  your `install()` call to last if you need custom precedence.
-- Kill middleware is process-global state. The kill middleware
-  binding is stored at module level; if you serve multiple FastAPI
-  apps from one process with different kill policies, the last
-  `install()` call wins. Per-app middleware
-  (`app.add_middleware(NullRunMiddleware, ...)`) is the supported
-  escape hatch.
+**Handler precedence follows the class hierarchy.** Starlette looks up
+a handler by walking the exception's class hierarchy. A handler you
+register for `NullRunError` therefore loses to the handlers
+`install()` registers for `NullRunDecision` and
+`NullRunInfrastructureError`. Register your own handler for one of
+those two classes if you want to take it over.
+
+**The kill is an `Exception`.** `WorkflowKilledInterrupt` derives from
+`NullRunError`, so a blanket `except Exception:` in your agent code
+swallows an operator kill. Catch `WorkflowKilledInterrupt` first and
+re-raise.
+
+```python title="kill_handling.py"
+from nullrun import WorkflowKilledInterrupt
+
+
+def run_agent(message: str) -> str:
+    """Your agent call goes here."""
+    return message
+
+
+@app.post("/chat")
+@nullrun.protect
+def chat(message: str) -> dict:
+    try:
+        return {"reply": run_agent(message)}
+    except WorkflowKilledInterrupt:
+        raise
+```
 
 ### See also
 
@@ -5075,302 +3888,274 @@ nullrun.set_user_message(
 
 ## 6.5 LLM frameworks
 
-The SDK's auto-instrumentation runs **lazily on the first `@protect`
-call**. The lazy trigger creates the runtime and walks `sys.modules`
-looking for known framework packages, applying each detected patch
-in a single process-wide idempotent step.
+The SDK attaches to the HTTP client and to the agent frameworks it
+finds installed. The attachment happens once per process: on `init()`
+and on the first `@protect` call.
 
-In every case, the LLM call gets `track_llm` events automatically —
-**no `@protect` required for cost tracking**. `@protect` is the
-**gate** layer (budget pre-flight + kill / pause / sensitive-tool
-decision).
+Two layers, and they do different work:
 
-> **HTTP-level coverage is the foundation.** OpenAI, Anthropic,
-> Mistral, Gemini, Cohere, and Bedrock are covered by URL-keyed httpx
-> extractors — the SDK never imports those vendor packages, so no
-> extra is required. The extras below are only needed when NullRun
-> has to call into the vendor package directly (framework hooks, not
-> HTTP hooks).
+| Layer | What it does |
+|---|---|
+| Cost tracking | Reports the token counts of every LLM call |
+| Gate | Refuses a call that breaks budget, policy, or the control plane |
 
-> The Gemini vendor extra is `google-genai` (the actively maintained
-> package, ≥ 1.0); the older `google.generativeai` package is **not**
-> supported.
+Cost tracking runs on its own. `@protect` is what turns a tracked call
+into a gated one.
 
-### Coverage matrix
+### Providers
 
-| Provider | Auto-instrumented | Tested end-to-end | Patcher |
-| --- | --- | --- | --- |
-| OpenAI (`openai`) | ✅ | ✅ | `httpx` transport hook |
-| Anthropic (`anthropic`) | ✅ | ✅ | `httpx` transport hook |
-| OpenAI Agents (`openai-agents`) | ✅ | ✅ | `patch_openai_agents` (auto on first `@protect` call) |
-| Mistral (`mistralai`) | ✅ | ⚠️ extractor only | per-vendor extractor |
-| Gemini (`google-genai`) | ✅ | ⚠️ extractor only | per-vendor extractor |
-| Cohere (`cohere`) | ✅ | ⚠️ extractor only | per-vendor extractor |
-| AWS Bedrock (`boto3`) | ✅ | ⚠️ extractor only | `httpx` extractor on `bedrock-runtime.amazonaws.com` |
-| LangChain (`langchain`) | ✅ | ✅ | `patch_langchain_callback` (auto on first `@protect` call) |
-| LangGraph (`langgraph`) | ✅ | ✅ | `patch_langgraph_compiled` (auto on first `@protect` call) |
-| LlamaIndex (`llama-index`) | ✅ | ⚠️ extractor only | `instrumentation.llama_index` (auto on first `@protect` call) |
-| CrewAI (`crewai`) | ✅ | ⚠️ extractor only | `instrumentation.crewai` (auto on first `@protect` call) |
-| AutoGen (`autogen-agentchat`) | ✅ | ⚠️ extractor only | `instrumentation.autogen` (auto on first `@protect` call) |
+Provider coverage is keyed on the request host. The SDK never imports
+a vendor package to cover it, so there is no vendor extra to install.
 
-> "Tested end-to-end" means: a multi-roundtrip test exists that
-> verifies tokens flow from the vendor response into `/api/v1/track`.
-> "Extractor only" means the unit test covers the JSON parsing, but
-> no full integration test confirms the bytes-on-the-wire → track
-> chain. Verify against your real workload before relying on it.
+| Host | Provider |
+|---|---|
+| `api.openai.com` | OpenAI |
+| `openai.azure.com` | Azure OpenAI |
+| `api.anthropic.com` | Anthropic |
+| `api.mistral.ai` | Mistral |
+| `generativelanguage.googleapis.com` | Google Gemini |
+| `api.cohere.ai` | Cohere |
+| `bedrock-runtime.amazonaws.com` | AWS Bedrock |
 
-### Install everything
+A sub-domain of one of these hosts matches too. The OpenAI and
+Mistral responses share one shape, so one extractor covers both.
 
-Install `nullrun` once, then install any framework package whose
-hook you want — the framework hook attaches lazily on the first
-`@protect` call when the framework is present in the environment:
+The SDK reports token counts. The gateway prices the call from the
+model name and the org's pricing policy.
+
+### Frameworks
+
+Each framework hook is a no-op when the package is not installed.
+
+| Package | What the hook covers |
+|---|---|
+| `httpx` | Every HTTP client built on it, including the OpenAI and Anthropic SDKs |
+| `requests` | Every client built on the `requests` library |
+| `langchain` | Chat-model calls, including in-memory mock providers |
+| `langgraph` | Compiled graphs, on every run mode |
+| `openai-agents` | The runner, with the token counts of each model call |
+| `crewai` | Crew, agent, and task lifecycle events, plus the run's usage totals |
+| `llama-index` | LlamaIndex query and chat calls |
+| `autogen-agentchat` | AutoGen agent and team calls |
+
+Install the SDK once, then install the frameworks you use:
 
 ```bash title="shell"
-pip install nullrun langgraph langchain-openai openai-agents crewai llama-index-core 'autogen-agentchat[openai]'
+pip install nullrun langgraph langchain-openai openai-agents crewai
 ```
 
-### How the httpx transport hook works
+### A runnable example
 
-The httpx transport hook wraps the response handler for any HTTP
-client built on `httpx` (the `openai` SDK and the `anthropic` SDK
-both use `httpx` under the hood). On every response, the hook:
+```python title="tracked_call.py"
+from langchain_openai import ChatOpenAI
+from nullrun import protect
 
-1. Reads the JSON body.
-2. Extracts token counts from the vendor's `usage` block
-   (`usage.prompt_tokens` / `usage.completion_tokens` for OpenAI,
-   `usage.input_tokens` / `usage.output_tokens` for Anthropic).
-3. Emits a `track_llm` event with the extracted tokens.
+llm = ChatOpenAI(model="gpt-4o-mini")
 
-The backend recomputes cost from the org's pricing policy — the
-SDK only reports token counts, never dollar amounts.
 
-### Detection logic
+@protect
+def ask(prompt: str) -> str:
+    return llm.invoke(prompt).content
 
-If your framework is installed, the SDK patches it automatically on
-the **first `@protect` call**. The detection logic walks
-`sys.modules` looking for known packages — `openai`, `openai-agents`,
-`anthropic`, `langgraph`, `langchain`, `mistralai`, `google-genai`,
-`cohere`, `boto3` (bedrock), `llama_index`, `crewai`,
-`autogen_agentchat` — and applies the appropriate patch.
 
-Order matters: if your code imports `openai` before the first
-`@protect` call, the hook is in place before the first request. If
-you import after the first `@protect` call, the SDK may not see the
-late import — call `nullrun.patch()` explicitly to force a re-scan.
+print(ask("What is the capital of France?"))
+```
 
-### Provider-specific notes
+The framework hook reports the token counts of the call inside
+`ask`. The `@protect` wrapper gates it.
 
-#### Anthropic
+### When the SDK cannot see the call
 
-Reasoning tokens (for o1-style extended-thinking models) are tracked
-at the reasoning rate configured in your pricing policy. The hook
-reads `usage.reasoning_tokens` when present.
+| Symptom | Cause | Fix |
+|---|---|---|
+| No cost shows up for a provider | The host is not in the table above | Report the call by hand |
+| No cost shows up for a custom client | The client does not use `httpx` or `requests` | Report the call by hand |
+| The call is tracked twice | A manual report sits next to an automatic one | Drop the manual report |
 
-#### Mistral
+Reporting a call by hand means calling `runtime.track_llm(...)`. See
+[Manual cost and event tracking](#610-manual-cost-event-tracking).
 
-The hook watches `mistralai` ≥ 1.0 (`MistralClient` and
-`MistralAsyncClient`). Earlier `mistralai<1` clients have a
-different response shape; the extractor handles both with a
-duck-type check on `usage.prompt_tokens` / `usage.completion_tokens`.
-
-#### Bedrock
-
-Bedrock uses AWS event streams (`InvokeModelWithResponseStream`),
-not plain JSON responses. The hook attaches to the `boto3`
-event-stream parser. Token counts come from
-`invocationMetrics.inputTokenCount` / `outputTokenCount` in the
-final `messageStop` event. **Streaming-only** — non-streaming
-Bedrock calls must be reported via `track_llm` manually.
-
-#### LangGraph
-
-LangGraph integration wraps `Pregel.invoke` / `.ainvoke` /
-`.stream` / `.astream` so every node that calls an LLM goes through
-the gate. The patch is auto-applied on the first `@protect` call
-when `langgraph` is installed in the environment. See
-[Protect a LangGraph agent](#61-protect-a-langgraph-agent) for the canonical
-wiring pattern.
-
-#### CrewAI / AutoGen
-
-Multi-agent frameworks spawn sub-agents that each make their own
-LLM calls. The hook fires per call, so cost attribution lands in the
-right `agent_id` automatically (the framework passes `agent_name`
-through to the SDK contextvar).
-
-### When auto-instrumentation can't see the call
-
-Some patterns bypass the auto-instrumentation:
-
-- Custom HTTP transport (not `httpx`) — use [`track_llm`](#71-sdk-api)
-- Streaming chunks where the SDK is constructed before the first `@protect` call — call
-  `nullrun.patch()` after the late imports
-- A framework not listed above — file an issue at
-  `github.com/nullrunio/nullrun-sdk-python`
-
-The catch-all
-`nullrun.get_runtime().track_llm(input_tokens=…, output_tokens=…, model=…)`
-is the escape hatch for any of these. If `@protect` fires 50+ times
-without the runtime seeing a single `track_llm` event, the SDK logs
-**one** WARNING naming the three most likely root causes.
+Do not report a call the SDK already sees. The two reports add up.
 
 ### See also
 
-- [Protect a LangGraph agent](#61-protect-a-langgraph-agent) — full LangGraph example
-- [Use with OpenAI Agents](#62-use-with-openai-agents) — `openai-agents` framework hook
-- [Use with FastAPI](#64-use-with-fastapi) — request-scoped SDK context
-- [Manual cost / event tracking](#610-manual-cost-event-tracking) — `track_llm` / `track_tool` / `track`
+- [Protect a LangGraph agent](#61-protect-a-langgraph-agent)
+- [Use with OpenAI Agents](#62-use-with-openai-agents)
+- [Use with CrewAI](#63-use-crewai)
+- [Manual cost and event tracking](#610-manual-cost-event-tracking)
 
 
 ## 6.6 Set a hard cost cap
 
-A cost cap is the simplest way to make sure an agent can't blow past
-your budget. It works at two levels:
+A cost cap stops an agent from spending past a number you chose. The cap
+is per workflow and per billing period.
 
-1. **Per-workflow** — set on a workflow, halts the run when cumulative
-   cost exceeds the cap.
-2. **Per-call** — projected cost from the SDK, rejects any single call
-   that would exceed the cap.
+The gateway enforces the cap. The SDK asks the gateway before every
+protected call and books the real cost after the call returns.
 
-### Per-workflow
+### Set the cap
 
-In the dashboard, open the workflow and set the budget. Or via the
-HTTP API:
+In the dashboard: open the workflow, choose **Settings**, set **Budget**
+in cents, and save. `$50.00` is `5000`.
 
-```bash title="set_budget.sh"
-curl -X PATCH https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/$WORKFLOW_ID \
-  -H "X-API-Key: *** \
-  -H "X-Signature: $(compute_hmac)" \
-  -H "X-Signature-Timestamp: $(date +%s)" \
+Over the HTTP API, `PATCH` the workflow:
+
+```bash title="shell"
+ORG_ID=8a3b1c7d-0000-4000-8000-000000000000
+WORKFLOW_ID=1f2e3d4c-0000-4000-8000-000000000000
+API_KEY=nr_live_replace_me
+
+curl -sS -X PATCH \
+  "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/$WORKFLOW_ID" \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"budget_cents": 500}'
 ```
 
-> Auth uses `X-API-Key` plus an HMAC-SHA256 signature over
-> `timestamp:api_key:body_hash` (see the
-> [HTTP API reference](#73-http-api))
-> and the SDK's `NULLRUN_SECRET_KEY`. Bearer session tokens are for
-> dashboard / admin endpoints only.
+`budget_cents` is the only field the request needs. A cap of `0` means
+no per-workflow cap — the call passes through to the organization cap.
 
-Then in the SDK:
+The key must belong to the organization in the path. The caller also
+needs the Admin role, and the key must be bound to a user. A dashboard
+session works too: replace the `X-API-Key` header with
+`Authorization: Bearer $SESSION_TOKEN`. See
+[HTTP API → Authentication](#73-http-api).
+
+### Run against the cap
 
 ```python title="budgeted_run.py"
 import nullrun
 from nullrun import init, protect
 
-init(api_key="nr_live_...")
+init(api_key="nr_live_replace_me")
 
-with nullrun.workflow("my-workflow"):
-    @protect
-    def run(): ...
+
+def call_model(question: str) -> str:
+    """Your model call goes here."""
+    return question
+
+
+@protect
+def answer(question: str) -> str:
+    return call_model(question)
 ```
 
-Cumulative cost > 500¢ → `NullRunBudgetError` raised on the next
-gate call with `error_code = "NR-B004"` (wire `BUDGET_HARD_BLOCKED`).
-For tool-block policy hits, `NullRunToolBlockedError` is raised with
-`error_code = "NR-T001"` (wire `TOOL_BLOCKED`). Both are subclasses of
-`NullRunBlockedException`, so a broad `except NullRunBlockedException`
-still catches both — but the typed subclass carries the more specific
-`error_code`. See [Errors](#74-error-codes) for the full catalog
-and the recommended `except` pattern.
+| Refusal | Exception | `error_code` |
+|---|---|---|
+| Budget cap reached | `NullRunBudgetError` | `NR-B004` |
+| Tool blocked by policy | `NullRunToolBlockedError` | `NR-T001` |
 
-`max_budget_cents == 0` means **"no per-key budget configured"**, not
-"block everything" — the gate passes through to the org-level plan
-cap. See [Budgets → How to set the budget](#31-budgets).
+Both are subclasses of `NullRunBlockedException`, so one
+`except NullRunBlockedException` clause catches both. The typed subclass
+carries the specific `error_code`. See [Errors](#74-error-codes).
 
-### Per-call
+### How the cap is checked
 
-The SDK does not project per-call cost on its own — the per-call
-cap is enforced by the workspace policy on the gateway. When the
-policy carries a per-call threshold, the `/gate` call rejects any
-single call whose projected cost would exceed the cap *before* the
-model is invoked. The SDK raises `NullRunBlockedException` with
-`error_code = "NR-B004"` (wire `BUDGET_HARD_BLOCKED`).
+Each protected call runs the gate first:
 
-If you need to skip pre-flight in tests, use a workflow with a low
-budget instead.
+1. The gateway reserves the projected cost of the call.
+2. If the reservation crosses the cap, the call is refused and nothing
+   is reserved.
+3. After the call returns, the gateway books the real cost against the
+   reservation.
+
+The real cost may exceed the reservation by a small fixed amount. A
+booking above the reservation plus that amount is rejected. The commit
+answers `422` with the wire code `CONSUME_OVERBUDGET`, and the SDK
+raises `NullRunConsumeOverbudgetError` (`NR-O001`). See
+[Budgets → Reserve and consume](#31-budgets).
+
+The SDK does not compute the cost. It sends the model and a token
+estimate to the gate. After the call it sends the token counts the
+provider reported. The gateway prices the call.
+
+### Soft mode
+
+A policy set to **Soft** lets the agent run past the cap while a chain
+is active, up to an overdraft limit. Soft mode needs all three of: the
+policy sets `enforcement_mode` to `Soft`, an active chain exists, and
+the projected cost stays inside the overdraft limits. When one of them
+is missing, the budget behaves as Hard. See
+[Policies → BudgetLimit extra fields](#22-policies)
+and [Policies → Soft mode requirements](#22-policies).
 
 ### See also
 
-- [Budgets](#31-budgets) — reservation lifecycle and the
-  pre-flight `/gate` end-to-end
-- [Errors](#74-error-codes)
+- [Budgets](#31-budgets) — periods, spend, and the reserve
+- [Errors](#74-error-codes) — the full exception catalog
 - [Examples → cost cap demo](https://github.com/nullrunio/nullrun-examples/blob/master/examples/cost_cap_demo.py)
 
 
 ## 6.7 Run multiple agents
 
-The SDK's runtime is a process-scoped singleton — transport pool,
-WebSocket subscription, and event batch buffer — created lazily on
-the first `@protect` call. The supported pattern is one runtime per
-process and one process per workflow key.
+Two rules shape every deployment:
 
-For everything beyond a single one-shot script, run **one process per
-key**. This page shows the three patterns that cover real workloads.
+1. An API key binds to one workflow.
+2. The SDK holds one runtime per process.
 
-### Pattern 1 — multiple agents on one host (one process per key)
+So N workflows on one host means N processes. This page shows the three
+patterns that cover real deployments.
 
-The simplest production deployment. Each workflow gets its own
-process, its own env var, its own log stream. Common supervisors
-include systemd, Docker Compose, and Kubernetes — pick whichever
-fits the platform. The rule is the same regardless of supervisor:
-each process gets its own `NULLRUN_API_KEY` so the dashboard's
-**Workflows** view shows separate per-workflow spend, kill/pause
-works independently, and you can restart one without affecting the
-other.
+For sub-agents that share one workflow inside one process, see
+[Multi-agent orchestration](#68-multi-agent-orchestration).
 
-### Pattern 2 — fan-out inside one container (multiprocessing.Pool)
+### Pattern 1 — one process per key
 
-When you have one entrypoint but N workflows to run, use
-`multiprocessing.Pool` so each child initializes its own SDK runtime
-and its own key:
+Each workflow gets its own process, its own environment variable, and
+its own log stream. Any supervisor works: systemd, Docker Compose, or
+Kubernetes.
+
+The rule does not change with the supervisor. Give each process its own
+`NULLRUN_API_KEY`:
+
+```bash title="service.env"
+NULLRUN_API_KEY=nr_live_replace_me
+```
+
+The dashboard then shows separate spend per workflow, kill and pause
+work independently, and you can restart one without touching the
+others.
+
+### Pattern 2 — fan out inside one container
+
+Use a process pool when one entrypoint has N workflows to run. Each
+child builds its own runtime from its own key.
 
 ```python title="fanout.py"
 import multiprocessing as mp
-import nullrun
+import os
+
 from nullrun import protect
 
 
-def _agent_main(key: str, prompt: str) -> str:
-    # Each child process lazily initializes its own runtime from
-    # NULLRUN_API_KEY on the first @protect call. To force a specific
-    # key per child, set NULLRUN_API_KEY in the subprocess env.
-    import os
+def _run_one(job: tuple[str, str]) -> str:
+    key, prompt = job
+    # The runtime is created lazily on the first @protect call, so the
+    # key has to be in the environment before that happens.
     os.environ["NULLRUN_API_KEY"] = key
 
     @protect
-    def step(p: str) -> str:
-        return your_llm_call(p)
+    def step(text: str) -> str:
+        return call_model(text)
 
     return step(prompt)
 
 
 def fan_out(jobs: list[tuple[str, str]]) -> list[str]:
-    # jobs is [(key, prompt), ...] — one key per workflow.
-    with mp.Pool(processes=len(jobs)) as pool:
-        async_results = [
-            pool.apply_async(_agent_main, args=(k, p))
-            for k, p in jobs
-        ]
-        return [r.get(timeout=120) for r in async_results]
+    # "spawn" gives every child a fresh interpreter and a fresh runtime.
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(processes=len(jobs)) as pool:
+        return pool.map(_run_one, jobs)
 ```
 
-Each child gets its own copy of the SDK state, so each runtime
-initializes lazily and cleanly with no shutdown collisions. **Do
-not** share a runtime across children — that's the multi-key-in-one-
-process anti-pattern and you'll get shutdown warnings the moment the
-first child finishes.
+Use the `spawn` start method. The `fork` method copies the parent's
+runtime into the child, and the child then reports to the parent's
+workflow with the parent's key.
 
-Pick the pool start method that matches your platform (see the
-`multiprocessing` docs). The rule is the same regardless: each child
-is a fresh interpreter and initializes its own runtime on the first
-`@protect` call.
+### Pattern 3 — one subprocess per request
 
-### Pattern 3 — one entrypoint, multiple keys, hard process boundary
-
-If you have one CLI / API server that needs to handle requests for
-many workflows, route at the **process level** rather than the
-**function level**:
+Route at the process level when one CLI or API server handles requests
+for many workflows.
 
 ```python title="router.py"
 import os
@@ -5378,8 +4163,6 @@ import subprocess
 
 
 def run_workflow(key: str, prompt: str) -> str:
-    """Spawn a fresh subprocess for each request. Each one is its own
-    SDK singleton, so multi-key isolation is automatic."""
     result = subprocess.run(
         ["python", "agent.py", prompt],
         env={**os.environ, "NULLRUN_API_KEY": key},
@@ -5391,60 +4174,57 @@ def run_workflow(key: str, prompt: str) -> str:
     return result.stdout
 ```
 
-The subprocess startup cost (~150 ms for the lazy runtime init +
-WebSocket connect) is the price for clean isolation. For high-
-throughput paths, see Pattern 2 — multiprocessing keeps workers warm
-in a pool.
+Each subprocess is its own interpreter with its own runtime, so the
+isolation is automatic. The price is process startup on every request.
+For a steady stream of requests, Pattern 2 keeps workers warm.
 
-### What doesn't work
+### Why not several keys in one process
 
-Mixing multiple keys in one process leads to interleaved events on
-the wrong workflow. The supported alternative is one process per key
-(Pattern 1) or one subprocess per request (Pattern 3).
+The runtime is a process-wide singleton. A second `init()` call shuts
+the first runtime down, so one process cannot hold two keys at once.
 
-### What if I want a single dashboard view across all my processes?
+The failure mode of forcing it is interleaved events: calls land on the
+workflow of whichever key the runtime happens to hold, and the dashboard
+shows a spend that belongs to no single workflow.
 
-You don't need anything special — the dashboard already aggregates per
-workflow across all processes holding that workflow's key. As long as
-every subprocess binds to the **same** workflow (i.e. uses the same
-key), all their `/gate` and `/track` calls land on the same workflow
-record in the backend.
+### One workflow across many processes
 
-The case where this **doesn't** hold is the "many workflows, one
-process" anti-pattern above: prior workflow's events have already
-gone to the prior key's workflow.
+The dashboard already aggregates every process that holds the same key
+under one workflow record. Several workers with the same key produce
+one workflow with the combined spend.
 
 ### See also
 
+- [Multi-agent orchestration](#68-multi-agent-orchestration) — sub-agents
+  inside one process
+- [Concepts → API keys](#25-api-keys) — how a key binds to a
+  workflow
 - [Configuration → env vars](#15-configuration)
-- [Concepts → API keys](#25-api-keys) — workflow-scoping
-  and the `1:1` binding between key and workflow
-- [Concepts → Workflow context](#41-workflow-context)
 
 
 ## 6.8 Multi-agent orchestration
 
-When one agent delegates to sub-agents — a LangGraph supervisor, a
-CrewAI crew, an OpenAI Agents `Runner` with handoffs, or a custom
-orchestrator — NullRun tracks each sub-agent independently under the
-same workflow.
+An orchestrator delegates to sub-agents: a LangGraph supervisor, a
+CrewAI crew, an OpenAI Agents runner with handoffs, or a hand-written
+loop.
 
-The rule is: **each `with workflow(...)` block creates its own
-budget pool. Nesting does NOT inherit budget — the inner block has
-its own pool.**
+This page covers sub-agents inside **one process**. For running
+separate workflows on separate keys, see
+[Run several agents on one host](#67-run-multiple-agents).
 
-### LangGraph supervisor → sub-agents
+### One workflow block for the whole tree
+
+Wrap the orchestrator in a single `workflow()` block. Every call inside
+it lands on the same workflow.
 
 ```python title="langgraph_orchestrator.py"
 from typing import TypedDict
-from langgraph.graph import END, StateGraph
-from langchain_openai import ChatOpenAI
 
-import nullrun
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, StateGraph
+
 from nullrun import protect, workflow
 
-# The first @protect call lazily creates the runtime from
-# NULLRUN_API_KEY and patches the LangGraph Pregel hook.
 llm = ChatOpenAI(model="gpt-4o-mini")
 
 
@@ -5456,7 +4236,6 @@ class State(TypedDict):
 
 @protect
 def research_node(state: State) -> State:
-    """Sub-agent — its @protect is a gate for the LLM call only."""
     out = llm.invoke(f"Research {state['topic']}")
     return {"research": out.content}
 
@@ -5468,7 +4247,7 @@ def writer_node(state: State) -> State:
 
 
 def supervisor(state: State) -> str:
-    return END  # or "research" / "writer"
+    return END
 
 
 with workflow("research-supervisor"):
@@ -5481,185 +4260,217 @@ with workflow("research-supervisor"):
     app.invoke({"topic": "LLM cost trends"})
 ```
 
-Each `research_node` / `writer_node` is `@protect`-wrapped, so the
-gate runs per node invocation, not per `app.invoke()` call.
+The gate runs per node, because each node is `@protect`-wrapped. One
+wrapper around `app.invoke()` would gate the whole graph once.
 
-`@protect` on each sub-agent ensures the gate runs before the LLM
-call. The `with workflow("research-supervisor")` block scopes
-budget attribution to the `research-supervisor` workflow — every
-LLM call inside counts against that workflow's budget.
+### The budget comes from the API key
 
-Nesting `with workflow("research-subagent")` inside does **not**
-inherit the outer workflow's budget: each `workflow()` block creates
-its own `workflow_id` with its own budget pool. To share a budget
-across the whole orchestration tree, use ONE `workflow()` block
-around the orchestrator (the pattern above). To give each sub-agent
-an independent budget, use distinct workflow names — but they
-become separate budget pools:
+The cap is always the budget of the workflow the API key is bound to.
+The gateway derives that binding from the key. It does not read the
+workflow name from the SDK.
 
-```python title="separate_workflows.py"
-with workflow("research-supervisor"):
-    with workflow("research-subagent") as research_wf:
-        research_node(state)  # counts against research-subagent's budget
-    with workflow("writer-subagent") as writer_wf:
-        writer_node(state)    # counts against writer-subagent's budget
+So a nested `workflow()` block does not open a second budget pool. It
+does change the label on the events emitted inside it, which splits the
+attribution across two names while the cap stays where the key put it.
+
+Use one `workflow()` block per process. If you want a separate budget
+per sub-agent, give each sub-agent its own API key and its own
+process.
+
+### Naming the sub-agents
+
+`agent()` and `span()` label the work inside the tree without opening a
+new budget.
+
+```python title="labelled_subagents.py"
+from nullrun import agent, span
+
+
+@protect
+def research_node(state: State) -> State:
+    with agent("researcher"):
+        with span("search"):
+            out = llm.invoke(f"Research {state['topic']}")
+    return {"research": out.content}
 ```
 
-This is the **independent-pools** pattern — useful when sub-agents
-have distinct budget allocations (e.g. one sub-agent handles paid
-API calls, another is read-only), but you lose the "one cap protects
-everything" guarantee.
+### Kill reaches the whole tree
 
-Full LangGraph, CrewAI, and OpenAI Agents orchestration examples live
-in [`nullrun-examples/examples/`](https://github.com/nullrunio/nullrun-examples/tree/master/examples)
-— `langgraph_basic.py`, `crewai_basic.py`, and
-`openai_agents_basic.py` show the independent-pools wiring.
+An operator hits **Kill** in the dashboard. The control-plane push
+carries the new state to every SDK client that holds the workflow's
+key. Each client raises at its next protected call.
 
-### Operator kill across the tree
+| Protected function | What propagates |
+|---|---|
+| Sync | `NullRunBlockedException` with `error_code` `NR-W002` |
+| Async | `WorkflowKilledInterrupt` |
 
-When an operator hits **Kill** in the dashboard, the WS push
-delivers a `state_change(killed)` to **every** connected SDK client
-holding the workflow's key. If multiple `@protect` calls are in-flight
-across the orchestration tree, they all receive the kill signal at
-their next yield boundary. See
-[Control plane → kill contract](#44-control-plane-websocket)
-for the wire-level details.
+The async wrapper leaves the original exception alone so an async
+framework can cancel the task on the type it expects. Catch it by name
+in both cases:
+
+```python title="kill_handling.py"
+from nullrun import WorkflowKilledInterrupt, NullRunBlockedException
+
+
+try:
+    run_orchestration()
+except WorkflowKilledInterrupt:
+    raise
+except NullRunBlockedException as exc:
+    if exc.error_code == "NR-W002":
+        raise
+    raise
+```
+
+See [Control plane → What the agent sees](#44-control-plane-websocket)
+for the full signal matrix.
 
 ### Common pitfalls
 
 | Pitfall | Symptom | Fix |
 |---|---|---|
-| Missing `with workflow(...)` around the orchestrator | Each sub-agent gets its own ad-hoc workflow_id, no shared budget pool across the tree | Wrap the whole tree in one workflow block |
-| Each sub-agent has its own key | Sub-agents share nothing — kill signal only reaches the one bound to the killed workflow | Use one key for the orchestrator and let sub-agents inherit |
-| Catching only `Exception` around the orchestration loop with no kill handler | Kill still propagates but with no cleanup hook | Catch `NullRunWorkflowKilledError` explicitly first if you need to checkpoint sub-agent state |
+| No `workflow()` block around the orchestrator | Events carry an ad-hoc workflow name | Wrap the tree in one block |
+| A nested `workflow()` per sub-agent | Spend is split across names while one cap applies | Use `agent()` and `span()` for labels |
+| One key per sub-agent | Every sub-agent needs its own process and its own key | Use one key for the orchestrator |
+| Only `except Exception` around the loop | The kill is swallowed and the agent keeps running | Catch `WorkflowKilledInterrupt` first |
 
 ### See also
 
-- [Workflow context](#41-workflow-context) — how `workflow()` scopes events
-- [Chain context](#41-workflow-context) — soft mode for multi-step orchestrations
-- [Use with LangGraph](#61-protect-a-langgraph-agent) — single-agent LangGraph example
-- [Use with OpenAI Agents](#62-use-with-openai-agents) — single-agent example
+- [Run several agents on one host](#67-run-multiple-agents) — separate processes
+  and separate keys
+- [Workflow context](#41-workflow-context) — what `workflow()` scopes
+- [Chain context](#41-workflow-context) — soft mode for
+  multi-step orchestrations
+- [Use with LangGraph](#61-protect-a-langgraph-agent) — the single-agent wiring
 
 
 ## 6.9 Stream responses
 
-The SDK tracks streaming responses correctly — every chunk is
-forwarded to your caller in real time, and the cost is reported from
-the final chunk (which carries the `usage` block).
+Two things make streaming different from a normal call: the response
+arrives in pieces, and the run can take longer than a single gate
+decision covers.
 
-### The pattern
+### Protect the call, not the generator
 
-```python title="streaming_agent.py"
-import nullrun
+`@protect` wraps a function call. A function that yields is not a call
+that finishes: the body runs later, when the caller iterates. The SDK
+has no generator support, so a protected generator runs its body
+outside the gate.
+
+Protect the function that opens the stream instead. The gate runs when
+the stream is created:
+
+```python title="stream_answer.py"
+import uuid
+
 from openai import AsyncOpenAI
-from nullrun import protect
+from nullrun import chain, protect
 
-# The first @protect call creates the runtime lazily.
 client = AsyncOpenAI()
 
 
 @protect
-async def stream_answer(prompt: str):
-    stream = await client.chat.completions.create(
+async def open_stream(prompt: str):
+    return await client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         stream=True,
     )
-    async for chunk in stream:
-        yield chunk.choices[0].delta.content or ""
-```
 
-The transport hook reads the final `usage` block before emitting
-`/track`, while forwarding chunks to your caller in real time.
 
-### Long streams and soft mode
-
-A long stream that exceeds the chain idle TTL (300s) will be killed
-mid-chunk. The SDK sends a wall-clock heartbeat every **30 seconds**
-per policy (configurable in `[10s, 120s]`) — not per chunk. For
-multi-minute responses, use a `chain` context to keep the gate
-alive:
-
-```python
-@protect
-def long_stream(prompt: str):
-    with chain("my-long-stream", op="start"):
-        stream = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            stream=True,
-        )
-        for chunk in stream:
+async def answer(prompt: str):
+    chain_id = str(uuid.uuid4())
+    with chain(chain_id, op="start"):
+        stream = await open_stream(prompt)
+        async for chunk in stream:
             yield chunk.choices[0].delta.content or ""
 ```
 
-For budget headroom, set `enforcement_mode = "Soft"` on the policy.
-See
-[Chain context](#41-workflow-context).
+The alternative is to protect each step of the loop. That gives the
+gate one decision per chunk, which costs a round trip per chunk.
+
+### Keep the chain alive
+
+A chain closes after five minutes without a protected call, or when
+`max_chain_duration_seconds` is exceeded. It defaults to 3600 seconds.
+
+Send a heartbeat while the stream runs. `ping_chain` schedules them on
+a wall-clock timer and returns a callable that stops the schedule:
+
+```python title="stream_with_heartbeat.py"
+import uuid
+
+from openai import AsyncOpenAI
+from nullrun import chain, get_runtime, protect
+
+client = AsyncOpenAI()
+
+
+@protect
+async def open_stream(prompt: str):
+    return await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        stream=True,
+    )
+
+
+async def answer(prompt: str):
+    runtime = get_runtime()
+    chain_id = str(uuid.uuid4())
+    with chain(chain_id, op="start"):
+        stop = runtime.ping_chain(chain_id)
+        try:
+            stream = await open_stream(prompt)
+            async for chunk in stream:
+                yield chunk.choices[0].delta.content or ""
+        finally:
+            stop()
+```
+
+`ping_chain` sends a heartbeat every 30 seconds by default. The
+interval must stay between 10 and 120 seconds.
 
 #### Chain heartbeat
 
-The SDK keeps the chain alive with a wall-clock heartbeat every
-**30 seconds** by default (configurable per policy in `[10s, 120s]`).
-The interval is time-based, not chunk-based: a slow stream with one
-chunk per minute still gets a heartbeat; a fast stream does not spam
-them.
+The interval is wall-clock, not chunk-based. One chunk per minute still
+gets a heartbeat, and a fast stream does not flood the server.
 
-If the chain dies (idle TTL expired, max duration exceeded, or
-`op="end"`), the SDK raises `WorkflowKilledInterrupt` at the next
-`yield` boundary.
+A failed heartbeat is logged and ignored. The chain then closes when
+its idle window runs out.
 
-### Kill signal mid-stream
+### What the SDK does with the chunks
 
-An operator hit on **Kill** raises `WorkflowKilledInterrupt` (alias
-`NullRunWorkflowKilledError`) at the next `yield` boundary. It is a
-`NullRunError` subclass — caught by `except Exception:` like every
-other SDK error. If you want kill-specific handling (close the
-stream, flush state), catch the typed alias explicitly first and
-re-raise after.
+The HTTP client you use decides how the chunks reach your code.
 
-#### Cancellation latency
+| HTTP client | When the chunks reach your code | Cost tracked for you |
+|---|---|---|
+| `httpx` | After the whole body has been read | Yes |
+| `requests` | As they arrive | No |
 
-The kill signal typically arrives at the SDK within ~100 ms of the
-operator clicking **Kill** (WebSocket push path). If the WebSocket
-is unavailable and polling fallback is active, latency rises to the
-poll interval (default **1 s**) plus the next `/gate` boundary.
-For long-running streams, keep the WS connection healthy and
-avoid restrictive outbound firewalls on the SDK host.
+The OpenAI and Anthropic SDKs are built on `httpx`. The SDK reads the
+body in full so it can read the usage block that arrives in the last
+chunk. The chunks then reach your code together.
 
-```python
-from nullrun import WorkflowKilledInterrupt
+The `requests` path leaves a streamed body alone, so the chunks arrive
+in real time. The SDK cannot read the usage block, so it reports the
+call as untracked and the cost stays at zero.
 
-@protect
-async def stream_kill_safe(prompt: str):
-    stream = await client.chat.completions.create(
-        model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}],
-        stream=True,
-    )
-    try:
-        async for chunk in stream:
-            yield chunk.choices[0].delta.content or ""
-    except WorkflowKilledInterrupt:
-        await stream.close()
-        raise
-```
+### Report a stream by hand
 
-### Tracking without auto-instrumentation
+Report the call yourself when the SDK does not see it. Use
+`stream_options={"include_usage": True}` so the last chunk carries the
+usage block:
 
-If the SDK's httpx transport hook can't see your custom streaming
-client (a vendor SDK that bypasses httpx), call `track_llm` manually
-after the stream ends. Use `stream_options={"include_usage": True}`
-so the final chunk carries the usage block; otherwise you have to
-estimate. See
-[OpenAI streaming reference](https://platform.openai.com/docs/api-reference/chat-streaming).
+```python title="track_stream.py"
+from openai import OpenAI
+from nullrun import get_runtime
 
-```python
-import nullrun
-from nullrun import protect
+client = OpenAI()
 
 
-@protect
-def custom_stream(prompt: str):
+def stream_with_cost(prompt: str):
     stream = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
@@ -5670,169 +4481,224 @@ def custom_stream(prompt: str):
     for chunk in stream:
         final = chunk
         yield chunk.choices[0].delta.content or ""
-    if final and getattr(final, "usage", None):
-        nullrun.get_runtime().track_llm(
-            input_tokens=final.usage.prompt_tokens,
-            output_tokens=final.usage.completion_tokens,
+
+    usage = getattr(final, "usage", None)
+    if usage:
+        get_runtime().track_llm(
+            input_tokens=usage.prompt_tokens,
+            output_tokens=usage.completion_tokens,
             model="gpt-4o-mini",
         )
 ```
 
-Without `track_llm()` the budget counter is never credited and the
-next `/gate` may reject the next call based on stale spend.
+A report the SDK already made adds the tokens a second time. Report a
+call once.
 
-### Common pitfalls
+### Kill during a stream
 
-| Pitfall | Symptom | Fix |
-|---|---|---|
-| Heartbeat every N chunks | Chain dies silently during slow streams | Heartbeat on a wall-clock timer (30s default) |
-| `await stream.close()` after kill | Half-written chunks can leak to the caller | Wrap the stream in `try/finally`, always close |
-| Catching only `Exception` around the loop with no kill handler | Kill still propagates but with no cleanup hook | Catch `NullRunWorkflowKilledError` explicitly first to close the stream |
-| Forgetting `track_llm()` after a manual stream | Dashboard shows zero cost, budget never decremented | Always report final usage, even via estimation |
+An operator kill reaches the SDK over the control-plane connection. It
+surfaces at the next protected call.
+
+| Protected function | What propagates |
+|---|---|
+| Async | `WorkflowKilledInterrupt` |
+| Sync | `NullRunBlockedException` with `error_code` `NR-W002` |
+
+A chunk loop over an open stream holds no protected call, so the kill
+lands on the next stream you open. Catch it by name and close the
+stream:
+
+```python title="kill_handling.py"
+from nullrun import WorkflowKilledInterrupt
+
+
+async def answer(prompt: str):
+    stream = None
+    try:
+        stream = await open_stream(prompt)
+        async for chunk in stream:
+            yield chunk.choices[0].delta.content or ""
+    except WorkflowKilledInterrupt:
+        if stream is not None:
+            await stream.close()
+        raise
+```
 
 ### See also
 
-- [Chain context → soft mode](#41-workflow-context)
-- [Errors → kill contract](#74-error-codes)
-- [Use with FastAPI](#64-use-with-fastapi) — streaming inside ASGI handlers
+- [Chain context](#41-workflow-context)
+- [Errors → SDK exception hierarchy](#74-error-codes)
+- [Manual cost and event tracking](#610-manual-cost-event-tracking)
 
 
 ## 6.10 Manual cost / event tracking
 
-Most of the time auto-instrumentation handles cost tracking — the
-httpx transport hook reads `usage` from OpenAI / Anthropic / Gemini /
-Cohere responses and emits `track_llm` automatically. Reach for the
-runtime's `track_llm` / `track_tool` / `track` methods manually when:
+Auto-instrumentation books most LLM calls for you. The SDK watches the
+HTTP client and the framework hooks, reads the token counts out of the
+provider response, and reports them.
 
-- your LLM client bypasses httpx (Bedrock via boto3, Cohere on a raw
-  socket, an offline batch reading cached completions);
-- you proxy the LLM call and the auto-instrumentation hook sees your
-  proxy's response (zero usage) instead of the upstream's;
-- you call a tool that isn't an HTTP call (database query, state
-  transition, side-effect-bearing custom function);
-- you have a custom business event (milestone, retry attempt, A/B
-  variant) that you want in the decision log.
+Reach for the runtime's tracking methods when the SDK cannot see the
+call:
 
-If your SDK wraps the standard OpenAI / Anthropic / Gemini / Cohere
-clients, do **not** call `track_llm` manually — auto-instrumentation
-will fire and you'll double-count.
+- your LLM client does not use `httpx`, for example a raw socket client
+  or an offline batch job reading cached completions;
+- you proxy the call, so the SDK reads your proxy's response instead of
+  the provider's;
+- you call something that is not an HTTP request, such as a database
+  query or a custom side-effecting function;
+- you want a business event in the record, such as a milestone or a
+  variant assignment.
 
-The three trackers live on the runtime instance — reach them via
-`nullrun.get_runtime()`. They are not exposed as top-level names on
-the `nullrun` package; the curated public surface is the universal
-`@protect` decorator plus lifecycle / error helpers.
+If your client is the standard OpenAI, Anthropic, Gemini, Cohere,
+Mistral, or Bedrock SDK, do not report the call by hand.
+Auto-instrumentation already fires, and a second report double-counts
+the tokens.
 
-### The three trackers
+### The three methods
 
-| API | Purpose | Required fields |
-| --- | --- | --- |
-| `runtime.track_llm(input_tokens, output_tokens, *, model=None, latency_ms=None, metadata=None)` | Manual LLM cost | `input_tokens`, `output_tokens`; `model` recommended |
-| `runtime.track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool cost | `tool_name` (must match `ToolBlock` patterns) |
-| `runtime.track({"type": ..., ...})` | Arbitrary observability | `type` (becomes a filterable event category) |
+They live on the runtime instance. Reach the runtime with
+`nullrun.get_runtime()`.
 
-Without `track_llm` the budget counter is never credited for the
-call — the next `/gate` may reject based on stale spend.
+There is no package-level `nullrun.track_llm`, `nullrun.track_tool`, or
+`nullrun.track`. Those names do not exist. The public package surface is
+the `@protect` decorator plus the lifecycle and error helpers. See
+[SDK API → Package surface](#71-sdk-api).
+
+| Method | Purpose | Required fields |
+|---|---|---|
+| `runtime.track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` | Report an LLM call | `input_tokens`; `model` required |
+| `runtime.track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Report a tool call | `tool_name` |
+| `runtime.track(event)` | Report an arbitrary event | `type` |
+
+`runtime.track_event(event_type, **kwargs)` is the same thing with the
+event type as the first argument.
+
+### An LLM report needs a reservation
+
+The gateway books a cost against a reservation. The SDK drops an
+`llm_call` event that has no reservation in scope, and logs a warning
+naming the event. Nothing is billed.
+
+Two ways to get a reservation:
+
+| Way | What it does |
+|---|---|
+| Wrap the call in `@protect` | Runs the budget check and the tool policy, then hands the body a reservation |
+| Call `runtime.check_workflow_budget()` first | Runs the budget check only |
+
+A call the SDK cannot see therefore costs nothing until you report it
+inside one of those two scopes. Report it outside them and the spend
+total stays too low, so the cap fires late.
 
 ### Example
 
 ```python title="track_custom.py"
 import nullrun
-
-runtime = nullrun.get_runtime()
-
-# After your custom LLM call returns:
-runtime.track_llm(
-    input_tokens=response.usage.prompt_tokens,
-    output_tokens=response.usage.completion_tokens,
-    model="custom-llm-v1",
-    latency_ms=response.elapsed_ms,
-    metadata={"vendor": "internal", "trace_id": "abc-123"},
-)
-
-# After a tool call (regardless of success/failure):
-runtime.track_tool(
-    tool_name="send_email",
-    duration_ms=240,
-    is_retry=False,
-    metadata={"to": "user@example.com"},
-)
-
-# Arbitrary business events:
-runtime.track({"type": "agent.milestone", "step": "research_complete", "elapsed_secs": 42})
-runtime.track({"type": "agent.error", "code": "validation_failed", "field": "email"})
-```
-
-`track_tool`'s `tool_name` flows through to the policy engine — a
-`ToolBlock` policy with pattern `send_*` catches a manual call to
-`runtime.track_tool("send_email", ...)`. Use the same tool names you
-would pass to auto-instrumentation so policy enforcement stays
-consistent.
-
-### When the SDK can't see the call
-
-If your tool isn't called from inside `@protect`, wrap the manual
-tracking in `@protect` so the gate still runs:
-
-```python
-import nullrun
 from nullrun import protect
 
 runtime = nullrun.get_runtime()
 
+
 @protect
-def call_custom_llm(prompt):
-    response = my_custom_client.complete(prompt)
+def run_step(response, elapsed_ms: int):
     runtime.track_llm(
-        input_tokens=response.usage.input,
-        output_tokens=response.usage.output,
+        input_tokens=response.usage.prompt_tokens,
+        output_tokens=response.usage.completion_tokens,
         model="custom-llm-v1",
+        latency_ms=elapsed_ms,
+        metadata={"vendor": "internal"},
     )
-    return response.text
+    runtime.track_tool(
+        tool_name="send_email",
+        duration_ms=240,
+        is_retry=False,
+        metadata={"to": "user@example.com"},
+    )
+    runtime.track_event("agent.milestone", step="research_complete")
 ```
+
+`@protect` uses the function name as the tool name. Name the function
+after the tool the policy matches:
+
+```python title="gated_tool.py"
+from nullrun import protect
+
+
+@protect
+def send_email(to: str, body: str) -> None:
+    ...
+```
+
+A tool call that never passes through `@protect` is never checked
+against a blocked-tool rule. The manual report never blocks it either.
+
+### Tracking is reporting, not enforcement
+
+`track_tool` records the call. It does not run the tool policy.
+
+The policy engine runs on the gate, which `@protect` triggers.
 
 ### Caveats
 
-- **Buffering**: `track_*` events don't go straight to the gateway —
-  they buffer in the runtime's event batch and flush on the next
-  `@protect` call or `flush_interval_ms`. `init()` auto-registers
-  `nullrun.shutdown(flush=True)` via `atexit`, so a clean process
-  exit always drains the buffer; an explicit `finally` block only
-  matters for early teardown.
-- **Idempotency**: each `track_*` call gets a fresh UUID. Calling it
-  twice with the same payload produces two events. For retries, gate
-  the call yourself.
+- **The model name is required.** The gateway prices the call from the
+  model name and the token counts. An `llm_call` event with no `model`
+  field is refused.
+- **Buffering.** LLM events go to the gateway one at a time. Tool events
+  and span events go out in batches, flushed on a timer or when the
+  batch fills. `init()` registers a shutdown hook that drains the
+  buffer, so a clean process exit never loses events.
+- **No dedupe.** Two manual calls with the same payload are two
+  events. The SDK only merges repeats that carry the same
+  auto-instrumentation fingerprint.
+- **Control-plane checks.** A tracking call reads the workflow state. A
+  paused or killed workflow raises out of `track_llm` as well as out of
+  `@protect`.
 
 ### See also
 
-- [SDK API → runtime.track_llm / track_tool / track](#71-sdk-api)
-- [LLM frameworks](#65-llm-frameworks) — non-httpx vendors
-  (Bedrock, Cohere) that use manual tracking
+- [SDK API → Manual tracking](#71-sdk-api)
+- [LLM frameworks](#65-llm-frameworks) — which providers the SDK sees on
+  its own
 
 
 ## 6.11 CI / CD integration
 
-Wire NullRun into your build pipeline so policy mistakes are caught
-before they hit production. The pattern uses
-[`synthetic_sdk_load.py`](https://github.com/nullrunio/nullrun-examples)
-— a CLI tool from the official examples repo that drives the real
-SDK against the real gateway with no LLM cost.
+Wire NullRun into the build so a policy mistake is caught before it
+reaches production.
 
-### Pre-prod validation pattern
+The check drives the real SDK against a real gateway with synthetic
+token counts. No LLM provider is called, so the job costs nothing and
+spends no provider tokens.
 
-```mermaid
-flowchart LR
-    A[CI job] --> B[set NULLRUN_API_KEY to pre-prod key]
-    B --> C[synthetic_sdk_load.py<br/>--interval 0.1 --workers 20<br/>--requests 1000 --yes]
-    C --> D{policy OK?}
-    D -- yes --> E[deploy to prod]
-    D -- no --> F[fail build]
-```
+### The load tool
 
-`/gate` runs through the **same policy** your production key uses,
-just with synthetic tokens. The exit code tells your CI whether the
-policy misbehaved.
+The examples repo ships a CLI for this:
+[`synthetic_sdk_load.py`](https://github.com/nullrunio/nullrun-examples/blob/master/tools/synthetic_sdk_load.py).
 
-### GitHub Actions example
+It runs the public SDK path. Each call sends a gate request, then a
+tracking request with random token counts.
+
+| Flag | Meaning |
+|---|---|
+| `--interval` | Seconds between call launches |
+| `--duration` | Duration cap in seconds |
+| `--requests` | Request cap. `0` uses the duration cap only |
+| `--workers` | Maximum concurrent calls |
+| `--model` | Model name reported for the synthetic calls |
+| `--min-tokens`, `--max-tokens` | Range the random token counts fall in |
+| `--seed` | Seed for the random generator |
+| `--dry-run` | Schedule locally without sending anything |
+| `--yes` | Skip the confirmation prompt |
+
+Exit code:
+
+| Code | Meaning |
+|---|---|
+| `0` | Every call succeeded |
+| `1` | At least one call failed |
+| `2` | The confirmation was declined |
+
+### GitHub Actions
 
 ```yaml title=".github/workflows/pre-prod.yml"
 name: pre-prod-validation
@@ -5845,127 +4711,113 @@ jobs:
   nullrun-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      NULLRUN_API_URL: ${{ secrets.NULLRUN_PRE_PROD_URL }}
+      NULLRUN_API_KEY: ${{ secrets.NULLRUN_PRE_PROD_KEY }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install load tool
+      - name: Install the SDK and the load tool
         run: |
-          git clone https://github.com/nullrunio/nullrun-examples.git
-          pip install -e nullrun-examples
+          git clone --depth 1 https://github.com/nullrunio/nullrun-examples.git
+          pip install nullrun
 
-      - name: Run synthetic load
-        env:
-          NULLRUN_API_KEY: ${{ secrets.NULLRUN_PRE_PROD_KEY }}
-          NULLRUN_API_URL: ${{ secrets.NULLRUN_PRE_PROD_URL }}
+      - name: 1. Health check
+        run: curl -fs "${NULLRUN_API_URL}/health/live"
+
+      - name: 2. Capabilities probe
+        run: |
+          curl -fs "${NULLRUN_API_URL}/api/v1/capabilities" | python -c '
+          import json, sys
+          payload = json.load(sys.stdin)
+          caps = payload.get("capabilities") or {}
+          flags = (
+              "server_minted_execution_id",
+              "per_execution_reservations",
+              "heartbeat_time_based",
+          )
+          missing = [f for f in flags if not caps.get(f)]
+          assert not missing, "gateway is not ready: " + ", ".join(missing)
+          lo = payload["min_protocol_version"]
+          hi = payload["max_protocol_version"]
+          assert lo <= 4 <= hi, f"gateway accepts protocol {lo}..{hi}, the SDK sends 4"
+          '
+
+      - name: 3. Synthetic load
+        working-directory: nullrun-examples
         run: |
           set -euo pipefail
-          python -m synthetic_sdk_load \
+          python tools/synthetic_sdk_load.py \
             --interval 0.05 \
             --workers 10 \
             --requests 200 \
             --model gpt-4o-mini \
             --yes
-          echo "load passed"
 ```
 
-`synthetic_sdk_load.py` exits `1` on any exception (network error,
-budget block, etc.) and `0` on a clean run. `set -euo pipefail`
-ensures the step fails fast on any error. The exit code is your CI
-gate.
+`set -euo pipefail` makes the step fail on the first error. The exit
+code of the load tool is the CI gate.
 
-### Common failure modes
+### The checks
 
-| Failure | What it means | Fix |
+**The health check** confirms the gateway answers. It reads no
+organization data, so it needs no key.
+
+**The capabilities probe** confirms the gateway speaks the wire
+contract the SDK needs. Three flags must be true:
+`server_minted_execution_id`, `per_execution_reservations`, and
+`heartbeat_time_based`. The endpoint sits outside the protocol-gated
+routes, so it answers without the protocol header.
+
+The SDK sends `X-NULLRUN-PROTOCOL: 4`. The gateway advertises the
+range it accepts as `min_protocol_version` and `max_protocol_version`.
+
+**The synthetic load** runs the gate for real. It catches:
+
+- a budget cap that is too tight for the traffic
+- a rate limit that refuses the traffic
+- a key that is missing, revoked, or bound to another organization
+- a policy that refuses every call
+
+### What the load does not catch
+
+- **Real spend.** The token counts are random. Use a staging workflow
+  with a small cap for a cost estimate.
+- **Pricing for a model.** Check the cost view in the dashboard after
+  one real call.
+- **Kill and pause.** The synthetic load does not exercise the
+  control-plane paths. Trigger them by hand during a release
+  checklist.
+- **Your tool names.** The load tool gates a function of its own. It
+  tells you the tool policy refuses calls, not which of your tool
+  names it refuses.
+
+### The manual step
+
+An approval flow needs a human to click **Approve**. Run it by hand on
+every release candidate. See
+[Human approval](#32-human-approval).
+
+### Common failures
+
+| Symptom | Meaning | Fix |
 |---|---|---|
-| `NullRunBudgetError` on every request | Your pre-prod budget is too tight for synthetic traffic | Raise `budget_cents` on the pre-prod workflow, or use a higher-cap test key |
-| `429 NR-R001` | `max_calls_per_minute` is too low for the synthetic load | Raise the rate limit on the pre-prod workflow |
-| Connection refused / DNS error | `NULLRUN_API_URL` is wrong or the gateway is down in this environment | Verify the URL; add a `/health/live` check before the load step |
-| HMAC 401 | `NULLRUN_SECRET_KEY` is not set in CI | Add the secret to the repo / org / environment secrets store |
-
-### What this catches
-
-- **Budget too tight** — if a developer sets `budget_cents: 100` on a
-  workflow that needs `$50/day` to run, the pre-prod load surfaces
-  it before prod.
-- **Tool block too broad** — a `ToolBlock` pattern that
-  accidentally matches every tool name surfaces as `NR-T001`
-  on every call.
-- **Workflow not bound to the right key** — if the pre-prod key was
-  rotated but the workflow binding is stale, the load fails with a
-  clean 401 instead of mysteriously going through.
-- **Soft-mode misconfiguration** — if the policy says `Soft` but no
-  `max_overdraft_cents` is set, every over-budget call hits a hard
-  block. The smoke load exposes this.
-
-### What this does **not** catch
-
-- **Real LLM cost** — synthetic tokens are random, not actual spend.
-  Run `synthetic_sdk_load.py` for policy shape; use a real staging
-  workflow with a small `budget_cents` for cost projections.
-- **Per-model pricing drift** — verify your models are priced
-  correctly by checking the dashboard **Cost** tab after one real
-  call.
-- **WS push timing** — synthetic load doesn't exercise kill/pause
-  paths. Trigger them manually via the dashboard during the
-  smoke-test pass.
-
-### Pipeline integration checklist
-
-Add these checks to your CI before merging anything that touches the
-SDK, the gateway, or policy configuration:
-
-```yaml title=".github/workflows/pre-prod.yml"
-jobs:
-  nullrun-smoke:
-    steps:
-      - name: 1. Health check
-        run: |
-          curl -fs "${NULLRUN_API_URL}/health/live" \
-            || (echo "gateway down" && exit 1)
-
-      - name: 2. Synthetic load
-        env: { NULLRUN_API_KEY: ${{ secrets.NULLRUN_PRE_PROD_KEY }} }
-        run: python -m synthetic_sdk_load --interval 0.05 --workers 10 --requests 200 --yes
-
-      - name: 3. Capabilities probe
-        run: |
-          # Verify the gateway is v3-ready before promoting to prod.
-          # /api/v1/capabilities returns a nested `capabilities: {}` object
-          # (protocol v3.18+). All three flags must be true for the v3 wire
-          # contract; mirrors ServerCapabilities.is_v3_ready() in the SDK.
-          curl -fs "${NULLRUN_API_URL}/api/v1/capabilities" \
-            | python -c "import json,sys; c=json.load(sys.stdin)['capabilities']; \
-              assert c['server_minted_execution_id'] \
-                and c['per_execution_reservations'] \
-                and c['heartbeat_time_based'], \
-              'gateway not v3-ready — server_minted_execution_id, per_execution_reservations, and heartbeat_time_based must all be true'"
-
-      - name: 4. Approval pause/resume (manual)
-        # Trigger an approval-required call, click approve in the
-        # dashboard, confirm the SDK resumes without throwing.
-        run: echo "manual step — see docs/how-to/human-approval.md"
-```
-
-Step 4 is manual by design — the approval pause/resume flow requires
-a human to click Approve in the dashboard, which a CI job can't
-do. Run it on every release candidate as part of the release
-checklist.
+| The tool exits `1` and prints a configuration report | `NULLRUN_API_KEY` is missing | Add the key to the job secrets |
+| Every call raises a budget refusal | The pre-prod cap is too tight for the load | Raise the cap on the pre-prod workflow |
+| Every call raises a rate-limit refusal | The rate limit is below the load rate | Raise the rate limit on the pre-prod workflow |
+| The health check fails to connect | `NULLRUN_API_URL` is wrong | Point it at the pre-prod gateway |
+| The capabilities probe reports a missing flag | The gateway is older than the SDK expects | Upgrade the gateway before the deploy |
 
 ### See also
 
-- [`synthetic_sdk_load.py`](https://github.com/nullrunio/nullrun-examples)
-- [Troubleshooting](#91-troubleshooting) — common failure modes
-  and how to read SDK logs
+- [Troubleshooting](#91-troubleshooting) — how to read SDK logs
 - [Configuration → env vars](#15-configuration)
-- [Reference → HTTP API → Capabilities](#73-http-api)
+- [HTTP API → Capabilities](#73-http-api)
 
 
 # 7. Reference
 
 
-title: SDK API
-maturity: stable
-description: Reference for every NullRun SDK symbol: @protect (canonical entry point, takes no parameters), the workflow / span / chain context managers, exceptions, manual tracking, and transport hooks.
 ## 7.1 SDK API
 
 The Python SDK lives in
@@ -5982,106 +4834,270 @@ Auto-instrumentation for httpx-based libraries (`openai`,
 `anthropic`, `openai-agents`, …) attaches lazily on the first
 `@protect` call — see [Auto-instrumentation](#13-installation).
 
-### Top-level
+### Package surface
+
+`dir(nullrun)` returns **only the curated `__all__` list** — 46 names.
+Everything else the SDK exposes is imported on first attribute access, so it
+never shows up in `dir()` or in tab-completion until you touch it.
 
 ```python title="public_surface.py"
 from nullrun import init, protect, workflow, span, agent, chain
 ```
 
-#### `init` {#init}
+#### Curated surface (`__all__`, shown by `dir(nullrun)`)
 
-The runtime is created lazily on the first `@protect` call from
-`NULLRUN_API_KEY` — most apps skip `init()` entirely. `init()`
-exists for the cases where you need early fail-fast before any
-`@protect` call runs (CI / smoke tests, pre-flight validation, library
-authors wiring keys from a non-env source).
-
-| Helper | Behaviour | Use when |
+| Symbol | Kind | Purpose |
 |---|---|---|
-| `init(api_key=None, api_url=None, debug=False)` | Raises `NullRunAuthenticationError` if `api_key` is missing or env var unset. Returns the runtime. | Production / apps where you want to handle "no api_key" yourself (e.g. surface a friendly error to your UI). Library authors wiring an SDK key from a non-env source. |
-| `init(api_key=None, api_url=None, debug=False, fail_on_exit=True)` | Prints the four-line developer report to stderr and calls `sys.exit(1)` if `api_key` is missing or env var unset. Otherwise identical to `init()`. | One-shot scripts, CLI tools, smoke tests — anywhere a missing key is a hard error and you want a clean exit instead of a traceback. |
+| `__version__` | value | SDK version string. |
+| `init` | function | Create the runtime eagerly. |
+| `protect` | decorator | Gate a function. The only entry point for enforcement. |
+| `shutdown` | function | Close the runtime and drain buffered events. |
+| `on_error` | function | Register a global error hook. |
+| `guard` | context manager | Turn an SDK error into a clean process exit. |
+| `format_user_message` | function | Render an exception as end-user-facing text. |
+| `set_user_message` | function | Override the message for one `error_code`. |
+| `NullRunError` | exception | Base class for every SDK exception. |
+| `NullRunDecision` | exception | Marker for expected policy outcomes. |
+| `NullRunInfrastructureError` | exception | Marker for system failures. |
+| `NullRunDeniedError` | exception | Operator refused this specific call. |
+| `NullRunBudgetError` | exception | Budget exhausted. |
+| `NullRunBudgetRecheckFailedError` | exception | Budget moved between gate and execute. |
+| `NullRunToolBlockedError` | exception | Tool is in the block list. |
+| `NullRunChainError` | exception | Chain-scope check failed. |
+| `NullRunConsumeOverbudgetError` | exception | Actual cost exceeded the reservation. |
+| `NullRunWorkflowInactiveError` | exception | Workflow is inactive. |
+| `WorkflowKilledInterrupt` | exception | Operator kill signal. |
+| `NullRunWorkflowKilledError` | exception | Typed name for the kill signal. |
+| `NullRunApprovalNotYetApprovedError` | exception | Approval still pending. |
+| `NullRunApprovalResponseMissingError` | exception | No approval row for the call. |
+| `NullRunApprovalDeniedError` | exception | Operator denied the approval. |
+| `NullRunApprovalExpiredError` | exception | Approval expired. |
+| `NullRunApprovalReplayRejectedError` | exception | Approval already consumed. |
+| `NullRunApprovalDigestMismatchError` | exception | Action digest drifted. |
+| `NullRunApprovalToolDigestMismatchError` | exception | Tool digest drifted. |
+| `NullRunApprovalToolMismatchError` | exception | Tool outside the approved set. |
+| `NullRunApprovalDbUnavailableError` | exception | Approval store unreachable. |
+| `NullRunMcpDestructiveBlockedError` | exception | Destructive MCP tool blocked. |
+| `NullRunMcpReadonlyBypassBlockedError` | exception | Read-only MCP tool blocked. |
+| `NullRunMcpApprovalRequiredError` | exception | MCP tool needs operator approval. |
+| `NullRunProtocolError` | exception | Wire-protocol version mismatch. |
+| `NullRunMalformedGateResponseError` | exception | Gate response is not a decision. |
+| `NullRunGateIndeterminateError` | exception | Decision could not be determined. |
+| `NullRunUnknownActionError` | exception | Control-plane action type unknown. |
+| `NullRunUnclassifiedRefusalError` | exception | Refusal category not understood. |
+| `NullRunTransportError` | exception | Transport failure. |
+| `NullRunBackendError` | exception | Gateway returned 5xx. |
+| `NullRunExecutionNotFoundError` | exception | Execution id unknown or expired. |
+| `RateLimitError` | exception | Gateway returned 429. |
+| `NullRunRateLimitRedisError` | exception | Rate limiter unavailable. |
+| `NullRunAuthError` | exception | API key rejected. |
+| `NullRunConfigError` | exception | Misconfiguration. |
+| `BreakerTransportError` | exception | Events could not be delivered. |
+| `InsecureTransportError` | exception | HTTPS required. |
 
-`init()` also auto-registers `nullrun.shutdown()` via `atexit`, so a
-clean WS close on process exit happens without an explicit call.
-Calling `shutdown()` manually remains safe and idempotent. The
-`with nullrun.guard():` context manager provides the same
-callsite-level error translation as `init(..., fail_on_exit=True)`,
-applied to a region of code rather than at startup. Calling `init()`
-twice returns the same singleton without re-running the lazy trigger.
+#### Lazy surface
 
-| Symbol | Purpose | In `__all__` |
-|---|---|---|---|
-| `init(api_key=None, api_url=None, debug=False, fail_on_exit=False)` | Eagerly initialise the runtime. `api_key` is required (read from `NULLRUN_API_KEY` if not passed). With `fail_on_exit=True`, missing config prints the developer report and `sys.exit(1)` instead of raising. The HMAC secret, batch size, flush interval, and transport mode are **not** parameters here — set them via env vars. Negotiates protocol version with the gateway on first call. | ✅ |
-| `@protect` | Wrap a function for **gate** enforcement (control plane / budget / span / per-tool policy). Takes no kwargs. Every call routes through `/execute`; the backend decides allow / block / require-approval. Lazily creates the runtime on the first call from `NULLRUN_API_KEY`. **Canonical entry point** — ships `tool_name + args + kwargs` on the wire for every protected call. Wrap the call site in `with nullrun.guard():` for the structured 4-line dev report on failure. | ✅ |
-| `with nullrun.guard():` | Context manager for friendly exit — catches every `NullRunError` raised inside the block (the kill signal re-raises), renders the structured 4-line dev report on stderr, and calls `sys.exit(1)`. Keyword-only `exit_code` overrides the exit status: `with nullrun.guard(exit_code=2):`. Apply to a region of code. **Recommended** for scripts and CLI entry points. | ✅ |
-| `workflow(name=None)` | Context manager. Sets the `workflow_id` contextvar that `@protect` and `track_*` attach to events. | (lazy) |
-| `chain(chain_id: str, op: str = "start")` | Context manager for soft-mode budget gate. `op="start"` registers the chain; `op="continue"` extends TTL; `op="end"` closes it. | (lazy) |
-| `span(name=None)` | Context manager for nested trace spans. | (lazy) |
-| `agent(name=None)` | Context manager for agent identity. | (lazy) |
-| `set_call_context(model=None, tools=None)` | Per-call context the SDK forwards to `/gate` so the backend's budget + tool-block enforcement sees real values. | (lazy) |
-| `on_error(hook)` | Register a global error hook. Fires for every `NullRunError` subclass BEFORE the exception propagates. A kill signalled through a **sync** `@protect` arrives as a re-wrapped `NullRunBlockedException` carrying `error_code="NR-W002"` — that re-wrapped form is what the hook sees. Multiple hooks supported; fires in registration order; hook exceptions are caught and DEBUG-logged. Filter inside the hook by `error_code`. Returns an idempotent unregister callable. | ✅ |
-| `runtime.track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` | Manual escape hatch for non-HTTP LLM calls. Reach it via `nullrun.get_runtime()`. Buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. Cost is recomputed on the backend from `input_tokens` + `output_tokens` + org pricing policy. | (runtime method) |
-| `runtime.track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` | Manual tool-call tracking on the runtime instance. `tool_name` flows through to the policy engine — a `ToolBlock` policy with matching pattern catches the call. | (runtime method) |
-| `runtime.track(event: dict)` | Generic manual-event emission on the runtime instance. Pass a dict with `type` (event category) and any additional payload fields; buffers into the event batch and flushes on the next `@protect` call or `flush_interval_ms`. Use for arbitrary observability signals (milestones, errors, business events). | (runtime method) |
-| `format_user_message(exc)` | Render a `NullRunError` as an end-user-facing string from the SDK's default catalog. Use this in place of `str(exc)` when showing exceptions to end users — see [User-facing messages](#user-facing-messages) below. | ✅ |
-| `set_user_message(code, text)` | Override the user-facing message for a specific `error_code` for the lifetime of this process. Pass `text=""` to clear. | ✅ |
-| `get_user_message(code)` | Look up the raw user-facing message for an `error_code`. Returns the per-process override if set, otherwise the catalog default, otherwise the generic fallback. | (lazy) |
-| `shutdown(timeout=2.0, flush=True)` | Gracefully shut down the runtime: send a clean WebSocket close frame, drain in-flight events, stop background threads. Auto-registered with `atexit` inside `init()`, so long-running scripts get a clean WS close on process exit without an explicit call. Calling it manually is safe and idempotent. | ✅ |
-| `nullrun.get_runtime().status()` | Synchronous snapshot of the runtime state as a frozen `NullRunStatus` dataclass (`ok` / `degraded` / `misconfigured`). Thread-safe, side-effect-free. | (lazy) |
+These names import fine (`from nullrun import X`) but stay out of `dir(nullrun)`.
 
-Rows marked **lazy** are exposed under `nullrun.*` via `__getattr__`
-on first access; they do not appear in `dir(nullrun)` until used.
+| Group | Names |
+|---|---|
+| Runtime | `NullRunRuntime`, `get_runtime`, `get_protected_runtime`, `reset` |
+| Context managers | `workflow`, `span`, `agent`, `chain` |
+| Context getters | `get_workflow_id`, `get_trace_id`, `get_span_id`, `get_agent_id`, `get_call_model`, `get_call_tools`, `get_chain_id`, `get_chain_op` |
+| Context setters | `set_call_context`, `set_chain_id`, `set_chain_op` |
+| Tracing | `SpanContext`, `get_current_span`, `create_root_span`, `create_child_span`, `set_span`, `reset_span` |
+| Actions | `ActionHandler`, `ActionType`, `ActionEvent`, `WebhookConfig`, `handle_action`, `register_action_handler`, `get_action_handler` |
+| Exceptions | `BreakerError`, `NullRunBlockedException`, `NullRunAuthenticationError`, `WorkflowPausedException`, `TransportErrorSource` |
+| Status | `NullRunStatus`, `RecentError`, `WorkflowState`, `ErrorContext` |
+| Audit | `AuditEntry`, `AuditLogMeta`, `AuditLogPage`, `AuditQuery`, `AuditVerifyResult`, `AuditExportJob`, `AuditExportStatus` |
+| Messages | `get_user_message` |
 
-#### `runtime.track_llm` manual usage
+### Lifecycle
 
-Use `runtime.track_llm` when auto-instrumentation can't see the LLM
-call — a custom HTTP client that bypasses `httpx`, an offline batch
-job, a test fixture. The signature mirrors the data the
-auto-instrumentation extractor reads from OpenAI / Anthropic / Gemini
-/ Cohere response bodies:
+#### `init`
 
-```python title="track_llm_manual.py"
+```python title="init.py"
+import nullrun
+
+nullrun.init(api_key="nr_live_...", api_url="https://api.nullrun.io")
+```
+
+| Parameter | Default | Behaviour |
+|---|---|---|
+| `api_key` | `NULLRUN_API_KEY` | Required. A whitespace-only value is rejected. A missing key raises `NullRunAuthenticationError` with `error_code="NR-C001"`. |
+| `api_url` | `NULLRUN_API_URL`, else `https://api.nullrun.io` | Gateway base URL. |
+| `debug` | `False` | Turns on debug logging. |
+| `fail_on_exit` | `False` | On a missing key, print the developer report to stderr and `sys.exit(1)` instead of raising. |
+| `on_denied` | `"raise"` | `"raise"` or `"message"`. `"message"` makes the operator's refusal surface as `NullRunDeniedError`, whose `agent_message` is text the gateway marks safe to show a model. Any other value raises `ValueError`. The flag applies to a `denied` refusal only. |
+
+`init()` is optional. The first `@protect` call creates the runtime lazily from
+`NULLRUN_API_KEY`.
+
+`init()` also registers `nullrun.shutdown()` with `atexit`, probes
+`/api/v1/capabilities` for the protocol version, and installs
+auto-instrumentation.
+
+#### `protect`
+
+```python title="protect.py"
+import nullrun
+
+@nullrun.protect
+def send_email(to: str, body: str) -> None:
+    ...
+```
+
+`protect(fn=None)` takes no keyword arguments. Both forms work:
+
+```python
+import nullrun
+
+@nullrun.protect
+def call(): ...
+
+@nullrun.protect()
+def call(): ...
+```
+
+It works on sync and async functions. Every protected call routes through the
+gateway, which answers with one of five decisions: `allow`, `block`,
+`require_approval`, `soft_pass`, or `deny`.
+
+#### `shutdown`
+
+```python title="shutdown.py"
+nullrun.shutdown(timeout=2.0, flush=True)
+```
+
+`timeout` is reserved and unused today. `flush=False` skips the final network
+call and cancels the flush thread. The call is safe and idempotent, and it is a
+no-op when `init()` never ran.
+
+#### `on_error`
+
+```python title="on_error.py"
+import nullrun
+
+def report(err, ctx):
+    print(err.error_code, ctx.stage)
+
+unregister = nullrun.on_error(report)
+```
+
+The hook takes `(NullRunError, ErrorContext)` and must be synchronous. It runs
+first, then the exception propagates. Hook exceptions are caught and logged at
+debug level, so a misbehaving hook cannot break the SDK. The returned callable
+unregisters the hook and is idempotent.
+
+#### `guard`
+
+```python title="guard.py"
+import nullrun
+
+with nullrun.guard(exit_code=1):
+    run_my_agent("hello")
+```
+
+`guard(*, exit_code=1)` is a context manager. It catches every `NullRunError`
+raised inside the block, prints a structured developer report to stderr, and
+calls `sys.exit(exit_code)`. The kill signal propagates unchanged so it reaches
+the top of the agent loop.
+
+#### Messages
+
+```python title="messages.py"
+import nullrun
+
+text = nullrun.format_user_message(exc)
+nullrun.set_user_message("NR-B004", "You've used all your support credits.")
+raw = nullrun.get_user_message("NR-B004")
+```
+
+`format_user_message(exc)` renders an exception as end-user-facing text. Use it
+in place of `str(exc)` whenever a person reads the message — `str(exc)` carries
+internal identifiers.
+
+`set_user_message(code, text)` overrides the message for one `error_code` for
+the lifetime of the process. Pass `text=""` to clear the override.
+`get_user_message(code)` returns the override when one is set, the catalog
+default otherwise.
+
+### Context managers
+
+| Manager | Yields | Behaviour |
+|---|---|---|
+| `workflow(name=None)` | `workflow_id` | Sets the workflow id for every event inside the block. The id is `name` or a fresh UUID. Also mints a root trace and span. |
+| `span(name=None)` | `span_id` | Sets the active span for nested traces. |
+| `agent(name=None)` | `agent_id` | Sets the agent identity for events inside the block. |
+| `chain(chain_id, op="start")` | `chain_id` | Scopes the calls to one chain. `op` must be `"start"`, `"continue"`, `"end"`, or `"auto"`; any other value raises `ValueError`. `chain_id` must be a **UUID v4**; any other format raises `ValueError`. |
+
+```python title="chain.py"
+import uuid
+import nullrun
+
+chain_id = str(uuid.uuid4())
+with nullrun.chain(chain_id, op="start") as cid:
+    agent.run_long_loop()
+```
+
+`chain()` does not close the chain on exit. Close it explicitly with
+`runtime.chain_end(chain_id)`.
+
+#### `set_call_context`
+
+```python title="set_call_context.py"
+import nullrun
+
+nullrun.set_call_context(
+    model="claude-sonnet-4-6",
+    tools=["search", "send_email"],
+    max_output_tokens=4096,
+)
+```
+
+`set_call_context(model=None, tools=None, max_output_tokens=None)` attaches
+per-call context that the gateway uses when it evaluates the call. Pass `None`
+to leave a field unchanged. `max_output_tokens` is sent only when it is a
+positive integer.
+
+Manual setters `set_chain_id(chain_id)` and `set_chain_op(op)` set the chain
+scope directly. Each returns a token.
+
+### Manual tracking
+
+Tracking methods live on the runtime, not on the package. Reach the runtime
+with `nullrun.get_runtime()`.
+
+| Method | Signature |
+|---|---|
+| `track_llm` | `track_llm(input_tokens, output_tokens=0, *, model=None, latency_ms=None, metadata=None)` |
+| `track_tool` | `track_tool(tool_name, duration_ms=None, *, is_retry=False, metadata=None)` |
+| `track` | `track(event: dict)` |
+| `track_event` | `track_event(event_type, **kwargs)` |
+
+```python title="track_llm.py"
 import nullrun
 
 runtime = nullrun.get_runtime()
-
-# After your custom LLM call returns:
 runtime.track_llm(
     input_tokens=response.usage.prompt_tokens,
     output_tokens=response.usage.completion_tokens,
     model="custom-model-v1",
     latency_ms=response.elapsed_ms,
-    metadata={"vendor": "custom", "trace_id": "..."},
 )
 ```
 
-Without `track_llm`, the SDK has nothing to report to the gateway —
-the budget counter is never credited, and the next `/gate` call may
-reject based on stale spend. Call `runtime.track_llm` once per real
-LLM call.
-
-#### `runtime.track_tool` manual usage
-
-```python title="track_tool_manual.py"
+```python title="track_tool.py"
 import nullrun
 
 nullrun.get_runtime().track_tool(
     tool_name="send_email",
     duration_ms=240,
     is_retry=False,
-    metadata={"to": "user@example.com"},
 )
 ```
 
-Use it when a non-LLM tool call happens outside the auto-instrumentation
-hooks (e.g. a custom agent framework, or a tool wrapped in your own
-function). The `tool_name` flows through to the policy engine — a
-`ToolBlock` policy with `pattern = "send_*"` will catch a manual call
-to `runtime.track_tool("send_email", ...)`.
-
-#### `runtime.track` catch-all
-
-```python title="track_manual.py"
+```python title="track.py"
 import nullrun
 
 nullrun.get_runtime().track({
@@ -6091,77 +5107,133 @@ nullrun.get_runtime().track({
 })
 ```
 
-Accepts an arbitrary dict as the event payload. Use for custom
-observability signals (milestones, errors, business events) that
-you want in the decision log alongside `track_llm` / `track_tool`.
-The `type` field becomes the filterable event category in the
-dashboard.
+```python title="track_event.py"
+import nullrun
 
-#### Custom user messages
+nullrun.get_runtime().track_event("workflow_start", workflow_id="wf-123")
+```
 
-See [User-facing messages → Per-deployment branding](#per-deployment-branding)
-below for `set_user_message` / `get_user_message` usage.
+`track_llm` reports token counts. The gateway computes cost from the tokens and
+the org's pricing. A call the SDK cannot see is never billed, and the next
+budget check can reject against a stale spend.
 
-The curated public surface in `dir(nullrun)` is the `__all__` list
-in `nullrun/__init__.py`: `__version__`, `init`, `protect`,
-`shutdown`, `on_error`, `format_user_message`,
-`set_user_message`, `guard`, plus the
-structured exception names `NullRunError`, `NullRunAuthError`,
-`NullRunConfigError`, `NullRunBackendError`, `NullRunBudgetError`,
-`NullRunToolBlockedError`, `WorkflowKilledInterrupt`,
-`NullRunWorkflowKilledError`, `NullRunApprovalDbUnavailableError`,
-and the typed MCP subclasses. The lazy surface (PEP 562) adds
-`workflow`, `span`, `agent`, `chain`,
-`set_call_context`, the audit classes (`AuditQuery`, `AuditEntry`,
-…), the tracer (`SpanContext`, `get_current_span`, …), and the
-additional exception names (`WorkflowPausedException`,
-`NullRunBlockedException`, `NullRunApproval*Error`, etc.).
+`track_tool` reports a tool call by name. The name reaches the policy engine,
+so a blocked-tool policy can catch a manual call.
 
-For a runtime snapshot, reach `NullRunStatus` via
-`nullrun.get_runtime().status()`. Returns a frozen
-`NullRunStatus` dataclass (`ok` / `degraded` / `misconfigured`);
-thread-safe, side-effect-free. `get_runtime()` builds the runtime
-from `NULLRUN_API_KEY` if none exists yet, and raises
-`NullRunConfigError` with `error_code="NR-C001"` when no API key is
-available.
+`track` takes an arbitrary event payload. The `type` field becomes the
+filterable event category. `track_event` is the same thing with the event type
+as its first argument.
+
+### Runtime methods
+
+| Method | Purpose |
+|---|---|
+| `status()` | Snapshot of the runtime. |
+| `check_workflow_budget(*, model=None, estimated_tokens=None, max_output_tokens=None)` | Ask whether the workflow has budget left. |
+| `execute(tool_name, input_data, mode="auto", ...)` | Run one tool call through the gateway. |
+| `heartbeat(chain_id)` | Post a cadence heartbeat for a chain. |
+| `ping_chain(chain_id, interval=30.0)` | Keep a chain alive on a timer. |
+| `cancel_execution(execution_id, reason=None)` | Cancel an in-flight execution. |
+| `consume_approval(...)` | Close an approved grant. |
+| `chain_end(chain_id)` | Close a chain. |
+| `approximate_budget()` | Best-effort budget view for display. |
+| `audit` | Audit log reader: `.list()`, `.verify()`, `.list_exports()`, `.create_export()`, `.export_status()`. |
+| `shutdown(flush=True)` | Close the runtime. |
+
+#### `status()`
+
+```python title="status.py"
+import nullrun
+
+snapshot = nullrun.get_runtime().status()
+print(snapshot.state)
+```
+
+`status()` returns a frozen `NullRunStatus` dataclass. It is safe to call from
+any thread.
+
+| Field | Meaning |
+|---|---|
+| `state` | `ok`, `degraded`, `offline`, or `misconfigured`. |
+| `api_key_valid` | `True`, `False`, or `None` when never tested. |
+| `api_key_prefix` | A fingerprint of the API key. Carries no character of the key. |
+| `organization_id` | The org the key belongs to. |
+| `workflow_id` | The bound workflow, or `None`. |
+| `api_url` | The gateway base URL. |
+| `backend_reachable` | `True`, `False`, or `None` when never tested. |
+| `ws_connected` | `True`, `False`, or `None` when not started. |
+| `workflow_state` | The remote workflow state, or `None`. |
+| `recent_errors` | Bounded list of recent errors. |
+
+There is no top-level `nullrun.status()`.
 
 ### Exceptions
 
-All raised from `nullrun.breaker.exceptions`. Every public SDK
-exception inherits from `NullRunError` and carries four structured
-fields: `error_code` (machine-readable, e.g. `"NR-B004"`),
-`user_action` (imperative hint), `retryable` (bool), `docs_url`. See
-[Errors](#74-error-codes) for the full
-hierarchy diagram.
+Every public SDK exception inherits from `NullRunError` and carries four
+structured fields: `error_code` (machine-readable, e.g. `"NR-B004"`),
+`user_action` (imperative hint), `retryable` (bool), and `docs_url`.
 
-| Class | When | Notes |
-| --- | --- | --- |
-| `NullRunError` | Structured base for every user-facing SDK exception | Inherits `BreakerError`. Carries `.error_code`, `.user_action`, `.retryable`, `.docs_url`. |
-| `NullRunConfigError` | SDK misconfigured (e.g. missing `api_key`) | Code family for config errors. Never retryable. |
-| `NullRunAuthenticationError` | Missing / invalid `X-API-Key`, bad HMAC | 401 / 403. Carries `.message`. |
-| `NullRunAuthError` | 401 specifically (key rejected) | Subclass of `NullRunAuthenticationError`. Carries `.status_code` (the wire HTTP status). |
-| `NullRunTransportError` | Gateway unreachable | Carries `.source` (e.g. `NETWORK_ERROR` / `GATEWAY_ERROR` / `BREAKER_OPEN` / `AUTH_ERROR`) and `.endpoint`. Retryable. |
-| `NullRunBackendError` | 5xx from the gateway | Subclass of `NullRunTransportError`. Code `NR-B002` family. Retryable. |
-| `RateLimitError` | HTTP 429 (gateway rate-limit response) | Subclass of `NullRunTransportError` → `NullRunInfrastructureError` (infrastructure class — see exception tree above). Carries `.retry_after`, `.upgrade_url`, `.body`. Code `NR-R001`. Retryable. Despite the 4xx status, integration handlers should treat it as infrastructure (FastAPI middleware maps it to 503). |
-| `NullRunRateLimitRedisError` | 503 — Redis reservation failed | Subclass of `NullRunInfrastructureError`. Code `NR-R002`. |
-| `NullRunProtocolError` | Backend rejected the `X-NULLRUN-PROTOCOL` header as too old or too new | Code `NR-P001`. Not retryable. `user_action` names the protocol version the SDK speaks and points at the compatibility matrix. |
-| `NullRunBlockedException` | Generic policy block | Inspect `.workflow_id`, `.reason`, `.action`, `.tool_name`, `.details`. Carries `.status_code` (the wire HTTP status, e.g. 402 budget, 403 cross-org, 422 `CONSUME_OVERBUDGET`, 429 cap-reached). **No** `.message` — use `str(exc)`. |
-| `NullRunBudgetError` | Budget exhausted | Subclass of `NullRunBlockedException`. Code `NR-B004`. |
-| `NullRunToolBlockedError` | Tool in block list | Subclass of `NullRunBlockedException`. Code `NR-T001`. Carries `.tool_name`. |
-| `NullRunChainError` | Chain-mode gate check failed | Subclass of `NullRunDecision`. Code `NR-CH001`. |
-| `NullRunConsumeOverbudgetError` | 422 — actual cost > reservation + ε | Subclass of `NullRunDecision`. Surfaces over-budget commit events. |
-| `NullRunWorkflowInactiveError` | 403 — workflow paused / killed cross-org | Subclass of `NullRunDecision`. Code `NR-W004`. |
-| `NullRunApprovalDbUnavailableError` | Approval database unreachable | Subclass of `NullRunBlockedException` → `NullRunDecision` (so a `NullRunDecision` handler catches it). Code `NR-A016`. |
-| `BreakerTransportError` | Transport misconfiguration (events cannot be delivered after retries) | Subclass of `BreakerError` (NOT `NullRunError`). Carries `.events_lost`, `.buffer_size`. |
-| `InsecureTransportError` | HTTP used where HTTPS required | Subclass of `BreakerTransportError`. |
-| `WorkflowPausedException` | Paused via control plane | Subclass of `NullRunDecision`. Carries `.workflow_id`, `.reason`, `.resume_after` — and no `.status_code`; map it to `503` plus a `Retry-After` header. |
-| `WorkflowKilledInterrupt` | Kill arrived mid-call | Subclass of `NullRunError` directly, **not** of `NullRunDecision` — catch it by name. Caught by `except Exception:` like every other SDK error. |
-| `NullRunWorkflowKilledError` | Kill arrived mid-call (typed alias) | Subclass of `WorkflowKilledInterrupt`. Same wire semantics; use this for typed `except` arms. |
+`NullRunDecision` and `NullRunInfrastructureError` are marker classes. They let
+host code catch every expected policy outcome with one clause, and every system
+failure with another.
 
+`NullRunBlockedException` carries `.workflow_id`, `.reason`, `.action`,
+`.tool_name`, `.status_code`, and `.details`. It has **no** `.message`
+attribute — use `str(exc)`.
+
+| Class | Base | `error_code` | Raised when |
+|---|---|---|---|
+| `NullRunError` | `BreakerError` | `NR-0000` | Base class for every SDK exception. |
+| `NullRunDecision` | `NullRunError` | `NR-0000` | Marker for expected policy outcomes. |
+| `NullRunInfrastructureError` | `NullRunError` | `NR-0000` | Marker for system failures. |
+| `NullRunBlockedException` | `NullRunDecision` | `NR-X001` | Generic policy block. |
+| `NullRunDeniedError` | `NullRunBlockedException` | `NR-D001` | The operator refused this specific call. Carries `.agent_message`. |
+| `NullRunBudgetError` | `NullRunBlockedException` | `NR-B004` | Budget exhausted. |
+| `NullRunBudgetRecheckFailedError` | `NullRunBudgetError` | `NR-B006` | The budget moved between the gate call and the execute call. |
+| `NullRunToolBlockedError` | `NullRunBlockedException` | `NR-T001` | The tool is in the block list. |
+| `NullRunApprovalDbUnavailableError` | `NullRunBlockedException` | `NR-A016` | The approval store is unreachable. |
+| `NullRunApprovalResponseMissingError` | `NullRunBlockedException` | `NR-A004` | The gate asked for approval and no approval row exists. |
+| `NullRunApprovalNotYetApprovedError` | `NullRunBlockedException` | `NR-A010` | The operator has not decided yet. |
+| `NullRunApprovalDeniedError` | `NullRunBlockedException` | `NR-A011` | The operator denied the approval. |
+| `NullRunApprovalExpiredError` | `NullRunBlockedException` | `NR-A012` | The approval expired. |
+| `NullRunApprovalReplayRejectedError` | `NullRunBlockedException` | `NR-A015` | The grant was already consumed. |
+| `NullRunApprovalDigestMismatchError` | `NullRunBlockedException` | `NR-A013` | The action changed since the approval. |
+| `NullRunApprovalToolDigestMismatchError` | `NullRunBlockedException` | `NR-A014` | The tool surface changed since the approval. |
+| `NullRunApprovalToolMismatchError` | `NullRunBlockedException` | `NR-A017` | The tool is outside the approved tool set. |
+| `NullRunMcpDestructiveBlockedError` | `NullRunBlockedException` | `NR-MCP01` | A destructive MCP tool was blocked. |
+| `NullRunMcpReadonlyBypassBlockedError` | `NullRunBlockedException` | `NR-MCP02` | A read-only MCP tool was blocked. |
+| `NullRunMcpApprovalRequiredError` | `NullRunBlockedException` | `NR-MCP03` | An MCP tool needs operator approval. |
+| `NullRunConsumeOverbudgetError` | `NullRunDecision` | `NR-O001` | The actual cost exceeded the reservation. |
+| `NullRunChainError` | `NullRunDecision` | `NR-CH001` | The chain scope check failed. |
+| `WorkflowPausedException` | `NullRunDecision` | `NR-W003` | The workflow is paused. Carries `.resume_after`. |
+| `NullRunWorkflowInactiveError` | `NullRunDecision` | `NR-W004` | The workflow is inactive. |
+| `WorkflowKilledInterrupt` | `NullRunError` | `NR-W002` | The operator killed the workflow. Not a `NullRunDecision`. |
+| `NullRunWorkflowKilledError` | `WorkflowKilledInterrupt` | `NR-W002` | Typed name for the kill signal. |
+| `NullRunConfigError` | `NullRunInfrastructureError` | `NR-C000` | Misconfiguration. |
+| `NullRunAuthenticationError` | `NullRunInfrastructureError` | `NR-A001` | The credentials were rejected. |
+| `NullRunAuthError` | `NullRunAuthenticationError` | `NR-A003` | The API key was rejected. |
+| `NullRunProtocolError` | `NullRunInfrastructureError` | `NR-P001` | The wire-protocol version does not match. |
+| `NullRunMalformedGateResponseError` | `NullRunProtocolError` | `NR-P002` | The gate response is not a decision the SDK can act on. |
+| `NullRunGateIndeterminateError` | `NullRunInfrastructureError` | `NR-P004` | The SDK could not obtain a decision. |
+| `NullRunUnclassifiedRefusalError` | `NullRunInfrastructureError` | `NR-P003` | The refusal category is not one the SDK understands. |
+| `NullRunUnknownActionError` | `NullRunInfrastructureError` | `NR-P005` | The control plane sent an action type this SDK cannot run. |
+| `NullRunRateLimitRedisError` | `NullRunInfrastructureError` | `NR-R002` | The rate limiter is unavailable. |
+| `NullRunTransportError` | `NullRunInfrastructureError` | `NR-B001` | The request never reached the gateway. Carries `.source` and `.endpoint`. |
+| `NullRunBackendError` | `NullRunTransportError` | `NR-B002` | The gateway returned 5xx. |
+| `NullRunExecutionNotFoundError` | `NullRunBackendError` | `NR-EX01` | The execution id is unknown or its binding expired. |
+| `RateLimitError` | `NullRunTransportError` | `NR-R001` | The gateway returned 429. Carries `.retry_after` and `.upgrade_url`. |
+| `BreakerError` | `Exception` | — | Root alias for the SDK error hierarchy. |
+| `BreakerTransportError` | `BreakerError` | — | Events could not be delivered. Not a `NullRunError`. |
+| `InsecureTransportError` | `BreakerTransportError` | — | HTTPS was required. |
+
+`TransportErrorSource` has four values: `NETWORK_ERROR`, `GATEWAY_ERROR`,
+`AUTH_ERROR`, `BREAKER_OPEN`.
 
 ### Catch-all pattern
 
 ```python title="catch_all_pattern.py"
+import time
+
 import nullrun
 from nullrun import WorkflowKilledInterrupt, protect
 from nullrun.breaker.exceptions import (
@@ -6170,38 +5242,28 @@ from nullrun.breaker.exceptions import (
     WorkflowPausedException,
 )
 
-# init() is OPTIONAL — the first protect(...) below creates the
-# runtime lazily from NULLRUN_API_KEY. See `init` above.
-
 try:
     step()
 except WorkflowKilledInterrupt:
-    raise                    # always re-raise — kill must reach the top
+    raise                    # always re-raise — the kill must reach the top
 except NullRunBlockedException:
-    ...                      # budget / tool block / workflow inactive / chain
+    ...                      # budget, tool block, approval, chain
 except RateLimitError as exc:
     time.sleep(exc.retry_after)
 except WorkflowPausedException:
-    ...                      # paused — resume via WS / API, then retry
+    ...                      # resume the workflow, then retry
 ```
 
-The full annotated tutorial (handler ordering rationale, observability
-hooks, exception hierarchy walkthrough) lives in
-[Use with FastAPI → HTTP status mapping](#64-use-with-fastapi).
-For global observability (Sentry, OpenTelemetry, structured logs),
-register a hook with `nullrun.on_error(...)` instead of wrapping every
-call site. The hook fires for every `NullRunError` subclass BEFORE the
-exception propagates. Hook exceptions are caught and DEBUG-logged — a
-misbehaving hook cannot break the SDK.
+`init()` is optional here. The first `protect`-decorated call creates the
+runtime lazily from `NULLRUN_API_KEY`.
+
+For global observability, register `nullrun.on_error(...)` instead of wrapping
+every call site.
 
 ### User-facing messages
 
-`nullrun.format_user_message(exc)` renders a `NullRunError`
-(or any object with an `error_code` attribute) as an end-user-facing
-string. **Use this instead of `str(exc)` whenever the message might be
-shown to a person who is not the developer** — `str(exc)` contains
-internal identifiers like `workflow_id` and `budget_cents` that leak
-the SDK's internals into product UI.
+`nullrun.format_user_message(exc)` renders a `NullRunError` — or any object with
+an `error_code` attribute — as end-user-facing text.
 
 ```python title="format_user_message.py"
 import nullrun
@@ -6214,111 +5276,46 @@ def chatbot(message: str) -> str:
 try:
     reply = chatbot(message)
 except NullRunBudgetError as exc:
-    # Show the user a clean message instead of the raw exception text
-    # ("Workflow wf-31a blocked: budget_cents=500 exceeded...").
     return nullrun.format_user_message(exc)
 ```
 
-#### Why the SDK owns the wording
+The catalog of default messages belongs to NullRun, so every deployment shows
+the same wording for a given `error_code`. A deployment can override one code
+with `set_user_message`. Overrides live in a per-process dict. They are not
+persisted and not sent to the gateway.
 
-The catalog of default messages is part of the NullRun product so
-every deployment sees consistent wording for a given `error_code`.
-
-#### Per-deployment branding
-
-If a deployment wants its own wording for a single code (e.g. a
-branded "out of credits" message), call `set_user_message` once at
-startup:
-
-```python title="set_user_message.py"
-import nullrun
-
-# Override the default message for budget-exceeded. Pass "" to clear.
-nullrun.set_user_message(
-    "NR-B004",
-    "You've used all your support credits. Upgrade to keep chatting.",
-)
-```
-
-Overrides live in a per-process dict and are checked before the
-catalog default. They do not persist across processes and are not
-synced to the backend — they are pure presentation sugar.
-
-#### What if `error_code` is unknown or missing?
-
-Objects without `error_code` (plain `Exception`, raw values) get a
-generic fallback (`"Something went wrong. Please try again."`). The
-function never raises and never returns an empty string.
+An object without `error_code` gets a generic fallback. The function never
+raises and never returns an empty string.
 
 ### See also
 
-- [Decorators & context managers](#72-decorators-extractors) — deep-dive on
-  `@protect` (canonical entry point, takes no parameters),
-  `with nullrun.guard():`, `set_call_context`, and the
-  workflow / span / chain context managers
+- [Decorators & context managers](#72-decorators-context-managers) — `@protect` and the
+  extractor wrappers
 - [Errors](#74-error-codes)
 - [Errors → Decision vs. infrastructure](#74-error-codes)
 - [Use with FastAPI](#64-use-with-fastapi)
+- [Manual cost / event tracking](#610-manual-cost-event-tracking)
 - [Auto-instrumentation](#13-installation)
 - [Control plane](#44-control-plane-websocket)
 
 
-## 7.2 Decorators & extractors
+## 7.2 Decorators & context managers
 
-This page is the deep-dive reference for the SDK's runtime-API
-surface — every decorator and context manager that affects **how a
-function call enters the gate**. The top-level symbol table is in
-[SDK API](#71-sdk-api); this page explains the *contracts* each
-symbol establishes with the gate.
+This page explains the contract each SDK symbol establishes with the
+gate. The symbol table lives in [SDK API](#71-sdk-api).
 
-`@protect` is the universal gate decorator. Every protected function
-call goes through the four pre-execution gates (control plane /
-budget / span / per-tool policy) and emits a tool-call span event
-tagged with the masked arguments. Wrap the call site in
-`with nullrun.guard():` for the structured 4-line developer report
-on failure.
+`@protect` is the gate. Every protected call is evaluated against
+tool patterns, budgets, rate limits, and approval policies before the
+function body runs.
 
-### The canonical API: `@protect` only
+### The one decorator
 
-`@protect` is the single canonical public entry point for the SDK.
-It is the gate. Every protected function call goes through the four
-pre-execution gates (control plane / budget / span / per-tool
-policy) and emits a tool-call span event tagged with the masked
+`@protect` is the only public decorator in the SDK. It takes no
 arguments.
 
-The split is intentional: the SDK collects facts (`tool_name`,
-`args`, `kwargs`) and ships them on the wire; the backend decides
-what to do with them. Business semantics — "this is a money tool",
-"this requires human approval" — live in NullRun policies, not in
-another decorator on the function. See
-[Human approval](#32-human-approval) for how operators
-configure the typed predicates the gate evaluates.
-
-### What's in scope
-
-| Symbol | Type | Surface |
-|---|---|---|
-| `@protect` | decorator | eager (`from nullrun import protect`) — **canonical** |
-| `with guard():` | context manager | eager (`from nullrun import guard`) |
-| `with workflow(...)` | context manager | lazy (`from nullrun import workflow`) |
-| `with span(...)` | context manager | lazy |
-| `with agent(...)` | context manager | lazy |
-| `with chain(...)` | context manager | lazy |
-| `set_call_context(...)` | imperative setter | lazy |
-
-Setters that only enrich observability
-(`set_trace_id`, `set_operation_id`, …) are not covered here —
-they are internal hooks the runtime drives from inside `@protect`.
-
----
-
-### `@protect` — the gate decorator
-
-**Parameters: none.** `@protect` accepts only a callable (or `None`
-when written with empty parens — the standard
-`@decorator` ↔ `@decorator()` shape).
-
 ```python title="protect_basic.py"
+import nullrun
+
 @nullrun.protect
 def my_agent(prompt: str) -> str:
     return call_llm(prompt)
@@ -6327,64 +5324,84 @@ def my_agent(prompt: str) -> str:
 async def my_async_agent(prompt: str) -> str:
     return await call_llm_async(prompt)
 
-@nullrun.protect()      # also valid — `fn=None` returns the decorator itself
+@nullrun.protect()      # also valid
 def f(): ...
 ```
 
-#### What `@protect` does on every call
+The SDK collects the facts — function name, arguments, keywords — and
+ships them on the wire. The gateway decides. Business meaning ("this
+moves money", "this needs a human") lives in dashboard policies, not
+in a second decorator. See [Human
+approval](#32-human-approval).
 
-A single `@protect` call runs **four pre-execution gates** in
-strict order. The wrapper is shared between the
-sync and async paths via a `_protect_body` context manager; only
-the kill/pause signal translation differs.
+#### What happens on every call
 
-| # | Gate | Failure mode | Sync behaviour | Async behaviour |
-|---|---|---|---|---|
-| 1 | `check_control_plane(workflow_id)` — KILL/PAUSE from the dashboard | **fail-CLOSED** (kill is terminal) | Raise `NullRunBlockedException(NR-W002)` / `(NR-W003)` | Re-raise the underlying `NullRunWorkflowKilledError` unchanged |
-| 2 | `check_workflow_budget()` — `/gate` pre-flight reservation | **fail-OPEN** on transport error (a transient backend outage must not freeze the user's agent) | `NullRunBudgetError(NR-B004)` on real block; transport error logs and proceeds | identical |
-| 3 | `_emit_span_start(...)` — observability `span_start` event | **never blocks** — exceptions swallowed at DEBUG | identical | identical |
-| 4 | `_run_tool_policy_gate(...)` — `/execute` per-tool policy | **fail-CLOSED** on transport error (a denied `charge_card` that runs when the policy engine is down is worse than a denied `charge_card` during an outage). Opt out via `NULLRUN_SENSITIVE_FAIL_OPEN=1`. | `NullRunBlockedException` on real block; on `NullRunTransportError` re-raises with source-specific `error_code` (NR-B001/NR-B002/NR-A003/NR-B005) | identical |
-
-After the body completes, `@protect` calls
-`runtime.track_tool(fn.__name__, metadata={"arguments": _safe_kwargs(kwargs)})`
-to emit a tool-call span event tagged with the masked arguments.
-Sensitive kwargs (PANs, tokens, etc., per `SENSITIVE_ARG_KEYS`)
-are replaced with `"***"` **before** truncation so a long URL
-never escapes the redaction window.
-
-If any gate raises and the function body never ran, the wrapper
-calls `_safe_cancel_active_execution(reason="tool_exception")` —
-this hits `POST /cancel` to close the open Redis reservation
-that `/gate` minted, so the budget doesn't leak via TTL expiry.
-
-#### Wire payload on `/execute`
-
-Every `@protect` call ships a `NoImpact` envelope — the SDK is
-policy-blind and the backend owns the decision.
-
-| Field | Value | Source |
+| # | Step | What it does |
 |---|---|---|
-| `tool_name` | `fn.__name__` | the decorated function |
-| `input_data` | `{"args": masked_args, "kwargs": masked}` | positional and keyword arguments, PII-masked |
-| `business_impact` | `None` | wire-shape compat — backend reads only `action_digest` + `kwargs` |
-| `action_digest` | SHA-256 hex (64 chars) of `BusinessImpact.no_impact()` | `compute_action_digest(...)` |
-| `tools` | tuple of tool names (defaults to `(fn.__name__,)` if unset) | `set_call_context(tools=...)` or the `@protect` default |
+| 1 | Control-plane check | Applies a pending **kill** or **pause** before anything else. |
+| 2 | Budget pre-flight | Reserves budget for the call. A refusal here stops the call. |
+| 3 | Span start | Opens a span for the call. Never blocks. |
+| 4 | Tool policy | Evaluates the tool against the org's policies. A refusal here stops the call. |
+| 5 | Function body | Runs only if every step above allowed the call. |
+| 6 | Tool track | Records the call and its cost. |
 
-#### Sync vs async: the kill-signal divergence
+Argument names that look like credentials are replaced with `***`
+before the call leaves your process. Passwords, tokens, API keys,
+authorization headers, session cookies, card numbers, PINs, and OTPs
+are covered.
 
-The sync wrapper passes `unify_block=True` so a kill arriving
-during `@protect`'s own scaffolding is rewrapped into a single
-`NullRunBlockedException` the user can catch uniformly. The async
-wrapper passes `unify_block=False` — async frameworks
-(`asyncio.CancelledError`, signal handlers) rely on the original
-typed exception to interrupt cleanly. Re-raising
-`NullRunWorkflowKilledError` as-is is required, not a bug.
+#### When the gateway cannot be reached
 
-#### Span hierarchy (built automatically)
+The SDK distinguishes three outcomes, and they are not the same thing:
 
-`_next_span()` reads `get_current_span()`. If a parent span is
-already active (outer `@protect`, `with workflow`, `with span`),
-the new span becomes a child. Otherwise a fresh root is opened.
+| Outcome | What the SDK does |
+|---|---|
+| The gateway **refused** the call | The refusal is honoured. The call does not run. |
+| The gateway is **unreachable** (network error, timeout, 5xx with no refusal body) | The call proceeds. Enforcement is advisory until the gateway recovers. |
+| The answer arrived but the SDK **cannot read it** | The SDK raises `NullRunGateIndeterminateError` (`NR-P004`). The call does not run. |
+
+An unanswered question is not a yes. Only the middle row fails open,
+and only on the pre-flight step. A credential failure or an
+unreadable body raises instead of proceeding.
+
+`NULLRUN_SENSITIVE_FAIL_OPEN=1` exists for local development. On its
+own it opens nothing: the set of tools allowed to fail open is empty
+until you name the tools explicitly.
+
+```python title="fail_open_tools.py"
+runtime = nullrun.get_runtime()
+runtime.register_fail_open_tools(["charge_card"])   # local development only
+```
+
+#### Sync and async differ in one place
+
+A **kill** arriving mid-call is reported differently by the two
+wrappers:
+
+| Wrapper | The kill arrives as | The `on_error` hook fires |
+|---|---|---|
+| sync `@protect` | `NullRunBlockedException` with code `NR-W002` | yes |
+| async `@protect` | `WorkflowKilledInterrupt` (code `NR-W002`) | no |
+
+The sync form unifies the signal into one catchable class. The async
+form lets the raw interrupt through, so `asyncio` cancellation and
+signal handlers behave as they normally do.
+
+Catch the kill by name, ahead of the decision branch:
+
+```python title="catch_kill.py"
+try:
+    result = run_agent(prompt)
+except WorkflowKilledInterrupt:
+    raise          # a kill must reach the top of the loop
+except NullRunDecision as decision:
+    ...
+```
+
+#### Spans nest automatically
+
+A protected call inside another protected call becomes a child span.
+You do not thread span context through arguments.
 
 ```python title="protect_span_tree.py"
 @nullrun.protect
@@ -6393,30 +5410,13 @@ def orchestrator(q):
 
 @nullrun.protect
 def researcher(q):
-    return get_current_span()        # parent.span_id == its parent_span_id
+    return get_current_span()        # its parent is the orchestrator span
 ```
 
-The dashboard reconstructs the whole tree from the
-`parent_span_id` chain emitted in `span_start` events. You do not
-need to pass span context through arguments.
+### `with nullrun.guard():` — friendly exit
 
-#### When to use
-
-**Always** on any function that calls an LLM, makes a tool call,
-or spends money. `@protect` is the gate. The workflow is derived
-from the API key on the backend; `fn.__name__` becomes the
-`tool_name` for the policy engine.
-
----
-
-### `with nullrun.guard():` — friendly-exit wrapper
-
-The **canonical form is `with nullrun.guard():`** — it makes the
-scope explicit and prints the structured four-line developer report
-on any `NullRunError`.
-
-**Parameters: none.** `guard()` accepts an optional `exit_code=`
-keyword (default `1`).
+`guard()` turns any `NullRunError` raised inside the block into a
+clean message on stderr and a non-zero exit.
 
 ```python title="guard_canonical.py"
 import nullrun
@@ -6432,807 +5432,900 @@ if __name__ == "__main__":
         print(my_agent("hello"))
 ```
 
-#### What it does
+`guard()` accepts one keyword: `exit_code` (default `1`).
 
-Any `NullRunError` raised inside the `guard()` block is caught,
-rendered as the **structured four-line developer report**
-(`[error_code]` + `what` + `where` + `why` + `how to fix`), printed
-to **stderr**, and the process exits with code `1`.
+The message is the user-facing sentence first, then the developer
+detail — the error code, where it happened, why, and how to fix it.
+See [Error handling](#43-error-handling) for the full
+report shape.
 
-The catalog user-message is the headline line so end-user-facing
-deployments still get a clean single sentence; the structured detail
-below it is the developer-facing fix.
+These propagate unchanged:
 
-Exceptions that propagate unchanged:
+- `WorkflowKilledInterrupt` — the kill must reach the top of the loop.
+- `KeyboardInterrupt` and `SystemExit`.
+- Any exception that is not a `NullRunError` — your own bugs deserve
+  an honest traceback.
 
-- `NullRunWorkflowKilledError` (kill signal) — kill must reach the
-  top of the agent loop, not be swallowed into a graceful exit.
-  Re-raised explicitly inside the `except NullRunError` branch.
-- `KeyboardInterrupt` / `SystemExit` — same reason; they don't reach
-  the `except NullRunError` branch anyway.
-- Any non-NullRun exception — the user's own bugs are not handled
-  here; let them propagate for an honest traceback.
-
-#### When to use
-
-For **top-level entry points** in scripts and CLIs: instead of a
-raw traceback on `NullRunConfigError(NR-C001)` at the first gate
-call, the operator sees the structured four-line developer report
-and the process exits cleanly. In libraries and long-running
-services, prefer `try/except NullRunError` — `guard()` exits the
-process, which isn't appropriate there.
-
-The context-manager form `with nullrun.guard():` is the
-**recommended form** for region-of-code scopes — see the example
-above. It makes the scope explicit, accepts an `exit_code=` argument,
-and the four-line report is what it always renders. If `run_my_agent`
-raises `NullRunError` inside the block, the four-line developer
-report is printed (catalog headline + error_code + what + where +
-why + how to fix) and the script exits 1.
-
-#### Zero-activity diagnostic
-
-The runtime tracks `_protect_call_count` and
-`_llm_call_event_count`. If `@protect` fires 50+ times without the
-runtime observing a single `track_llm` event — typically a sign
-that auto-instrumentation did not attach (vendor SDK imported
-later, custom transport not on httpx, framework hook missing) —
-the SDK logs **one** WARNING naming the three most likely root
-causes. The diagnostic is warn-once; subsequent bumps do not spam.
-
----
+Use `guard()` at the entry point of a script or CLI. In a library or
+a long-running service, catch `NullRunError` instead — `guard()`
+exits the process.
 
 ### Context managers
 
 | Context manager | Parameters | What it sets |
 |---|---|---|
-| `with workflow(name=None)` | `name: str \| None` | Root scope: pushes `workflow_id` + `trace_id` + `span_id` (root `SpanContext`). All `@protect` and `track_*` calls inside auto-tag events with this `workflow_id`. |
-| `with span(name=None)` | `name: str \| None` | Child span derived from the active parent `SpanContext`. No-op if no parent is active (bare `with span(...)` outside any workflow/protect block). |
-| `with agent(name=None)` | `name: str \| None` | Sets `agent_id` for per-agent cost attribution. |
-| `with chain(chain_id, op="start")` | `chain_id: str` (UUID v4), `op: str` | Soft-mode budget gate. Overdrafts are allowed only when an active chain is registered against the org. `op` is `"start"` / `"continue"` / `"end"` / `"auto"` (default). |
+| `with workflow(name=None)` | `name: str \| None` | The workflow scope. Everything inside is attributed to this workflow. |
+| `with span(name=None)` | `name: str \| None` | A child span of the active parent. |
+| `with agent(name=None)` | `name: str \| None` | The agent identity, for per-agent cost attribution. |
+| `with chain(chain_id, op="start")` | `chain_id: str` (UUID v4), `op: str` | A chain — a group of calls that run as one unit under a shared budget. |
 
 #### `workflow()` and the policy binding
 
-The `workflow_id` is the join key that binds a run to a
-dashboard-defined workflow (with its budget cap and per-workflow
-policies). The name you pass should match the workflow your API
-key is bound to — otherwise the gate falls back to an ad-hoc
-workflow_id with no budget policy attached. For a one-shot test
-script, `None` is fine: the SDK mints a UUID and the run lives as
-an unattached workflow.
+The workflow name is what links a run to the budget and policies you
+configured in the dashboard. Give it the same name as the workflow
+your API key is bound to. If you leave it unset, the SDK generates one
+and the run carries no workflow policies.
 
-#### `chain()` and the UUID v4 validation
+#### `chain()` and the UUID v4 requirement
 
 ```python title="chain_uuid.py"
 import uuid
 import nullrun
 
-chain_id = str(uuid.uuid4())       # MUST be a UUID v4 string
+chain_id = str(uuid.uuid4())       # must be a UUID v4 string
 with nullrun.chain(chain_id, op="start"):
-    my_long_running_agent()        # every /gate call extends the chain TTL
+    my_long_running_agent()
 ```
 
-The `chain_id` is validated client-side: the backend's chain race
-guard does **not** validate UUID format — non-UUID or non-v4
-`chain_id`s silently auto-register as new ACTIVE chains, which is both
-a typo trap and a predictable-UUID risk. The SDK raises `ValueError`
-at `with chain(...)` entry on malformed input.
+`op` is one of `start`, `continue`, `end`, `auto`. The default is
+`start`.
 
-`chain` is the soft-mode companion to a Hard budget: the budget
-allows a bounded overrun only when an active chain is present.
-Long-running streams should also call
-`runtime.ping_chain(chain_id, interval=30.0)` to extend the TTL
-faster than the natural `/check` cadence.
+The `chain_id` is validated when you enter the block. A malformed id
+raises `ValueError`. Use `uuid.uuid4()` rather than a readable slug —
+the SDK cannot tell a typo from a deliberate identifier.
 
-#### Nested `with span(...)`
+A chain is the companion to a hard budget: a bounded overrun is
+allowed only while a chain is active. Long-running streams should also
+call `runtime.ping_chain(chain_id, interval=30.0)` so the chain stays
+alive between calls.
+
+#### Nested spans
 
 ```python title="nested_span.py"
 with nullrun.workflow("my-agent"):
-    with nullrun.span("plan-generation"):     # child of workflow root
+    with nullrun.span("plan-generation"):
         plan = my_agent(user_input)
-        with nullrun.span("tool-call"):       # grandchild
+        with nullrun.span("tool-call"):
             tool.invoke(plan)
 ```
 
-The dashboard renders the tree from the `parent_span_id` chain
-emitted in `span_start` events — there is no manual context
-threading.
-
----
-
-### `set_call_context()` — per-call data for `/gate`
+### `set_call_context()` — per-call data for the gate
 
 ```python title="set_call_context.py"
 nullrun.set_call_context(
-    model="claude-sonnet-4-6",     # LLM model name; backend looks up per-model rate
-    tools=["send_email", "refund_customer"],   # matched against workflow's blocked_tools
+    model="claude-sonnet-4-6",
+    tools=["send_email", "refund_customer"],
 )
 ```
 
 | Parameter | Type | Default | Effect when unset |
 |---|---|---|---|
-| `model` | `str \| None` | `None` (no change) | Backend reads the rate from the workflow default; per-model budget tiers do not fire. |
-| `tools` | `list[str] \| tuple[str, ...] \| None` | `None` (no change) | Backend skips `ToolBlock` enforcement on `/gate`. Pass `[]` to clear (different from `None`, which leaves the previous value). |
+| `model` | `str \| None` | `None` | The gateway uses the workflow's default model rate. |
+| `tools` | `list[str] \| tuple[str, ...] \| None` | `None` | The gateway evaluates the tool block against the protected function's own name only. |
+| `max_output_tokens` | `int \| None` | `None` | The gateway uses its default output estimate. |
 
-Call this **inside** a `with workflow(...)` block, before the
-`@protect` call. The values are forwarded on the `/gate` request
-so the backend can:
+Call it inside a `with workflow(...)` block, before the protected
+call. The gateway uses the model to price the reservation, and the
+tool list to evaluate the tool block against the tools the call
+actually intends to use.
 
-- compute `projected_cost` from the **real** model rate (not the
-  default fallback);
-- evaluate the workflow's `blocked_tools` aggregate against the
-  call's intended tool list (otherwise `ToolBlock` only runs on
-  `/track`).
+`None` leaves the previous value unchanged. Pass `[]` to clear the
+tool list.
 
-Both fields default to `None` / empty; users opt in by calling
-`set_call_context` explicitly. The `@protect` wrapper itself
-populates the `tools` field with `(fn.__name__,)` if the user
-didn't — a defensive default so a bare `@protect` still triggers
-the tool-block check for that single function name.
+### Approval rules and the action digest
 
----
+Every protected call ships the function name, its arguments, and a
+SHA-256 digest of the call's business impact. An approval rule that
+inspects argument values names the parameter it cares about. The
+gateway reads the live value from the request — there is nothing to
+configure on the SDK side.
 
-### How ToolParameters approval rules work
-
-The `@protect` envelope ships `tool_name + args + kwargs` plus a
-`NoImpact` envelope (kind=`"none"`) on every call. Approval rules
-that need to inspect argument values reference them by `param_name`
-in the dashboard approval-rule editor — the backend reads the live
-value out of `kwargs` directly. There is no SDK-side extractor and
-no decorator to configure; the wire payload carries everything the
-rule needs.
-
-The canonical envelope (`BusinessImpact.no_impact()`) computes to
-the same 64-char SHA-256 `action_digest` on every call. The digest
-binds approval grants to the exact payload — backend
-re-checks the digest on `/execute` and refuses on mismatch.
-
----
+The digest binds the approval to the exact payload. If the amount or
+the arguments change between the approval and the execution, the
+gateway refuses.
 
 ### When to use what
 
 | Task | API |
 |---|---|
-| Wrap a function that calls an LLM or tool (canonical) | `@nullrun.protect` (no parameters) |
-| Mark a money-moving tool for typed approval + digest | `@nullrun.protect` + an approval rule referencing `param_name` in the dashboard |
-| Mark a tool where rule names ≠ arg names | Approval rule `param_name` mapping in the dashboard |
-| Top-level script entry (friendly exit) | `with nullrun.guard():` |
-| Multi-step agent run (cost + trace per workflow) | `with nullrun.workflow("agent-name"): ...` |
-| Per-call model name and tools for `/gate` | `nullrun.set_call_context(model=..., tools=[...])` inside `with workflow` |
-| Soft-mode budget (controlled overdrafts) | `with nullrun.chain(uuid.uuid4(), op="start"): ...` |
-| LangGraph auto-tracking | (auto on first `@protect` call) |
-| Manual LLM tracking (custom client) | `nullrun.get_runtime().track_llm(input_tokens=..., output_tokens=..., model=...)` |
-| Manual tool-call tracking | `nullrun.get_runtime().track_tool(tool_name=..., duration_ms=..., metadata=...)` |
-| Custom business event | `nullrun.get_runtime().track({"type": "agent.milestone", "step": ..., "elapsed_secs": ...})` |
-| Audit log read | `runtime.audit.list(AuditQuery(event_type=..., since=..., limit=...))` |
-| Global error hook (Sentry, OTel) | `nullrun.on_error(my_handler)` — returns an idempotent unregister callable |
-| Snapshot runtime state | `nullrun.get_runtime().status()` — frozen `NullRunStatus` dataclass |
-| Graceful exit (WS close, flush events) | `nullrun.shutdown()` — auto-registered via `atexit` inside `init()`; explicit calls only matter for tests (`shutdown(flush=False)`) or for early teardown |
-
----
-
-### Order of application — cheat sheet
-
-```python title="order_cheatsheet.py"
-# ─── Canonical: just @protect ───
-@nullrun.protect
-def delete_user(uid: int): ...           # ToolParameters rules "just work"
-
-# ─── Plain trackable function ───
-@nullrun.protect
-def my_agent(prompt): ...
-
-# ─── Nested @protect builds the span tree automatically ───
-@nullrun.protect
-def orchestrator(q):
-    return researcher(q)              # child span
-
-@nullrun.protect
-def researcher(q):
-    return get_current_span()         # parent's span_id == parent_span_id
-
-# ─── Top-level script entry with friendly exit (guard() preferred) ───
-import nullrun
-from nullrun import protect
-
-@protect
-def main(prompt): ...
-
-if __name__ == "__main__":
-    with nullrun.guard():               # canonical — 4-line report + exit 1
-        print(main("hello"))
-# shutdown() is auto-registered via atexit inside init() —
-# no explicit call is needed for a clean WS close on exit.
-
-# ─── Full layering: chain → workflow → call context → @protect ───
-# The runtime is created lazily on the first @protect call.
-# NULLRUN_API_KEY must be set in the shell.
-import uuid
-import nullrun
-
-chain_id = str(uuid.uuid4())
-with nullrun.chain(chain_id, op="start"):           # soft-mode budget
-    with nullrun.workflow("customer-support"):        # root trace
-        with nullrun.span("plan-generation"):        # child span
-            nullrun.set_call_context(                # model + tools for /gate
-                model="claude-sonnet-4-6",
-                tools=["send_email", "refund_customer"],
-            )
-            plan = my_agent(user_input)              # @protect inside
-```
-
----
+| Guard a function that calls an LLM or a tool | `@nullrun.protect` |
+| Attribute a run to a workflow | `with nullrun.workflow("name"):` |
+| Price the call and match the tool block against a tool list | `nullrun.set_call_context(model=..., tools=[...])` |
+| Run a bounded overrun under a shared budget | `with nullrun.chain(uuid.uuid4(), op="start"):` |
+| Nest a step in the trace | `with nullrun.span("name"):` |
+| Attribute cost to one agent | `with nullrun.agent("name"):` |
+| Fail fast on a bad config | `nullrun.init(fail_on_exit=True)` |
+| Friendly exit at the entry point | `with nullrun.guard():` |
+| Send every SDK error to your logging | `nullrun.on_error(handler)` |
+| Track an LLM call the instrumentation cannot see | `nullrun.get_runtime().track_llm(...)` |
+| Track a tool call the instrumentation cannot see | `nullrun.get_runtime().track_tool(...)` |
+| Read the runtime state | `nullrun.get_runtime().status()` |
 
 ### Anti-patterns
 
-!!! warning "Don't put `with nullrun.guard():` inside a `@protect`-wrapped body"
-    `guard()` only catches errors raised inside its own block. A
-    bare `with nullrun.guard():` placed inside a `@protect`-decorated
-    function is a no-op for gate-time errors — the exception is
-    raised by the `@protect` wrapper before the body runs, never
-    reaches the `with` block, and the process exits with a raw
-    traceback instead of the four-line developer report.
+!!! warning "Don't put `with nullrun.guard():` inside a protected body"
+    The guard only catches errors raised inside its own block. A gate
+    refusal is raised by the wrapper before the body runs, so it never
+    reaches the block. The process exits with a raw traceback instead
+    of the clean report.
 
-!!! warning "Don't pass `cost_cents` to `track_llm`"
-    The SDK strips it before sending. Cost is recomputed on the
-    backend from `input_tokens + output_tokens + org pricing policy`.
-    `tokens` is the only valid unit on the wire.
+!!! warning "Don't pass a cost to `track_llm`"
+    Cost is recomputed on the gateway from the real token counts. The
+    SDK sends tokens, not money.
 
-!!! warning "Don't call `set_chain_id("my-custom-id")`"
-    `chain_id` MUST be a UUID v4 string. The backend's race guard
-    does not validate format — non-v4 ids silently auto-register
-    as new ACTIVE chains. Use
-    `with nullrun.chain(uuid.uuid4(), op="start")` to let the SDK
-    validate.
+!!! warning "Don't invent a `chain_id`"
+    A `chain_id` must be a UUID v4. A readable slug raises
+    `ValueError`.
 
-!!! danger "Don't use `set_call_context(model="...")` to override cost"
-    `model` only changes which rate the backend uses to compute
-    `projected_cost`. The actual cost comes from real token counts
-    on `/track`. Faking `model` to lower the projected cost doesn't
-    reduce the actual charge.
-
----
+!!! danger "Don't set `model` to lower the cost"
+    `model` only selects which rate the gateway prices the
+    reservation with. The charge comes from the real token counts, so a
+    lower projected cost does not lower the bill.
 
 ### See also
 
-- [SDK API](#71-sdk-api) — top-level symbol table, exceptions, manual
-  tracking, transport hooks
-- [Sensitive tools (concept)](#24-sensitive-tools) —
-  `ToolBlock` server-side policy and how `@protect` interacts with it
-- [Human approval](#32-human-approval) — typed predicates
-  (`money_amount`, `tool_parameters`) and `action_digest`
-- [Workflows](#41-workflow-context) — dashboard-side view of a
-  workflow (budget cap, API keys, executions, traces)
-- [Custom tracking](#610-manual-cost-event-tracking) — when to use
-  `track_llm` / `track_tool` / `track` instead of
-  auto-instrumentation
-- [Use with LangGraph](#61-protect-a-langgraph-agent) — LangGraph auto-patch
-  and how `@protect` instruments a graph
+- [SDK API](#71-sdk-api) — the symbol table, exceptions, manual tracking
+- [Human approval](#32-human-approval) — typed predicates and the action digest
+- [Workflow context](#41-workflow-context) — chains, soft mode, and the workflow scope
+- [Custom tracking](#610-manual-cost-event-tracking) — when to track by hand
 
 
 ## 7.3 HTTP API
 
-This page lists the endpoints a user — or their SDK — actually
-calls. Internal admin endpoints (pricing backfill, gateway operator
-APIs) are not exposed here; see the gateway repo for the full
-internal surface.
+Base URL: `https://api.nullrun.io`.
 
-Base URL:
+REST paths start with `/api/v1`. The WebSocket control plane path does not.
 
-- Production: `https://api.nullrun.io/api/v1`
-- WebSocket control plane: `wss://api.nullrun.io/ws/control/{org_id}`
+Every response body is JSON.
 
-The `{org_id}` for the WebSocket comes from the credential bundle
-returned by `POST /api/v1/auth/verify` (`organization_id` field).
-The SDK negotiates this automatically — only set the URL by hand
-when you are building a custom WebSocket client.
+### Protocol header
 
-Endpoint behaviour is defined by the gateway router; this page is
-the reader-facing summary of the routes a user or an SDK calls.
+Every request to a gateway endpoint carries the wire-protocol version:
+
+```http title="HTTP"
+X-NULLRUN-PROTOCOL: 4
+```
+
+The value is a bare integer. The gateway accepts 2 to 11, and its current
+version is 11. The SDK sends 4 on every call, so you never set the header by
+hand. A missing or unsupported version answers `400`.
 
 ### Authentication
 
-Two schemes — they are **not interchangeable**.
+Two schemes. They are not interchangeable.
 
-#### `X-API-Key` + HMAC (SDK → gateway)
+| Caller | Headers | Credential |
+|---|---|---|
+| SDK | `X-API-Key` | The API key, for example `nr_live_...` |
+| SDK with request signing | `X-API-Key`, `X-Signature`, `X-Signature-Timestamp` | The API key plus the signing secret |
+| Dashboard | `Authorization: Bearer <session_token>` | A session token from `POST /api/v1/auth/login` |
 
-All SDK-traffic endpoints (`/track`, `/track/batch`, `/gate`,
-`/execute`, `/check`) require:
+The enforcement path reads `X-API-Key`. It does not read
+`Authorization: Bearer`, so a call that carries only the bearer token answers
+`401` with `API_KEY_MISSING`. The SDK sends both headers.
 
-| Header | Value |
-| --- | --- |
-| `X-API-Key` | API key (`nr_live_...`) |
-| `X-Signature` | hex(HMAC-SHA256(`secret_key`, `timestamp:api_key:body_sha256`)) |
-| `X-Signature-Timestamp` | Unix epoch seconds (rejected if older than `NULLRUN_HMAC_MAX_AGE_SECS`, default 300) |
-| `X-Workflow-Id` *(optional)* | binds the call to a workflow context |
+The signing secret is separate from the API key. It arrives in the
+`POST /api/v1/auth/verify` response as `secret_key`.
 
-The SDK computes and signs every request automatically once
-`NULLRUN_API_KEY` and `NULLRUN_SECRET_KEY` are set. The gateway
-default for `NULLRUN_HMAC_REQUIRED` is `false` — operators must set
-it explicitly to `true` in production. When
-`NULLRUN_HMAC_REQUIRED=true`, unsigned SDK requests are rejected
-with 401 and the SDK-auth middleware emits a per-request WARN so
-the gap is visible in logs.
+The signature is the hex-encoded HMAC-SHA256 of this string, keyed with the
+signing secret:
 
-> SDK requests to `/api/v1/orgs/{org_id}/*` are also checked for
-> org-mismatch: the org claimed in the URL must match the org the
-> API key was minted for. Mismatch → 403.
+```text title="Signature"
+<timestamp>:<api_key>:<sha256_hex_of_the_request_body>
+```
 
-#### `Authorization: Bearer <session_token>` (dashboard / admin)
+`X-Signature-Timestamp` carries the Unix epoch seconds used in the signature.
+The gateway rejects a stale timestamp with `401`.
 
-Dashboard endpoints (`/orgs/...`, `/admin/...`) use session tokens
-obtained from `POST /api/v1/auth/login` or the OAuth flow
-(`/auth/oauth/register`). Pass as `Authorization: Bearer <token>`.
+The SDK computes the signature for every request on its own. A request body is
+signed as the exact bytes that go on the wire. Signing covers the enforcement
+calls: `POST /api/v1/gate`, `POST /api/v1/execute`, `POST /api/v1/track`, and
+`POST /api/v1/track/batch`.
 
 ### SDK endpoints
 
-These are the endpoints the SDK calls. You will not normally hit
-them by hand, but the contracts are stable and the OpenAPI spec
-documents every field.
+These are the endpoints the SDK calls. You do not normally call them by hand.
 
-| Method | Path | Called by |
-| --- | --- | --- |
-| `POST` | `/api/v1/auth/verify` | `init()` — verifies the API key and returns the full credential bundle (HMAC `secret_key`, org context, plan, `workflow_id`, `key_version`, etc.) |
-| `GET` | `/api/v1/capabilities` | `init()` — protocol negotiation |
-| `POST` | `/api/v1/gate` | Pre-flight + policy evaluation + budget reservation (called from `@protect` entry) |
-| `POST` | `/api/v1/track` | Single-event commit (`reservation_id` + `idempotency_key`) |
-| `POST` | `/api/v1/track/batch` | Batched events (≤ 100 per batch) — opt-in fallback when single-event is disabled |
-| `GET` | `/api/v1/orgs/{org_id}/policies` | Policy fetch (called from SDK on first `@protect` and on `policy_invalidated` WS push) |
-| `GET` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Workflow lookup (called from SDK on first gate per workflow) |
-| `GET` | `/api/v1/orgs/{org_id}/status` | Control-plane poll fallback (only used when WS is down) |
-| `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat |
-| `POST` | `/api/v1/cancel` | Cancel an in-flight execution. Idempotent; the reservation TTL cleans up even if the call doesn't reach the gateway. |
-| `POST` | `/api/v1/execute` | Per-tool invocation with gate pre-flight and budget reservation. Used by `MCPAdapter` so MCP tool calls pass the same policies as `@protect`-decorated functions. |
+| Method | Path | What it does |
+|---|---|---|
+| `POST` | `/api/v1/auth/verify` | Verifies the API key. Returns the credential bundle: `organization_id`, `workflow_id`, `secret_key`, `key_version`, plan, features, limits. |
+| `GET` | `/api/v1/capabilities` | Reports the supported wire-protocol range, the recommended SDK version, and the feature flags. |
+| `POST` | `/api/v1/gate` | Checks the budget for one action and reserves it. Returns the decision and a server-minted `execution_id`. Sending `chain_op: "end"` closes a chain. |
+| `POST` | `/api/v1/execute` | Evaluates the policy for one tool call. This is the primary enforcement point. |
+| `POST` | `/api/v1/track` | Commits one spend event against a reservation. |
+| `POST` | `/api/v1/track/batch` | Commits up to 100 spend events in one request. |
+| `POST` | `/api/v1/approvals/{approval_id}/consume` | Closes an approved grant without running the tool. Idempotent. |
+| `POST` | `/api/v1/heartbeat` | Reports that a long-running workflow is still alive. The body carries `chain_id`. |
+| `POST` | `/api/v1/cancel` | Cancels an in-flight execution. Idempotent. |
+| `GET` | `/api/v1/status/{workflow_id}` | Reads the state of one workflow. The SDK polls this when the WebSocket is unavailable. |
+| `GET` | `/api/v1/budget/approximate` | Returns the approximate budget view. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log` | Lists audit entries. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/verify` | Verifies the audit trail. |
+| `GET`, `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | Starts an export job and returns a job id. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/status` | Reports the export job status. |
+| `WS` | `/ws/control/{organization_id}` | Streams control-plane events: kill, pause, approval decisions, key rotation. |
 
-### Auth
+`POST /api/v1/check` is not served. It answers `410` and names
+`POST /api/v1/gate` as the path to use.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/auth/register` | Create account, returns API key + secret |
-| `POST` | `/api/v1/auth/login` | Dashboard session token |
-| `POST` | `/api/v1/auth/verify` | Verify API key + return full credential bundle |
-| `POST` | `/api/v1/auth/oauth/register` | OAuth signup (returns API key + secret) |
+#### The credential bundle
 
-##### `POST /api/v1/auth/verify` response fields
+`POST /api/v1/auth/verify` answers with the fields the SDK needs to run.
 
 | Field | Type | Notes |
-| --- | --- | --- |
-| `organization_id` | string (UUID) | Canonical org identifier |
-| `organization_name` | string \| null | Canonical org display name |
-| `plan` | string | Plan tier (`lite`, `starter`, `growth`, `scale`, `enterprise_unlimited`, …) |
-| `features` | object | Plan-feature flags resolved for this org |
-| `limits` | object | Plan-limits block (workflows, seats, …) |
-| `role` | string \| null | Member role; `null` on API-key path — SDK treats `null` as "role unknown, escalate to session auth" |
-| `workflow_id` | string \| null | Workflow this API key is bound to; `null` on an unbound key |
-| `secret_key` | string \| null | HMAC secret the SDK uses to sign requests — distinct from the API key itself |
-| `key_version` | number \| null | Current active HMAC key version; SDK compares against its cached value to detect rotation |
+|---|---|---|
+| `organization_id` | string | The org the key belongs to. Required — a response without it is an error. |
+| `organization_name` | string \| null | The org display name. |
+| `plan` | string | The plan tier. |
+| `features` | object | The plan's feature flags. |
+| `limits` | object | The plan's limits. |
+| `role` | string \| null | The member role. `null` on the API-key path. |
+| `workflow_id` | string \| null | The workflow the key is bound to. `null` on an unbound key. |
+| `secret_key` | string \| null | The signing secret. `null` when the key does not sign. |
+| `key_version` | number \| null | The active signing-secret version. A change means the secret rotated. |
 
-### Workflows
+### The gate call
+
+`POST /api/v1/gate` is the entry point of the enforcement path. It checks the
+budget for one action, reserves the money, and answers with a decision.
+
+#### Request
+
+| Field | Required | Notes |
+|---|---|---|
+| `organization_id` | yes | The org the call runs for. |
+| `execution_id` | yes | The execution this call belongs to. |
+| `trace_id` | yes | The trace this call belongs to. |
+| `mode` | yes | `auto`, `inline`, or `strict`. |
+| `tool` | no | One tool name. The gate reads `tool` or `tools`, never `tool_name`. |
+| `tools` | no | A list of tool names the caller intends to use. |
+| `model` | no | The model the call will use, for an LLM check. |
+| `estimated_tokens` | no | The input-token estimate, for an LLM check. |
+| `max_output_tokens` | no | The caller's own output-token ceiling. |
+| `check_type` | no | `llm` or `tool`. |
+| `workflow_id` | no | The workflow the call runs for. |
+| `chain_id` | no | The chain the call belongs to. |
+| `chain_op` | no | `start`, `continue`, or `end`. |
+| `approval_id` | no | The approval presented on the post-approval re-check. |
+| `business_impact` | no | The value the call moves. Omit it when there is none. |
+| `action_digest` | no | Digest of the business impact, re-sent on the re-check. |
+| `tool_class` | no | `builtin`, `mcp`, `custom`, or `invalid`. |
+| `parent_execution_id` | no | The execution that spawned this one. |
+
+`business_impact` has two kinds. There is no `none` kind — omit the field
+instead.
+
+| `kind` | Fields |
+|---|---|
+| `money` | `direction` (`outflow` or `inflow`), `amount_minor` in cents, `currency`. |
+| `tool_call` | `tool_name`, `params`. |
+
+#### Decision values
+
+| Decision | Meaning |
+|---|---|
+| `allow` | The call may run. |
+| `block` | The call may not run. |
+| `require_approval` | The call may run after an operator approves it. The answer carries an `approval_id`. |
+| `soft_pass` | The call runs, and the event is recorded for review. |
+| `deny` | The call may not run, and the model may adapt and try something else. |
+
+#### Response
+
+| Field | Notes |
+|---|---|
+| `decision` | One of the five values above. |
+| `decision_source` | Which rule produced the decision. |
+| `explanation` | The reason, in human text. |
+| `execution_id` | The server-minted id for this execution. |
+| `approval_id` | The approval to wait on. Present on `require_approval`. |
+| `remaining_budget_cents` | The budget left in the period, in cents. |
+| `projected_cost_cents` | The reserved cost, in cents. |
+| `retry_after_ms` | How long to wait, in milliseconds. |
+| `action_digest` | The digest the gateway recorded for the approval. |
+| `category` | `denied`, `budget`, `halt`, or `infra`. |
+| `budget_enforcement` | `enforced`, `not_configured`, or `unknown`. |
+| `user_message` | Text to show the user. |
+| `agent_message` | Text to show the model. |
+
+#### Money units
+
+Three units appear on the wire. They are not interchangeable.
+
+| Unit | Where it appears |
+|---|---|
+| Cents, integer | The request wire: `cost_cents`, `reserved_cost_cents`, `budget_cents`, `threshold_cents`, `amount_minor`, `threshold_minor`, `projected_cost_cents`, `remaining_budget_cents`. |
+| Millicents, integer | The ledger and the lease responses: `cost_millicents`, `granted_millicents`, `spent_millicents`, `monthly_cost_millicents`. One millicent is 1/1000 of a cent. |
+| US dollars, float | The track response snapshot: `total_cost_usd`, `cost_usd`, `rate_per_minute`. |
+
+A field named `projected_cost_millicents` does not exist on the wire. The gate
+reports `projected_cost_cents`.
+
+### Idempotency
+
+Two body fields carry the idempotency key.
+
+| Field | Sent on | Value |
+|---|---|---|
+| `idempotency_key` | `/api/v1/gate`, `/api/v1/track` | A UUID v4 minted by the SDK for the logical action. |
+| `operation_id` | `/api/v1/gate`, `/api/v1/execute` | The SDK's name for the same value. |
+
+The gateway binds the reservation to the key, so a repeated call with the same
+key settles the same action instead of charging twice. The SDK reuses one
+`operation_id` for the whole gate-then-execute-then-track sequence of a single
+action.
+
+Two endpoints are idempotent by contract and need no key from you:
+
+- `POST /api/v1/cancel` — a second call on the same execution is a no-op.
+- `POST /api/v1/approvals/{approval_id}/consume` — an already-consumed grant
+  answers `200`.
+
+### Control-plane endpoints
+
+These endpoints drive the dashboard and the control plane. They are not part
+of the SDK's request path.
+
+#### Workflows
 
 | Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/orgs/{org_id}/workflows` | Create workflow |
-| `GET` | `/api/v1/orgs/{org_id}/workflows` | List workflows |
-| `GET` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Get workflow |
-| `PATCH` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Update (budget, name, …) |
-| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/pause` | Pause (broadcasts `state_change` over WS) |
-| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/resume` | Resume |
-| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/kill` | Kill (broadcasts `state_change` over WS) |
+|---|---|---|
+| `POST` | `/api/v1/orgs/{org_id}/workflows` | Create a workflow. |
+| `GET` | `/api/v1/orgs/{org_id}/workflows` | List workflows. |
+| `GET` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Get one workflow. |
+| `PATCH` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}` | Update the budget, the name, and other settings. |
+| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/pause` | Pause the workflow. |
+| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/resume` | Resume the workflow. |
+| `POST` | `/api/v1/orgs/{org_id}/workflows/{workflow_id}/kill` | Kill the workflow. |
 
-### Policies
+The create body carries `name`, `external_id`, and an optional `budget_cents`.
+The org-scope key is `external_id`: two workflows may share a `name`, and a
+repeated `external_id` matches the existing workflow.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/orgs/{org_id}/policies` | Create |
-| `GET` | `/api/v1/orgs/{org_id}/policies` | List (a single policy is not addressable by id — read it from the list response) |
-| `PATCH` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | Update |
-| `DELETE` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | Delete |
-| `POST` | `/api/v1/orgs/{org_id}/policies/{policy_id}/toggle` | Toggle a policy active/inactive (dashboard PATCH 404 fix) |
-| `GET` | `/api/v1/orgs/{org_id}/policies/templates` | List policy templates |
-| `POST` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}/enable` | Enable a template |
-| `DELETE` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}` | Disable a template |
-
-Most-restrictive-wins composition across applicable policies — see [Concepts → Policies](#22-policies).
-
-### Approvals
-
-Programmatic approval / denial — useful for on-call bots and CI
-runbooks. Dashboard uses the same endpoints internally. See
-[Concepts → Human approval](#32-human-approval) for the
-end-to-end flow.
+#### Policies
 
 | Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/orgs/{org_id}/approvals/{approval_id}/approve` | Approve a pending approval. Idempotent — already-approved returns `409 approval_already_decided`. |
-| `POST` | `/api/v1/orgs/{org_id}/approvals/{approval_id}/deny` | Deny a pending approval. The SDK raises `WorkflowKilledInterrupt` for the parked agent. |
-| `POST` | `/api/v1/approvals/{approval_id}/consume` | Close an `APPROVED` approval row without invoking the approved tool. Called by the SDK on the success path after a `require_approval` round-trip resolves to `outcome=approved`, and on the operator-cancel path. Idempotent — `consumed` / `already_consumed` / `not_approved` all return 200. Org identity is derived from the API key (no `{org_id}` segment in the path). |
+|---|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/policies` | List policies. A single policy is not addressable by id — read it from the list. |
+| `POST` | `/api/v1/orgs/{org_id}/policies` | Create a policy. |
+| `PATCH` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | Update a policy. |
+| `DELETE` | `/api/v1/orgs/{org_id}/policies/{policy_id}` | Delete a policy. |
+| `POST` | `/api/v1/orgs/{org_id}/policies/{policy_id}/toggle` | Switch a policy between active and inactive. |
+| `GET` | `/api/v1/orgs/{org_id}/policies/templates` | List policy templates. |
+| `POST` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}/enable` | Enable a template. |
+| `DELETE` | `/api/v1/orgs/{org_id}/policies/templates/{template_id}` | Disable a template. |
 
-### Executions, audit, observability
+The most restrictive applicable policy wins. See
+[Concepts → Policies](#22-policies).
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/v1/orgs/{org_id}/executions` | List executions |
-| `GET` | `/api/v1/orgs/{org_id}/executions/{execution_id}` | One execution |
-| `GET` | `/api/v1/orgs/{org_id}/audit-log` | Audit trail |
-| `GET` | `/api/v1/orgs/{org_id}/audit-log/export` | Start an async audit-log export job (returns a job id) |
-| `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | Same — POST variant, useful from web forms |
-| `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/status` | Poll export job status (`pending` / `ready` / `failed`) |
-| `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/download` | Download the exported file once status is `ready` |
-| `GET` | `/api/v1/orgs/{org_id}/traces` | List trace spans |
-| `GET` | `/api/v1/orgs/{org_id}/traces/{trace_id}` | One trace (full span tree) |
-| `GET` | `/api/v1/orgs/{org_id}/incidents` | Active and recent incidents (rate-limit outages, budget overruns, etc.) |
-| `GET` | `/api/v1/orgs/{org_id}/dashboard` | Dashboard payload |
-| `GET` | `/api/v1/orgs/{org_id}/control-center` | Single-call control-center view (workflows + recent decisions + alerts) |
-| `GET` | `/api/v1/orgs/{org_id}/usage` | Per-key usage breakdown (canonical) |
-| `GET` | `/api/v1/orgs/{org_id}/quota` | Per-key usage breakdown — an alias of `/usage`, same payload |
-| `GET` | `/api/v1/budget/approximate` | Approximate budget view for UI display — see [Budgets → Approximate budget endpoint](#31-budgets) |
-| `GET` | `/api/v1/orgs/{org_id}/status` | Single-call dashboard status (budget + rate + plan limits + time-to-exhaustion) |
+A policy body carries:
 
-#### Cancellations
+| Field | Values |
+|---|---|
+| `policy_type` | `rate_limit`, `budget_limit`, or `tool_block`. |
+| `scope` | `org` or `workflow`. |
+| `enforcement_mode` | `Hard` or `Soft`. |
 
-`POST /api/v1/cancel` cancels an in-flight execution. Cancellation is
-idempotent — calling it twice on the same execution is a no-op and
-releases the reservation by TTL even if the call never reaches the
-gateway. See [Control plane](#44-control-plane-websocket) for the
-related kill / pause endpoints.
+The config keys depend on `policy_type`.
 
-### Org management
+| `policy_type` | Config keys |
+|---|---|
+| `rate_limit` | `max_calls_per_minute`. An integer. `0` means no limit. |
+| `budget_limit` | `budget_cents`. An integer number of cents. |
+| `tool_block` | `tool_pattern` — one glob — plus `blocked_tools`, `tools`, and `parameter_conditions`. |
+
+The tool-block key is `tool_pattern`, singular. The plural `tool_patterns` is
+rejected with `422`.
+
+#### Approvals
 
 | Method | Path | Purpose |
-| --- | --- | --- |
-| `GET/PATCH/DELETE` | `/api/v1/orgs/{org_id}` | Org settings, update, delete |
-| `GET` | `/api/v1/orgs/{org_id}/api-keys` | List keys |
-| `POST` | `/api/v1/orgs/{org_id}/api-keys` | Mint key |
-| `DELETE` | `/api/v1/orgs/{org_id}/api-keys/{key_id}` | Revoke key |
-| `POST` | `/api/v1/orgs/{org_id}/api-keys/{key_id}/rotate` | Rotate the HMAC secret in place |
-| `GET` | `/api/v1/workflows/{workflow_id}/api-keys` | Per-workflow key listing |
-| `GET` | `/api/v1/orgs/{org_id}/members` | Members |
-| `PATCH` | `/api/v1/orgs/{org_id}/members/{member_id}` | Update member role |
-| `DELETE` | `/api/v1/orgs/{org_id}/members/{member_id}` | Remove member |
-| `POST` | `/api/v1/orgs/{org_id}/invites` | Invite |
-| `DELETE` | `/api/v1/orgs/{org_id}/invites/{invite_id}` | Revoke invite |
-| `POST` | `/api/v1/orgs/{org_id}/invites/{invite_id}/resend` | Resend invite email |
-| `GET` | `/api/v1/invites/{token}` | Public invite info |
-| `POST` | `/api/v1/invites/{token}/accept` | Public invite accept |
-| `POST` | `/api/v1/invites/{token}/decline` | Public invite decline |
+|---|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/approvals` | List approvals. |
+| `POST` | `/api/v1/orgs/{org_id}/approvals/{approval_id}/approve` | Approve a pending approval. An already-decided approval answers `409`. |
+| `POST` | `/api/v1/orgs/{org_id}/approvals/{approval_id}/deny` | Deny a pending approval. |
+| `GET` | `/api/v1/orgs/{org_id}/approvals/history` | List decided approvals. |
 
-### Alerts
+#### Executions, audit, and usage
 
 | Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/v1/orgs/{org_id}/alerts` | Active alerts |
-| `POST` | `/api/v1/orgs/{org_id}/alerts/{alert_id}/dismiss` | Dismiss |
-| `GET/POST` | `/api/v1/orgs/{org_id}/alert-channels` | Channels |
-| `GET/PATCH` | `/api/v1/orgs/{org_id}/notification-settings` | Per-user settings |
+|---|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/executions` | List executions. |
+| `GET` | `/api/v1/orgs/{org_id}/executions/{execution_id}` | Get one execution. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log` | List audit entries. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/verify` | Verify the audit trail. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export` | Start an export job. |
+| `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | Start an export job. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/status` | Poll the export job. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/download` | Download the exported file. |
+| `GET` | `/api/v1/orgs/{org_id}/traces` | List trace spans. |
+| `GET` | `/api/v1/orgs/{org_id}/traces/{trace_id}` | Get one trace with its full span tree. |
+| `GET` | `/api/v1/orgs/{org_id}/incidents` | List active and recent incidents. |
+| `GET` | `/api/v1/orgs/{org_id}/usage` | Usage breakdown. |
+| `GET` | `/api/v1/orgs/{org_id}/quota` | Usage breakdown. Same payload as `/usage`. |
+| `GET` | `/api/v1/orgs/{org_id}/dashboard` | Dashboard payload. |
+| `GET` | `/api/v1/orgs/{org_id}/control-center` | Workflows, recent decisions, and alerts in one call. |
 
-### Health
-
-Health endpoints are registered on the gateway's top-level router
-— they are **not** under `/api/v1`. They return `200 OK` when healthy,
-`503` otherwise, with a JSON body listing each dependency's status.
+#### Budget and status
 
 | Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/health` | Alias for `/health/live` |
-| `GET` | `/healthz` | Alias for `/health/live` (Kubernetes convention) |
-| `GET` | `/health/live` | Liveness — process is up and accepting connections |
-| `GET` | `/health/ready` | Readiness — Postgres + Redis reachable |
-| `GET` | `/health/startup` | Startup — `200` after migrations complete, `503` while booting |
+|---|---|---|
+| `GET` | `/api/v1/budget/approximate` | Approximate budget view for display. See [Budgets](#31-budgets). |
+| `GET` | `/api/v1/orgs/{org_id}/status` | One call with the spend, the budget, the rate usage, the plan limits, and the plan. |
+
+`GET /api/v1/budget/approximate` answers with the estimate and its
+provenance.
+
+| Field | Notes |
+|---|---|
+| `org_id` | The org the estimate belongs to. |
+| `current_spend_cents_estimate` | The estimated spend. |
+| `is_approximate` | Always `true`. The endpoint is advisory only. |
+| `source` | Where the number came from. |
+| `confidence` | How stale the number may be. |
+| `last_updated_at` | ISO-8601 UTC of the read. |
+
+The endpoint answers `503` when it cannot produce an estimate. The body
+carries `error_code`, `error_message`, and `retry_after_ms`. Render a retry
+prompt, not a zero spend.
+
+`GET /api/v1/orgs/{org_id}/status` answers with the org's money and limits.
+
+| Field | Notes |
+|---|---|
+| `usage_today_cents` | Spend over the last 24 hours. |
+| `usage_month_cents` | Spend over the current billing period. |
+| `budget_used_cents` | Org budget used in the period. |
+| `budget_remaining_cents` | `null` when the plan sets no org budget. |
+| `budget_limit_cents` | `null` when the plan budget is unlimited. |
+| `budget_pct_used` | `null` when there is no cap. |
+| `time_to_limit` | `null` when no exhaustion is projected in the period. |
+| `rate` | Rate-limit status for the org. |
+| `per_key_rate` | Per-key rate visibility. Absent when not available. |
+| `limits` | Plan limits and the current usage against them. |
+| `plan`, `plan_name` | The plan tier and its display name. |
+| `subscription_status` | `active`, `past_due`, `cancelled`, or `expired`. |
+| `period_window` | The period the month counters are read from. |
+
+#### Organization
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET`, `PATCH`, `DELETE` | `/api/v1/orgs/{org_id}` | Read, update, or delete the organization. |
+| `GET` | `/api/v1/orgs/{org_id}/members` | List members. |
+| `PATCH` | `/api/v1/orgs/{org_id}/members/{member_id}` | Change a member's role. |
+| `DELETE` | `/api/v1/orgs/{org_id}/members/{member_id}` | Remove a member. |
+| `GET` | `/api/v1/orgs/{org_id}/invites` | List invites. |
+| `POST` | `/api/v1/orgs/{org_id}/invites` | Invite a member. |
+| `DELETE` | `/api/v1/orgs/{org_id}/invites/{invite_id}` | Revoke an invite. |
+| `POST` | `/api/v1/orgs/{org_id}/invites/{invite_id}/resend` | Resend the invite email. |
+| `GET` | `/api/v1/invites/{token}` | Public invite details. |
+| `POST` | `/api/v1/invites/{token}/accept` | Accept an invite. |
+| `POST` | `/api/v1/invites/{token}/decline` | Decline an invite. |
+
+#### API keys
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/api-keys` | List keys. |
+| `POST` | `/api/v1/orgs/{org_id}/api-keys` | Mint a key. |
+| `DELETE` | `/api/v1/orgs/{org_id}/api-keys/{key_id}` | Revoke a key. |
+| `POST` | `/api/v1/orgs/{org_id}/api-keys/{key_id}/rotate` | Rotate the signing secret in place. |
+| `GET` | `/api/v1/workflows/{workflow_id}/api-keys` | List the keys bound to one workflow. |
+
+The raw key and the signing secret are returned once, at mint time. Store
+them at once.
+
+#### Alerts
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/orgs/{org_id}/alerts` | List active alerts. |
+| `POST` | `/api/v1/orgs/{org_id}/alerts/{alert_id}/dismiss` | Dismiss one alert. |
+| `POST` | `/api/v1/orgs/{org_id}/alerts/dismiss-all` | Dismiss every alert. |
+| `GET`, `POST` | `/api/v1/orgs/{org_id}/alert-channels` | List or create alert channels. |
+| `GET`, `PATCH` | `/api/v1/orgs/{org_id}/notification-settings` | Per-user notification settings. |
+
+#### Auth
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/auth/register` | Create an account. Returns an API key and a signing secret. |
+| `POST` | `/api/v1/auth/login` | Exchange email and password for a session token. |
+| `POST` | `/api/v1/auth/verify` | Verify an API key and return the credential bundle. |
+| `POST` | `/api/v1/auth/verify-email` | Confirm an email address. |
+| `POST` | `/api/v1/auth/forgot-password` | Start a password reset. |
+| `POST` | `/api/v1/auth/reset-password` | Finish a password reset. |
+| `GET` | `/api/v1/auth/me` | The signed-in user. |
+| `DELETE` | `/api/v1/auth/session` | Revoke the session. |
+
+#### Health
+
+The health endpoints sit on the gateway's top-level router. They are not
+under `/api/v1`. They answer `200` when healthy and `503` otherwise, with a
+body listing each dependency.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health/live` | Liveness — the process accepts connections. |
+| `GET` | `/health/ready` | Readiness — the dependencies are reachable. |
+| `GET` | `/health/startup` | Startup — `200` once migrations finish, `503` while booting. |
+| `GET` | `/health` | Alias for `/health/live`. |
+| `GET` | `/healthz` | Alias for `/health/live`. |
 
 ### Capabilities
 
-The capabilities endpoint reports the wire-contract version the
-gateway supports. The SDK calls this on `init()` to negotiate
-the protocol version and to surface a startup warning if the SDK
-is older than what the gateway requires.
+`GET /api/v1/capabilities` reports the wire contract the gateway supports.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/v1/capabilities` | Report `min_protocol_version` / `max_protocol_version`, `sdk_min_version`, server version + build timestamp, and the `capabilities.*` feature flags |
+| Field | Type | Notes |
+|---|---|---|
+| `min_protocol_version` | number | The oldest protocol version the gateway accepts. |
+| `max_protocol_version` | number | The newest protocol version the gateway accepts. |
+| `sdk_min_version` | string | The SDK version the gateway recommends. |
+| `server_version` | string | The gateway release tag. |
+| `capabilities` | object | The feature flags, nested under this key. |
 
-When `init()` detects that the SDK is older than the gateway's
-required minimum version, it emits a warning so the operator sees
-the gap before the first `/gate` call fails with `400 PROTOCOL_TOO_OLD`.
-
-The current wire-protocol version is **4** (min supported: **2**).
-`init()` negotiates the version automatically via `/capabilities`; you
-do not need to set anything by hand.
-
-### Heartbeat
-
-Long-running workflows post a time-based cadence heartbeat so the
-gateway can detect an orphaned workflow whose agent process has
-crashed without sending a kill / pause signal. The recommended
-cadence is advertised in `capabilities.heartbeat_interval_seconds`
-(default 30s).
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/heartbeat` | Time-based cadence heartbeat; body is `{ chain_id }` only. `workflow_id` is derived from the API key, not passed in the body. |
-
-The SDK posts heartbeats automatically inside the
-`NullRunRuntime` background thread once `init()` has run; operators
-do not need to call it manually.
+The SDK probes this endpoint during `init()` and logs a warning when the
+version the SDK sends falls outside the range the gateway accepts. The probe is
+advisory: `init()` does not fail on a version mismatch.
 
 ### WebSocket control plane
 
-| Path | Purpose |
-| --- | --- |
-| `WS /ws/control/{org_id}` | Real-time kill/pause/policy-invalidated/key-rotated events (HMAC-signed on connect) |
+`WS /ws/control/{organization_id}` streams control-plane events to a
+connected SDK. The `{organization_id}` comes from the credential bundle, so the
+SDK derives the URL on its own.
 
 Server → client message types: `initial_state`, `state_change`,
-`policy_invalidated`, `key_rotated`, `resync_required`, `error`,
-`pong`, `approval_resolved`, `subscribed`.
+`policy_invalidated`, `key_rotated`, `resync_required`, `error`, `pong`,
+`approval_resolved`, `subscribed`.
 
 Client → server message types: `ack`.
 
-See [Control plane](#44-control-plane-websocket) for the full
-protocol and the SDK reaction matrix.
+The SDK reads the workflow state from the socket. When the socket is
+unavailable, the SDK falls back to polling `GET /api/v1/status/{workflow_id}`.
 
-### Common request patterns
+See [Control plane](#44-control-plane-websocket) for the reaction matrix.
 
-The examples below use the dashboard's `Authorization: Bearer <session-token>`
-header (the token comes from `POST /api/v1/auth/login`). For SDK-traffic
-endpoints substitute `X-API-Key` + HMAC headers — see the
-[Authentication](#authentication) section above.
+### Example
+
+The dashboard endpoints take a session token. The SDK endpoints take an API
+key.
 
 ```bash title="shell"
 TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ORG_ID=8a3b1c7d-...
-```
 
-!!! note "Compute the HMAC signature"
-    For SDK endpoints the `X-Signature` and `X-Signature-Timestamp`
-    headers are required. The signature is
-    `HMAC-SHA256(secret_key, "<timestamp>:<api_key>:<sha256(body)>")`.
-    See [Authentication → X-API-Key + HMAC](#x-api-key-hmac-sdk-gateway).
-
-#### Create a workflow
-
-```bash title="shell"
 curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "production-bot",
-    "description": "Customer-facing assistant",
-    "budget_cents": 5000,
-    "human_approvals_enabled": false
+    "external_id": "production-bot",
+    "budget_cents": 5000
   }'
-
-# → 201 { "id": "wf_abc...", "name": "production-bot", ... }
 ```
-
-#### Mint an API key bound to a workflow
-
-```bash title="shell"
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../api-keys" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "prod-bot-key",
-    "scopes": ["gate", "track", "verify"]
-  }'
-
-# → 201 {
-#     "id": "key_...",
-#     "key": "nr_live_xxxxxxxxxxxx",   ← shown ONCE, store it
-#     "secret_key": "sk_...",          ← shown ONCE, store it
-#     "workflow_id": "wf_abc...",
-#     "key_prefix": "nr_live_xxxxxx"
-#   }
-```
-
-The raw `key` and `secret_key` are **never returned again** —
-losing them means rotating the key. See
-[API keys → How to create a key](#25-api-keys).
-
-#### Kill / pause / resume a running workflow
-
-```bash title="shell"
-# Kill — broadcasts state_change(killed) over WS to every connected SDK
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../kill" \
-  -H "Authorization: Bearer $TOKEN"
-
-# Pause
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../pause" \
-  -H "Authorization: Bearer $TOKEN"
-
-# Resume
-curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/workflows/wf_abc.../resume" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-#### Single-call status (current spend / budget / time-to-exhaustion)
 
 ```bash title="shell"
 curl "https://api.nullrun.io/api/v1/orgs/$ORG_ID/status" \
   -H "Authorization: Bearer $TOKEN"
-
-# → 200 {
-#     "current_spend_cents": 2340,
-#     "budget_cents": 5000,
-#     "time_to_exhaustion_secs": 86400,
-#     "rate_used": 12,
-#     "rate_limit_per_min": 60,
-#     "plan_caps": { ... }
-#   }
 ```
 
-Useful for dashboards and alerts — one call returns everything
-you need to show "you've used X of Y".
+### Errors
+
+Every error response carries a machine-readable code. See
+[Error codes](#74-error-codes) for the gateway slugs, the enforcement codes, and the
+SDK exception hierarchy.
 
 ### See also
 
-- [Errors](#74-error-codes)
+- [Error codes](#74-error-codes)
+- [SDK API](#71-sdk-api)
 - [Control plane](#44-control-plane-websocket)
+- [Budgets](#31-budgets)
 
 
 ## 7.4 Error codes
 
-The canonical `ApiErrorCode` enum is the source of truth for every
-non-2xx response the gateway returns. This page maps each code to:
+The gateway's error-code registry is the source of truth for what the gateway
+can refuse and what HTTP status it answers with. The SDK projects that registry
+onto its own catalog: every SDK exception carries an `error_code` such as
+`"NR-B004"`, and that value is the user-facing identifier to branch on.
 
-- the SDK exception the Python SDK raises when it sees that error
-- the HTTP status code the gateway returns
-- when it happens
+Three vocabularies meet on the wire.
 
-There are **two parallel taxonomies** you may see:
-
-- **Gateway error slugs** — short SCREAMING_SNAKE_CASE strings in the
-  `error` field of every non-2xx response. Listed below in
-  *Gateway error codes*.
-- **NR-* codes** — the SDK's user-facing `error_code` field on every
-  exception. The full catalog is below in *NR-* error code catalog*.
-
-For the **three-layer error model** (structured exceptions →
-`on_error` hook → `format_user_message` / `with nullrun.guard():`)
-and the boundary between developer-facing and end-user-facing
-wording, see [Concepts → Error handling](#43-error-handling).
-
-### Gateway error codes (`error` field on every non-2xx response)
-
-The canonical catalog lives in the gateway. The `error` slug is
-the stable, machine-readable identifier; `message` is human-safe;
-`code` carries the same value in SCREAMING_SNAKE_CASE.
-
-| `error` slug | HTTP | When | SDK exception |
-| --- | --- | --- | --- |
-| `bad_request` | 400 | Generic 400 — invalid input that isn't a validation failure | `NullRunConfigError` (or `NullRunError`) |
-| `invalid_json` | 400 | Request body could not be parsed as JSON (`JsonSyntaxError`). Surfaces as `INVALID_JSON` on `exc.error_code` | `NullRunBackendError` |
-| `unauthorized` | 401 | Missing or invalid `X-API-Key` / expired session / HMAC mismatch | `NullRunAuthenticationError` (`NullRunAuthError` for 401 specifically) |
-| `forbidden` | 403 | Authenticated but not allowed (incl. CSRF mismatch, org-mismatch on `/orgs/*`) | `NullRunAuthenticationError` |
-| `not_found` | 404 | Resource doesn't exist or isn't visible | (no exception — caller handles) |
-| `conflict` | 409 | Idempotency conflict, duplicate, "already a member", "invite already pending", "cannot demote last owner", etc. | `NullRunError` |
-| `validation_error` | **422** | Request body parsed but failed schema validation (`JsonDataError`). Surfaces as `INVALID_FIELD` on `exc.error_code` | `NullRunBackendError` |
-| `plan_limit_exceeded` | **422** | Generic plan cap hit (workflows, seats, api_keys). Body `details.resource` carries which dimension. | `NullRunBlockedException` |
-| `workflow_limit_reached` | **422** | Workflow-specific active-workflow cap hit | `NullRunBlockedException` |
-| `rate_limit_exceeded` | 429 | Per-minute / per-day rate cap. Body carries `retry_after` (seconds). | `RateLimitError` (carries `.retry_after`, `.upgrade_url`) |
-| `internal_error` | 500 | Server-side bug | `NullRunBackendError` (retryable) |
-| `not_implemented` | 501 | Feature not yet implemented | `NullRunError` |
-| (also `internal_error`) | 503 | `ApiError::ServiceUnavailable` — transient downstream failure on an enforcement path. Carries `retry_after`. | `NullRunBackendError` (retryable) |
-
-> **Plan limit slugs (api_keys / seats / policies / executions)** all
-> surface as `plan_limit_exceeded` with `details.resource` set to the
-> dimension name (`"api_keys"`, `"seats"`, `"workflows"`, …). There
-> is no separate slug per dimension — read `details.resource`.
-
-### SDK exception hierarchy (Python)
-
-Every public SDK exception inherits from `NullRunError` and carries
-four structured fields: `error_code` (machine-readable, e.g.
-`"NR-B004"`), `user_action` (imperative hint), `retryable`
-(bool), `docs_url`.
-
-Every exception below is raised from `nullrun.breaker.exceptions`.
-Only the names in `nullrun.__all__` are importable from the top-level
-`nullrun` package; the rest come from the module.
-
-```
-NullRunError                          (Exception)
-├── NullRunDecision                   (marker — expected policy outcomes)
-│   ├── NullRunBlockedException       (policy / budget / loop / sensitive block)
-│   │   ├── NullRunBudgetError        (budget exhausted — NR-B004)
-│   │   │   └── NullRunBudgetRecheckFailedError (NR-B006 — post-approval recheck)
-│   │   ├── NullRunToolBlockedError   (tool in block list — NR-T001)
-│   │   └── NullRunApprovalDbUnavailableError (approval DB unavailable — NR-A016)
-│   ├── NullRunConsumeOverbudgetError (actual cost > reservation + ε — NR-O001)
-│   ├── NullRunChainError             (chain-mode gate check failed — NR-CH001)
-│   ├── WorkflowPausedException       (paused via control plane — NR-W003)
-│   └── NullRunWorkflowInactiveError  (soft-deleted / inactive — NR-W004)
-├── WorkflowKilledInterrupt           (kill via control plane — NR-W002)
-│   └── NullRunWorkflowKilledError    (typed public name; same code NR-W002)
-└── NullRunInfrastructureError        (marker — system failures)
-    ├── NullRunConfigError            (misconfiguration, e.g. missing api_key)
-    ├── NullRunAuthenticationError   (401 / 403)
-    │   └── NullRunAuthError          (401 specifically)
-    ├── NullRunProtocolError          (wire-protocol version mismatch — NR-P001)
-    ├── NullRunRateLimitRedisError    (rate-limit Redis down — NR-R002)
-    └── NullRunTransportError         (transport failures)
-        ├── NullRunBackendError       (5xx — retryable; BREAKER_OPEN → NR-B005)
-        └── RateLimitError            (gateway 429 — carries .retry_after)
-```
-
-Two branches sit **outside** the marker split, and both matter when
-you write an `except` chain:
-
-- `WorkflowKilledInterrupt` inherits from `NullRunError` directly, not
-  from `NullRunDecision`. A kill is not a policy decision, so
-  `except NullRunDecision` does not catch it — catch it by name.
-- `NullRunApprovalDbUnavailableError` inherits from
-  `NullRunBlockedException`, so it lands in the **decision** branch
-  even though an unavailable approval database is a system failure.
-  Its `error_code` (`NR-A016`) is what distinguishes it.
-
-`NullRunDecision` and `NullRunInfrastructureError` are **marker
-classes**, not exception classes themselves. They exist so host code
-can `except NullRunDecision` to catch every expected policy outcome
-(budget, tool block, pause) and `except NullRunInfrastructureError` to
-catch every system failure (transport, backend 5xx, auth rejection,
-config error) — see [Decision vs. infrastructure](#decision-vs-infrastructure)
-below for the recommended handling pattern.
-
-`NullRunBlockedException` carries `.workflow_id`, `.reason`, `.action`
-(`"block"` / `"kill"` / `"pause"`), `.tool_name` (when the block is
-tool-scoped), `.status_code`, and `.details` (free-form). There is
-**no** `.message` attribute — use `str(exc)`.
-
-
-`WorkflowKilledInterrupt` (and its typed subclass `NullRunWorkflowKilledError`)
-both inherit from `NullRunError`, so a bare
-`except Exception:` catches the kill signal. For kill-specific
-handling — checkpointing state, notifying a supervisor, etc. —
-catch the typed exception explicitly.
-
-### The default path: zero lines of error handling
-
-For the common "run an agent and print a friendly message on failure"
-case, the three public helpers do the work — no `try/except NullRunError`
-required.
-
-| Helper | Catches | For |
+| Vocabulary | Where it appears | Shape |
 |---|---|---|
-| `init(api_key=..., fail_on_exit=True)` | `NullRunError` raised by `init()` (typically a config / auth family code) | Startup; one-shot script entry point |
-| `with nullrun.guard():` | Any `NullRunError` raised inside the block (kill signal re-raises) | Region of code (e.g. a graph `invoke`) — **recommended** form |
+| Gateway `error` slug | The `error` field of a generic API error | `snake_case`, e.g. `rate_limit_exceeded` |
+| Gateway `error_code` | The `error_code` field of a gate refusal | `SCREAMING_SNAKE_CASE`, e.g. `BUDGET_HARD_BLOCKED` |
+| SDK `error_code` | The `error_code` attribute of an SDK exception | `NR-*`, e.g. `NR-B004` |
 
-Both helpers propagate non-`NullRunError` exceptions (anything
-that isn't an SDK error) as honest tracebacks. `NullRunError`
-subclasses raised inside `with nullrun.guard():` are caught and
-rendered as the **structured four-line developer report**
-(catalog headline + `[error_code]` + `what` + `where` + `why` +
-`how to fix`), then the process exits 1. The kill signal
-(`WorkflowKilledInterrupt` / `NullRunWorkflowKilledError`) is the
-one exception: `guard()` re-raises it unchanged so kill always
-reaches the top of the agent loop. Catch kill explicitly with
-`except NullRunWorkflowKilledError:` if you need to checkpoint
-state before exit. For the full design rationale and the
-boundary between "what NullRun tells the developer" and "what
-the developer tells their end users", see
+A generic API error carries three fields: `error` (the slug), `message` (human
+text), and `code` (a `SCREAMING_SNAKE_CASE` companion). Read `error` first.
+
+A gate refusal carries `error_code` (the enforcement code), `error_message`,
+and `details` (structured context). The SDK reads the code from the top level
+or from inside `details`.
+
+For the three-layer error model — structured exceptions → `on_error` hook →
+`format_user_message` and `with nullrun.guard():` — see
 [Concepts → Error handling](#43-error-handling).
+
+### Generic API errors
+
+A generic API error answers with a slug, a message, and a legacy code.
+
+| `error` slug | HTTP | `code` | When |
+|---|---|---|---|
+| `bad_request` | 400 | `INVALID_INPUT` | Generic invalid input. |
+| `invalid_json` | 400 | `INVALID_JSON` | The request body could not be parsed as JSON. |
+| `bad_request` | 415 | `INVALID_INPUT` | The request body has no `application/json` content type. |
+| `unauthorized` | 401 | `UNAUTHORIZED` | The key is missing, invalid, or expired. |
+| `forbidden` | 403 | `FORBIDDEN` | Authenticated, but not allowed. |
+| `not_found` | 404 | `NOT_FOUND` | The resource does not exist or is not visible to the caller. |
+| `conflict` | 409 | `CONFLICT` | A duplicate, or a race the caller lost. |
+| `conflict` | 409 | `APPROVAL_ALREADY_DECIDED` | The approval was already decided. |
+| `conflict` | 409 | `APPROVAL_EXPIRED` | The approval expired. |
+| `validation_error` | 422 | `VALIDATION_FAILED` | The body parsed but failed schema validation. |
+| `validation_error` | 422 | `INVALID_FIELD` | A field in the body has the wrong shape. |
+| `plan_limit_exceeded` | 422 | `PLAN_LIMIT_EXCEEDED` | A plan cap was hit. `details.resource` names the dimension. |
+| `workflow_limit_reached` | 422 | `WORKFLOW_LIMIT_REACHED` | The active-workflow cap was hit. |
+| `rate_limit_exceeded` | 429 | `RATE_LIMIT_EXCEEDED` | A rate cap was hit. The body carries `retry_after`. |
+| `internal_error` | 500 | `INTERNAL_ERROR` | A server-side fault. |
+| `internal_error` | 503 | `INTERNAL_ERROR` | A dependency was unavailable. The body carries `retry_after`. |
+| `not_implemented` | 501 | `NOT_IMPLEMENTED` | The endpoint is not implemented. |
+
+Plan caps all surface as `plan_limit_exceeded`. There is no slug per
+dimension — read `details.resource`.
+
+A generic API error becomes `NullRunBackendError` in the SDK, except on these
+statuses: `401` and `403` raise `NullRunAuthenticationError`, and `429` raises
+`RateLimitError`.
+
+### Gateway wire error codes
+
+A gate refusal carries one of the codes below in `error_code`. The `category`
+says what the caller may do about it.
+
+| Category | Meaning |
+|---|---|
+| `denied` | A rule judged this call unacceptable. Another call may pass, so the model may adapt and try something else. |
+| `budget` | A money or quota boundary is exhausted. Stop. Do not retry and do not re-plan. |
+| `halt` | The run is over. Retrying, adapting, and waiting all fail the same way. |
+| `infra` | A system fault. Retry with backoff. |
+
+Only a `denied` refusal is safe to turn into model-readable text. A model told
+that its budget is exhausted will go looking for another tool.
+
+The SDK maps a recognised code to a typed exception. An unrecognised code falls
+back to the HTTP status.
+
+| `error_code` | HTTP | Category | SDK exception |
+|---|---|---|---|
+| `WF_BUDGET_EXCEEDS_ORG_BUDGET` | 200 | `budget` | — |
+| `BUSINESS_IMPACT_INVALID` | 400 | `infra` | `NullRunBlockedException` |
+| `CHAIN_ID_INVALID` | 400 | `infra` | `NullRunChainError` |
+| `EXECUTION_ID_MALFORMED` | 400 | `infra` | `NullRunBackendError` |
+| `EXECUTION_ID_REQUIRED` | 400 | `infra` | `NullRunBackendError` |
+| `INVALID_EXECUTION_ID` | 400 | `infra` | `NullRunBackendError` |
+| `MODEL_REQUIRED` | 400 | `infra` | `NullRunBlockedException` |
+| `PROTOCOL_HEADER_INVALID` | 400 | `infra` | `NullRunProtocolError` |
+| `PROTOCOL_HEADER_REQUIRED` | 400 | `infra` | `NullRunProtocolError` |
+| `PROTOCOL_TOO_NEW` | 400 | `infra` | `NullRunProtocolError` |
+| `PROTOCOL_TOO_OLD` | 400 | `infra` | `NullRunProtocolError` |
+| `VALIDATION_FAILED` | 400 | `infra` | `NullRunBlockedException` |
+| `WORKFLOW_ID_BODY_MISMATCH` | 400 | `infra` | `NullRunBackendError` |
+| `API_KEY_DISABLED` | 401 | `infra` | `NullRunAuthError` |
+| `API_KEY_EXPIRED` | 401 | `infra` | `NullRunAuthError` |
+| `API_KEY_INVALID` | 401 | `infra` | `NullRunAuthError` |
+| `API_KEY_MALFORMED` | 401 | `infra` | `NullRunAuthError` |
+| `API_KEY_MISSING` | 401 | `infra` | `NullRunAuthError` |
+| `API_KEY_REVOKED` | 401 | `infra` | `NullRunAuthError` |
+| `BUDGET_ANTI_DOS_RESERVED_CAP` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_CACHE_EXCEEDED` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_HARD_BLOCKED` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_ORG_CEILING_BLOCKED` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_OVERDRAFT_EXCEEDED` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_PERIOD_NOT_STARTED` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_RECHECK_FAILED` | 402 | `infra` | `NullRunBudgetRecheckFailedError` |
+| `BUDGET_REDIS_UNAVAILABLE` | 402 | `infra` | `NullRunBudgetError` |
+| `BUDGET_SOFT_BLOCKED` | 402 | `budget` | `NullRunBudgetError` |
+| `BUDGET_WORKFLOW_BLOCKED` | 402 | `budget` | `NullRunBudgetError` |
+| `CHAIN_MAX_DURATION_EXCEEDED` | 402 | `halt` | `NullRunChainError` |
+| `EXECUTION_QUOTA_EXCEEDED` | 402 | `budget` | `NullRunBlockedException` |
+| `RESERVED_SCANNED_PARTIAL` | 402 | `budget` | `NullRunBudgetError` |
+| `APPROVAL_DENIED` | 403 | `denied` | `NullRunApprovalDeniedError` |
+| `APPROVAL_EXPIRED` | 403 | `denied` | `NullRunApprovalExpiredError` |
+| `APPROVAL_NOT_YET_APPROVED` | 403 | `denied` | `NullRunApprovalNotYetApprovedError` |
+| `APPROVAL_TOOL_ARGUMENT_MISMATCH` | 403 | `infra` | `NullRunApprovalDigestMismatchError` |
+| `APPROVAL_TOOL_ARGUMENT_UNAVAILABLE` | 403 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `CHAIN_CROSS_ORG` | 403 | `infra` | `NullRunChainError` |
+| `CHAIN_KEY_MISMATCH` | 403 | `infra` | `NullRunChainError` |
+| `CHAIN_ORG_MISMATCH` | 403 | `infra` | `NullRunChainError` |
+| `CIRCUIT_BREAKER_TRIPPED` | 403 | `halt` | `NullRunBlockedException` |
+| `EXECUTION_KEY_MISMATCH` | 403 | `infra` | `NullRunAuthError` |
+| `EXECUTION_ORG_MISMATCH` | 403 | `infra` | `NullRunAuthError` |
+| `INSUFFICIENT_SCOPE` | 403 | `infra` | `NullRunAuthError` |
+| `MCP_APPROVAL_REQUIRED` | 403 | `denied` | `NullRunMcpApprovalRequiredError` |
+| `MCP_DEFINITION_DRIFTED` | 403 | `denied` | `NullRunApprovalToolDigestMismatchError` |
+| `MCP_DESTRUCTIVE_BLOCKED` | 403 | `denied` | `NullRunMcpDestructiveBlockedError` |
+| `MCP_READONLY_BYPASS_BLOCKED` | 403 | `denied` | `NullRunMcpReadonlyBypassBlockedError` |
+| `MCP_TOOL_APPROVAL_REQUIRED` | 403 | `denied` | `NullRunMcpApprovalRequiredError` |
+| `MCP_TOOL_BLOCKED` | 403 | `denied` | `NullRunToolBlockedError` |
+| `MCP_TOOL_DECISION_REQUIRED` | 403 | `denied` | `NullRunMcpApprovalRequiredError` |
+| `MCP_TOOL_REMOVED` | 403 | `denied` | `NullRunToolBlockedError` |
+| `ORG_MISMATCH` | 403 | `infra` | `NullRunAuthError` |
+| `PARENT_EXECUTION_KEY_MISMATCH` | 403 | `infra` | `NullRunChainError` |
+| `PARENT_EXECUTION_ORG_MISMATCH` | 403 | `infra` | `NullRunChainError` |
+| `TOOL_BLOCKED` | 403 | `denied` | `NullRunToolBlockedError` |
+| `WORKFLOW_INACTIVE` | 403 | `halt` | `NullRunWorkflowInactiveError` |
+| `WORKFLOW_PAUSED` | 403 | `halt` | `NullRunBlockedException` |
+| `APPROVAL_NOT_FOUND` | 404 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `CHAIN_NOT_FOUND` | 404 | `halt` | `NullRunChainError` |
+| `EXECUTION_NOT_FOUND` | 404 | `infra` | `NullRunExecutionNotFoundError` |
+| `PARENT_EXECUTION_NOT_FOUND` | 404 | `infra` | `NullRunChainError` |
+| `SUBWORKFLOW_INVOKE_DISABLED` | 404 | `denied` | `NullRunChainError` |
+| `APPROVAL_ALREADY_DECIDED` | 409 | `infra` | `NullRunApprovalReplayRejectedError` |
+| `APPROVAL_CONFLICT` | 409 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `APPROVAL_DIGEST_MISMATCH` | 409 | `infra` | `NullRunApprovalDigestMismatchError` |
+| `APPROVAL_REPLAY_REJECTED` | 409 | `infra` | `NullRunApprovalReplayRejectedError` |
+| `APPROVAL_TOOL_DIGEST_MISMATCH` | 409 | `infra` | `NullRunApprovalToolDigestMismatchError` |
+| `APPROVAL_TOOL_MISMATCH` | 409 | `infra` | `NullRunApprovalToolMismatchError` |
+| `CHAIN_ENDED` | 409 | `halt` | `NullRunChainError` |
+| `IDEMPOTENCY_CONFLICT` | 409 | `infra` | `NullRunProtocolError` |
+| `IDEMPOTENCY_IN_FLIGHT` | 409 | `infra` | `NullRunBackendError` |
+| `IDEMPOTENCY_KEY_MISMATCH` | 409 | `infra` | `NullRunProtocolError` |
+| `BATCH_TOO_LARGE` | 413 | `infra` | `NullRunBackendError` |
+| `CONSUME_OVERBUDGET` | 422 | `budget` | `NullRunConsumeOverbudgetError` |
+| `CONTROL_CHARS_IN_FIELD` | 422 | `infra` | `NullRunBackendError` |
+| `EXECUTION_NOT_BOUND` | 422 | `infra` | `NullRunExecutionNotFoundError` |
+| `LEGACY_GRANT_REJECTED` | 422 | `infra` | `NullRunBlockedException` |
+| `WORKFLOW_CYCLE_DETECTED` | 422 | `infra` | `NullRunChainError` |
+| `WORKFLOW_DEPTH_EXCEEDED` | 422 | `infra` | `NullRunChainError` |
+| `WORKFLOW_PARENT_BINDING_EXPIRED` | 422 | `infra` | `NullRunChainError` |
+| `BUDGET_EXCEEDED` | 429 | `budget` | `NullRunBudgetError` |
+| `LOOP_DETECTED` | 429 | `denied` | `NullRunBlockedException` |
+| `RATE_LIMIT_EXCEEDED` | 429 | `budget` | `RateLimitError` |
+| `RATE_LIMIT_PLAN_TIER` | 429 | `budget` | `RateLimitError` |
+| `TOO_MANY_PENDING_APPROVALS` | 429 | `budget` | `NullRunBlockedException` |
+| `WAITLIST_RATE_LIMITED` | 429 | `denied` | `RateLimitError` |
+| `APPROVAL_CREATE_FAILED` | 500 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `APPROVAL_DIGEST_RECOMPUTE_FAILED` | 500 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `APPROVAL_PERSISTENCE_FAILED` | 500 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `APPROVAL_VALIDATION_FAILED` | 500 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `EXECUTION_BINDING_MISSING` | 500 | `infra` | `NullRunBackendError` |
+| `INTERNAL_ERROR` | 500 | `infra` | `NullRunBackendError` |
+| `WORKFLOW_BUDGET_CONFIG_INVALID` | 500 | `infra` | `NullRunBackendError` |
+| `APPROVAL_DB_UNAVAILABLE` | 503 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `APPROVAL_RULES_UNAVAILABLE` | 503 | `infra` | `NullRunApprovalDbUnavailableError` |
+| `AUTH_BACKEND_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `BUDGET_DATA_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `BUDGET_PROJECTION_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `CIRCUIT_BREAKER_STATE_LOOKUP_FAILED` | 503 | `infra` | `NullRunBackendError` |
+| `EXECUTION_BINDING_READ_FAILED` | 503 | `infra` | `NullRunBackendError` |
+| `EXECUTION_BINDING_WRITE_FAILED` | 503 | `infra` | `NullRunBackendError` |
+| `EXECUTION_RESOLVE_REDIS_ERROR` | 503 | `infra` | `NullRunBackendError` |
+| `IDEMPOTENCY_REDIS_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `INGESTION_BACKPRESSURE` | 503 | `infra` | `NullRunBackendError` |
+| `INGESTION_CLOSED` | 503 | `infra` | `NullRunBackendError` |
+| `INVOKE_PERSIST_FAILED` | 503 | `infra` | `NullRunBackendError` |
+| `MCP_REGISTRY_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `ORG_CONTEXT_UNRESOLVED` | 503 | `infra` | `NullRunBackendError` |
+| `POLICY_UNCONFIGURED` | 503 | `infra` | `NullRunBlockedException` |
+| `RATE_LIMITER_UNAVAILABLE` | 503 | `infra` | `NullRunRateLimitRedisError` |
+| `RATE_LIMIT_PLAN_LOOKUP_FAILED` | 503 | `infra` | `NullRunRateLimitRedisError` |
+| `RATE_LIMIT_REDIS_UNAVAILABLE` | 503 | `infra` | `NullRunRateLimitRedisError` |
+| `REDIS_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `RESERVATION_NOT_FOUND` | 503 | `infra` | `NullRunBackendError` |
+| `RESERVE_DISABLED` | 503 | `infra` | `NullRunBackendError` |
+| `TOOL_BLOCKED_BACKSTOP_UNAVAILABLE` | 503 | `infra` | `NullRunBackendError` |
+| `WORKFLOW_DEPTH_LOOKUP_FAILED` | 503 | `infra` | `NullRunChainError` |
+| `WORKFLOW_INACTIVE_LOOKUP_FAILED` | 503 | `infra` | `NullRunBackendError` |
+
+Three codes come from the request parser rather than the registry. They answer
+on the enforcement path with `error_code` set to `INVALID_JSON` (400),
+`INVALID_FIELD` (422), or `MISSING_CONTENT_TYPE` (415).
+
+### SDK exception hierarchy
+
+Every public SDK exception inherits from `NullRunError` and carries four
+structured fields: `error_code`, `user_action`, `retryable`, and `docs_url`.
+
+```
+Exception
+└── BreakerError
+    ├── BreakerTransportError           events could not be delivered
+    │   └── InsecureTransportError     HTTPS was required
+    └── NullRunError
+        ├── NullRunDecision                  marker — expected policy outcomes
+        │   ├── NullRunBlockedException      NR-X001
+        │   │   ├── NullRunDeniedError                        NR-D001
+        │   │   ├── NullRunBudgetError                        NR-B004
+        │   │   │   └── NullRunBudgetRecheckFailedError        NR-B006
+        │   │   ├── NullRunToolBlockedError                   NR-T001
+        │   │   ├── NullRunApprovalDbUnavailableError         NR-A016
+        │   │   ├── NullRunApprovalResponseMissingError       NR-A004
+        │   │   ├── NullRunApprovalNotYetApprovedError        NR-A010
+        │   │   ├── NullRunApprovalDeniedError                NR-A011
+        │   │   ├── NullRunApprovalExpiredError               NR-A012
+        │   │   ├── NullRunApprovalReplayRejectedError        NR-A015
+        │   │   ├── NullRunApprovalDigestMismatchError        NR-A013
+        │   │   ├── NullRunApprovalToolDigestMismatchError    NR-A014
+        │   │   ├── NullRunApprovalToolMismatchError          NR-A017
+        │   │   ├── NullRunMcpDestructiveBlockedError         NR-MCP01
+        │   │   ├── NullRunMcpReadonlyBypassBlockedError      NR-MCP02
+        │   │   └── NullRunMcpApprovalRequiredError           NR-MCP03
+        │   ├── NullRunConsumeOverbudgetError                 NR-O001
+        │   ├── NullRunChainError                             NR-CH001
+        │   ├── WorkflowPausedException                       NR-W003
+        │   └── NullRunWorkflowInactiveError                  NR-W004
+        ├── WorkflowKilledInterrupt          NR-W002 — not a NullRunDecision
+        │   └── NullRunWorkflowKilledError   NR-W002
+        └── NullRunInfrastructureError       marker — system failures
+            ├── NullRunConfigError                          NR-C000
+            ├── NullRunAuthenticationError                  NR-A001
+            │   └── NullRunAuthError                        NR-A003
+            ├── NullRunProtocolError                        NR-P001
+            │   └── NullRunMalformedGateResponseError       NR-P002
+            ├── NullRunGateIndeterminateError               NR-P004
+            ├── NullRunUnknownActionError                   NR-P005
+            ├── NullRunUnclassifiedRefusalError             NR-P003
+            ├── NullRunRateLimitRedisError                  NR-R002
+            └── NullRunTransportError                       NR-B001
+                ├── NullRunBackendError                     NR-B002
+                │   └── NullRunExecutionNotFoundError       NR-EX01
+                └── RateLimitError                          NR-R001
+```
+
+Three classes sit outside the marker split, and each one matters when you
+write an `except` chain.
+
+- `WorkflowKilledInterrupt` inherits from `NullRunError` directly, not from
+  `NullRunDecision`. A kill is not a policy decision, so
+  `except NullRunDecision` does not catch it. Catch it by name.
+- `NullRunApprovalDbUnavailableError` inherits from
+  `NullRunBlockedException`, so it lands in the decision branch even though an
+  unreachable approval store is a system failure. Its `error_code`
+  (`NR-A016`) is what distinguishes it.
+- `BreakerTransportError` and `InsecureTransportError` inherit from
+  `BreakerError`, not from `NullRunError`. `except NullRunError:` does not
+  catch them.
+
+`NullRunUnclassifiedRefusalError` lives in the SDK's category module, not the
+exception module. It is still importable from the package.
+
+`NullRunBlockedException` carries `.workflow_id`, `.reason`, `.action`,
+`.tool_name`, `.status_code`, and `.details`. It has **no** `.message`
+attribute — use `str(exc)`.
 
 ### Decision vs. infrastructure
 
-The public exception hierarchy splits `NullRunError` into two marker
-subclasses by **what kind of event** the exception represents. The
-split is additive — every existing `except NullRunError:` and
-`except NullRunBlockedException:` clause keeps matching. New code can
-use the marker classes to write a two-branch handler that captures
-the right behaviour for each category.
+The hierarchy splits `NullRunError` into two marker subclasses by what kind of
+event the exception represents. The split is additive: every existing
+`except NullRunError:` and `except NullRunBlockedException:` clause keeps
+matching.
 
 | Marker | What it covers | Why it matters |
-| --- | --- | --- |
-| `NullRunDecision` | Expected policy outcomes — budget cap, tool block, chain-gate rejection, loop detection, workflow pause, over-budget commit | The enforcement layer is doing its job. UX explains the decision and (where applicable) offers an upgrade or alternative action. |
-| `NullRunInfrastructureError` | System failures — network unreachable, gateway 5xx, gateway 429, auth rejection, config error, rate-limit Redis down | The SDK could not reach or query the policy engine. UX is a generic "service unavailable"; operators triage via `error_code`, `retryable`, and for transport errors, `source` / `endpoint`. |
+|---|---|---|
+| `NullRunDecision` | Expected policy outcomes — budget cap, tool block, chain rejection, loop detection, workflow pause, over-budget commit. | The enforcement layer did its job. UX explains the decision and, where it applies, offers an upgrade or an alternative action. |
+| `NullRunInfrastructureError` | System failures — network unreachable, gateway 5xx, gateway 429, auth rejection, config error, rate limiter down. | The SDK could not reach or query the policy engine. UX is a generic "service unavailable". Operators triage with `error_code`, `retryable`, and for transport errors `source` and `endpoint`. |
 
-Rate limits land on the **infrastructure** side, not the decision
-side: a 429 from the gateway arrives as `RateLimitError`, a subclass
-of `NullRunTransportError` → `NullRunInfrastructureError`. Handle it
-as a system failure with a retry, and surface `upgrade_url` if the
-user genuinely needs a higher plan.
+Rate limits land on the infrastructure side. A 429 arrives as `RateLimitError`,
+a subclass of `NullRunTransportError` → `NullRunInfrastructureError`. Handle it
+as a system failure with a retry, and surface `upgrade_url` when the user
+genuinely needs a higher plan.
 
-`WorkflowKilledInterrupt` belongs to neither marker — catch it by
-name ahead of both, as shown in the [exception
-hierarchy](#sdk-exception-hierarchy-python).
+`WorkflowKilledInterrupt` belongs to neither marker. Catch it by name ahead of
+both.
 
 #### Recommended handler shape
 
@@ -7244,150 +6337,143 @@ from nullrun.breaker.exceptions import (
 )
 
 try:
-    result = agent.run(message)
-except NullRunDecision as d:
-    # Expected — surface to the user, log to product analytics,
-    # tag the conversation with d.error_code for cohort analysis.
-    analytics.track("nullrun_decision", code=d.error_code)
-    return nullrun.format_user_message(d)
-except NullRunInfrastructureError as e:
-    # System failure — alert ops, retry with backoff, do NOT
-    # surface internal text to the end user. The catalog has a
-    # generic message for every infrastructure error code.
-    sentry.capture_exception(e)
-    return nullrun.format_user_message(e)
+    result = run_the_agent(message)
+except NullRunDecision as exc:
+    # Expected. Surface it to the user and tag it with the code.
+    logger.info("nullrun_decision code=%s", exc.error_code)
+    return nullrun.format_user_message(exc)
+except NullRunInfrastructureError as exc:
+    # System failure. Alert ops and retry with backoff.
+    logger.exception("nullrun_infrastructure code=%s", exc.error_code)
+    return nullrun.format_user_message(exc)
 ```
 
-#### Mapping decision subclasses to HTTP
+#### Mapping decisions to HTTP status
 
-When you build a server-framework integration (FastAPI, aiohttp,
-Telegram bot, Slack handler), map each category to the right HTTP
-status. The headline cases are below. Where the backend supplied a
-wire status, the exception carries it as `.status_code` and you can
-map the field directly instead of hard-coding.
+The gateway answers a refusal with its own status. A host that re-exposes the
+failure to its own clients picks its own status.
 
-| Category | HTTP status | Notes |
-| --- | --- | --- |
-| `NullRunDecision` — budget exhausted (`NR-B004`) | `402` | `NullRunBudgetError` carries `.status_code`. Read `.details` for any `retry_after` the backend supplied |
-| `NullRunDecision` — tool blocked (`NR-T001`) | `403` | User did nothing wrong, but the action is forbidden. Carries `.status_code` |
-| `NullRunDecision` — workflow paused (`NR-W003`) | `503` | `WorkflowPausedException` has no `.status_code`; it carries `.resume_after`, which you pass as the `Retry-After` header |
-| `NullRunDecision` — chain gate failed (`NR-CH001`) | `402` or `403` | `NullRunChainError`. One code covers both: `CHAIN_MAX_DURATION_EXCEEDED` → 402, `CHAIN_ORG_MISMATCH` / `CHAIN_CROSS_ORG` → 403. Read `.status_code` |
-| `NullRunInfrastructureError` — rate-limit Redis (`NR-R002`) | `503` | `NullRunRateLimitRedisError` — the rate limiter is degraded |
-| `NullRunInfrastructureError` — gateway 429 | `503` | `RateLimitError` carries `.retry_after` and `.upgrade_url` |
-| `WorkflowKilledInterrupt` (`NR-W002`) | `503` | Special ASGI middleware required — see [Use with FastAPI](#64-use-with-fastapi) |
+The SDK's FastAPI integration ships one mapping. It keys on the `error_code`,
+not on the exception class.
 
-Other decision categories (`CONSUME_OVERBUDGET` → 422,
-`WORKFLOW_INACTIVE` → 403) and infrastructure codes
-(`PROTOCOL_TOO_OLD` → 400, generic `NullRunInfrastructureError` → 503)
-follow the same pattern: read `exc.status_code` from the wire when the
-attribute is present and map it directly.
+| `error_code` | Status | Meaning |
+|---|---|---|
+| `NR-B004` | 429 | Budget exhausted. |
+| `NR-L001` | 429 | Loop detected. |
+| `NR-R001` | 429 | Rate limited. |
+| `NR-T001` | 403 | Tool blocked. |
+| `NR-X001` | 403 | Generic block. |
+| `NR-W003` | 503 | Workflow paused. |
+| `NR-W002` | 503 | Workflow killed. |
+| any other decision code | 429 | Default for a decision. |
+| any infrastructure code | 503 | Default for a system failure. |
 
-`.status_code` is **not** on every exception — it exists only where
-`__init__` accepts one, which today is the `NullRunBlockedException`
-family plus `NullRunConsumeOverbudgetError` and `NullRunChainError`.
-`WorkflowPausedException`, `WorkflowKilledInterrupt`,
-`NullRunApprovalDbUnavailableError` and the transport classes do not
-carry it, so read it with
-`getattr(exc, "status_code", None)` and fall back to your category
-default. The FastAPI integration applies this mapping for you; in
-custom integrations do the same rather than assuming the attribute is
-there.
+`NR-W003` surfaces `resume_after` as the `Retry-After` header. `NR-R001`
+surfaces `retry_after` the same way.
 
-The NullRun SDK ships a reference FastAPI integration that applies
-this mapping for you — see [Use with FastAPI](#64-use-with-fastapi)
-for a one-line setup.
+`.status_code` carries the gateway's own status on the exceptions that
+received one: the `NullRunBlockedException` family,
+`NullRunConsumeOverbudgetError`, and `NullRunChainError`. Read it with
+`getattr(exc, "status_code", None)` when you need the wire status.
+
+See [Use with FastAPI](#64-use-with-fastapi) for the reference integration.
 
 ### HTTP status summary
 
 | Status | Meaning | SDK action |
-| --- | --- | --- |
+|---|---|---|
 | 200 | OK | — |
-| 400 | Bad request | Inspect `message`, fix request |
-| 401 | Bad API key / HMAC | Refresh key / check `NULLRUN_SECRET_KEY` |
-| 403 | Forbidden | Check role / scope |
-| 404 | Not found | Caller handles (workflow/policy may have been deleted) |
-| 409 | Conflict | Inspect `message` (already-member, invite-already-pending, etc.) |
-| 422 | Validation / plan limit | Inspect `details` (for plan limits, `details.resource` + `details.current` + `details.limit`) |
-| 429 | Rate limit | Honour `Retry-After`; check `upgrade_url` |
-| 5xx | Gateway error | Retry with backoff; sensitive tools fail-closed |
+| 400 | Bad request | Inspect `message`, fix the request. |
+| 401 | Bad API key or signature | Refresh the key, check the signing secret. |
+| 402 | Budget refused | Stop. Do not retry. |
+| 403 | Forbidden | Check the role, scope, or org. |
+| 404 | Not found | The caller handles it. |
+| 409 | Conflict | Inspect `message` and `details`. |
+| 413 | Body too large | Split the batch. |
+| 415 | Unsupported media type | Send `Content-Type: application/json`. |
+| 422 | Validation or plan limit | Inspect `details`. |
+| 429 | Rate limit | Honour `Retry-After`; check `upgrade_url`. |
+| 5xx | Gateway error | Retry with backoff. |
 
-When the gateway is unreachable, the SDK raises
-`NullRunTransportError` with `source` set to one of `NETWORK_ERROR`,
-`GATEWAY_ERROR`, `AUTH_ERROR`.
+When the gateway is unreachable, the SDK raises `NullRunTransportError` with
+`source` set to one of `NETWORK_ERROR`, `GATEWAY_ERROR`, `AUTH_ERROR`, or
+`BREAKER_OPEN`.
 
 ### NR-* error code catalog
 
-Stable, machine-readable identifiers on every SDK exception. The
-catalog splits into two families:
+Stable, machine-readable identifiers on every SDK exception.
 
-- **decision / enforcement codes** — what the gate decided (block,
-  deny, require approval, …). Most are surfaced as `NullRunDecision`
-  subclasses in Python.
-- **infrastructure codes** — transport / backend / config failures.
+- **Decision and enforcement codes** — what the gate decided. Surfaced as
+  `NullRunDecision` subclasses.
+- **Infrastructure codes** — transport, backend, and config failures.
   Surfaced as `NullRunInfrastructureError` subclasses.
 
-The three-layer error model and the boundary between developer-facing
-and end-user-facing wording lives in
-[Concepts → Error handling](#43-error-handling).
+`—` in the HTTP column means the SDK raised the error locally, with no wire
+status attached.
 
-#### Decision / enforcement codes
+#### Decision and enforcement codes
 
 | `error_code` | When | HTTP | SDK class |
-| --- | --- | --- | --- |
-| `NR-B004` | Workflow budget exhausted | 402 | `NullRunBudgetError` |
-| `NR-B006` | Post-approval budget re-check failed on `/execute` (budget counter moved between `/gate` reserve and `/execute`) | 402 | `NullRunBudgetRecheckFailedError` |
-| `NR-L001` | Loop detected — the same tool repeated past the per-policy threshold. Wire slug `LOOP_DETECTED` | 429 | `NullRunBlockedException` |
-| `NR-O001` | Actual cost > reservation + ε | 422 | `NullRunConsumeOverbudgetError` |
-| `NR-T001` | Tool in block list | 403 | `NullRunToolBlockedError` |
-| `NR-T003` | An action-source (MCP) tool call was blocked by the gate before the client was invoked — raised only when `MCPAdapter` is constructed with an explicit `runtime=` | 403 | `NullRunBlockedException` |
-| `NR-CH001` | Chain context invalid (chain_id / parent_execution_id / max_duration exceeded) | 402 | `NullRunChainError` |
-| `NR-EX01` | `/execute` or `/cancel` called without a prior `/gate` that minted this `execution_id` (binding TTL expired or never bound) | 404 | `NullRunExecutionNotFoundError` |
-| `NR-W002` | Operator kill signal (via dashboard **Kill** button or WS push) | n/a (raised) | `NullRunWorkflowKilledError` (alias `WorkflowKilledInterrupt`) |
-| `NR-W003` | Workflow paused via dashboard or chain cooldown | 503 | `WorkflowPausedException` |
-| `NR-W004` | Workflow soft-deleted (inactive) — restore it to resume traffic | 403 | `NullRunWorkflowInactiveError` |
-| `NR-A003` | API key rejected | 401 | `NullRunAuthError` |
-| `NR-A004` | Approval response missing — gate returned `require_approval` but no row found on `/execute` | 403 | `NullRunApprovalResponseMissingError` |
-| `NR-A010` | Approval exists, status `PENDING` — operator has not decided yet | 403 | `NullRunApprovalNotYetApprovedError` |
-| `NR-A011` | Operator explicitly denied the approval | 403 | `NullRunApprovalDeniedError` |
-| `NR-A012` | Approval expired (`expires_at` in the past) | 403 | `NullRunApprovalExpiredError` |
-| `NR-A013` | Business-impact digest drifted since approval — re-approval required | 403 | `NullRunApprovalDigestMismatchError` |
-| `NR-A014` | Capability digest drifted since approval — re-approval required | 403 | `NullRunApprovalToolDigestMismatchError` |
-| `NR-A015` | Grant already consumed (replay rejected) | 403 | `NullRunApprovalReplayRejectedError` |
-| `NR-A016` | Approval database unavailable — transient 5xx on the approval row lookup | 503 | `NullRunApprovalDbUnavailableError` (fail-CLOSED — retry with backoff) |
-| `NR-MCP01` | Destructive MCP tool blocked by the `mcp_destructive_policy` umbrella. Wire slug `MCP_DESTRUCTIVE_BLOCKED` | 403 | `NullRunMcpDestructiveBlockedError` |
-| `NR-MCP02` | Read-only MCP tool blocked because the operator's bypass path is closed. Wire slug `MCP_READONLY_BYPASS_BLOCKED` | 403 | `NullRunMcpReadonlyBypassBlockedError` |
-| `NR-MCP03` | MCP tool requires operator approval — the MCP counterpart of `NR-A010`. Wire slug `MCP_APPROVAL_REQUIRED` | 403 | `NullRunMcpApprovalRequiredError` (retryable — the operator can still act) |
-| `NR-X001` | Generic policy block — no dedicated subclass | varies | `NullRunBlockedException` (default) |
+|---|---|---|---|
+| `NR-D001` | The operator refused this specific call. Only raised when `init(on_denied="message")` is set. | — | `NullRunDeniedError` |
+| `NR-X001` | A policy block with no more specific code. | — | `NullRunBlockedException` |
+| `NR-B004` | The workflow budget is exhausted. | 402 | `NullRunBudgetError` |
+| `NR-B006` | The budget moved between the gate call and the execute call. | 402 | `NullRunBudgetRecheckFailedError` |
+| `NR-L001` | The same tool repeated past the per-policy threshold. | 429 | `NullRunBlockedException` |
+| `NR-O001` | The actual cost exceeded the reservation. | 422 | `NullRunConsumeOverbudgetError` |
+| `NR-T001` | The tool is in the block list. | 403 | `NullRunToolBlockedError` |
+| `NR-T003` | An MCP tool call was blocked by the gate, and the client was not invoked. | — | `NullRunBlockedException` |
+| `NR-CH001` | The chain scope check failed — bad chain id, wrong parent, or the max duration exceeded. | 402 or 403 | `NullRunChainError` |
+| `NR-EX01` | The execution id is unknown or its binding expired. | 404 | `NullRunExecutionNotFoundError` |
+| `NR-W002` | The operator killed the workflow. | — | `NullRunWorkflowKilledError` (alias `WorkflowKilledInterrupt`) |
+| `NR-W003` | The workflow is paused. | — | `WorkflowPausedException` |
+| `NR-W004` | The workflow is inactive. | 403 | `NullRunWorkflowInactiveError` |
+| `NR-A004` | The gate asked for approval and returned no approval id. | — | `NullRunApprovalResponseMissingError` |
+| `NR-A010` | The operator has not decided yet. | 403 | `NullRunApprovalNotYetApprovedError` |
+| `NR-A011` | The operator denied the approval. | 403 | `NullRunApprovalDeniedError` |
+| `NR-A012` | The approval expired. | 403 | `NullRunApprovalExpiredError` |
+| `NR-A013` | The action changed since the approval. | 409 | `NullRunApprovalDigestMismatchError` |
+| `NR-A014` | The tool surface changed since the approval. | 409 | `NullRunApprovalToolDigestMismatchError` |
+| `NR-A015` | The grant was already consumed. | 409 | `NullRunApprovalReplayRejectedError` |
+| `NR-A016` | The approval store is unreachable. Fails closed. | 503 | `NullRunApprovalDbUnavailableError` |
+| `NR-A017` | The executing tool is outside the approved tool set. | 409 | `NullRunApprovalToolMismatchError` |
+| `NR-MCP01` | A destructive MCP tool was blocked. | 403 | `NullRunMcpDestructiveBlockedError` |
+| `NR-MCP02` | A read-only MCP tool was blocked. | 403 | `NullRunMcpReadonlyBypassBlockedError` |
+| `NR-MCP03` | An MCP tool needs operator approval. | 403 | `NullRunMcpApprovalRequiredError` |
 
-Approval grant-consume codes (NR-A010..NR-A015) are most often seen
-inside a running agent flow: the SDK has parked for human review and
-the operator has acted (or the grant aged out). Match on the
-specific subclass first; fall back to `NullRunBlockedException` if
-you don't care about the exact cause.
+The approval codes are most often seen inside a running agent flow: the SDK
+parked for human review, and the operator acted or the grant aged out. Match
+the specific subclass first, and fall back to `NullRunBlockedException` when
+the exact cause does not matter.
 
 #### Infrastructure codes
 
 | `error_code` | When | HTTP | SDK class |
-| --- | --- | --- | --- |
-| `NR-B001` | Transport-layer network error (timeout, ConnectError, DNS failure) | 500 | `NullRunTransportError` (default) |
-| `NR-B002` | Gateway 5xx | 500/503 | `NullRunBackendError` |
-| `NR-B005` | Local SDK circuit breaker tripped — short-circuits before the wire call | 503 | `NullRunBackendError` (with `source = BREAKER_OPEN`) |
-| `NR-R001` | Per-workflow rate limit hit (gateway returned 429 with `Retry-After`) | 429 | `RateLimitError` (subclass of `NullRunTransportError` — infrastructure class despite the 429 status) |
-| `NR-R002` | Rate-limit Redis unavailable (aggregate per-org rate-limit fail-CLOSED) | 503 | `NullRunRateLimitRedisError` |
-| `NR-C000` | Misconfiguration (missing api_key, invalid setup) | n/a (raised) | `NullRunConfigError` (default) |
-| `NR-C001` | No API key available — `NULLRUN_API_KEY` unset and none passed to `init()` | n/a (raised) | `NullRunAuthenticationError` via `init()`; `NullRunConfigError` via the runtime |
-| `NR-A001` | Auth rejected by backend (general) | 401/403 | `NullRunAuthenticationError` (default) |
-| `NR-A002` | `/auth/verify` returned 200 but the body carried no `organization_id` — a wire-shape mismatch between SDK and gateway | n/a (raised) | `NullRunAuthenticationError` |
-| `NR-S001` | `NULLRUN_SKIP_BUDGET_CHECK=1` is refused against the production gateway — the dev bypass is not available on production traffic | n/a (raised) | `NullRunConfigError` |
-| `NR-P001` | Wire-protocol version mismatch | 400 | `NullRunProtocolError` |
-| `NR-T-PARSE` | Gateway response body could not be parsed as JSON | 502 | `NullRunTransportError` |
-| `INVALID_JSON` | Request body failed JSON parsing (`JsonSyntaxError`) — `error` slug `invalid_json` | 400 | `NullRunBackendError` |
-| `INVALID_FIELD` | Request body parsed but failed schema validation (`JsonDataError`) — `error` slug `validation_error` | 422 | `NullRunBackendError` |
+|---|---|---|---|
+| `NR-B001` | The request never reached the gateway — timeout, connection error, or DNS failure. | — | `NullRunTransportError` |
+| `NR-B002` | The gateway returned 5xx. | 500 or 503 | `NullRunBackendError` |
+| `NR-B005` | The SDK's own circuit breaker is open, so the call short-circuits. | 503 | `NullRunBackendError` (with `source=BREAKER_OPEN`) |
+| `NR-R001` | The gateway returned 429 with a `Retry-After`. | 429 | `RateLimitError` |
+| `NR-R002` | The rate limiter is unavailable. Fails closed. | 503 | `NullRunRateLimitRedisError` |
+| `NR-C000` | The SDK is misconfigured. | — | `NullRunConfigError` |
+| `NR-C001` | No API key is available — `NULLRUN_API_KEY` is unset and none was passed to `init()`. | — | `NullRunAuthenticationError` |
+| `NR-A001` | The credentials were rejected. | 401 or 403 | `NullRunAuthenticationError` |
+| `NR-A002` | The key verification answered 200 but carried no organization id. | — | `NullRunAuthenticationError` |
+| `NR-A003` | The API key was rejected. | 401 | `NullRunAuthError` |
+| `NR-S001` | A development bypass or a removed execution mode was requested. | — | `NullRunConfigError` |
+| `NR-P001` | The wire-protocol version does not match the gateway's. | 400 | `NullRunProtocolError` |
+| `NR-P002` | The gate response is not a decision the SDK can act on. | — | `NullRunMalformedGateResponseError` |
+| `NR-P003` | The refusal carried a category the SDK does not understand, so the SDK cannot tell a policy outcome from a backend fault. | — | `NullRunUnclassifiedRefusalError` |
+| `NR-P004` | The SDK could not obtain a decision, and it did not assume one. | — | `NullRunGateIndeterminateError` |
+| `NR-P005` | The control plane sent an action type this SDK cannot run. | — | `NullRunUnknownActionError` |
+| `NR-T-PARSE` | The gateway response body could not be parsed as JSON. | — | `NullRunTransportError` |
+
+`NR-P003` and `NR-P004` are retryable. `NR-P002` is retryable once the
+connection path is fixed. `NR-P001` and `NR-P005` are not.
 
 ### See also
 
-- [Concepts → Error handling](#43-error-handling) — the
-  three-layer model, minimal-boilerplate helpers, dev/end-user boundary
+- [Concepts → Error handling](#43-error-handling)
 - [SDK API](#71-sdk-api)
 - [SDK API → User-facing messages](#71-sdk-api)
 - [Use with FastAPI](#64-use-with-fastapi)
@@ -7399,31 +6485,22 @@ you don't care about the exact cause.
 ## 7.5 Tool catalog
 
 A reference list of the tool names LLM agents commonly expose, tagged
-with a default risk rating you can use as a starting point when you
-configure approval-rule patterns. `@protect` is the canonical entry
-point; every protected tool ships `tool_name + args + kwargs` on
-the wire, and ToolParameters approval rules read argument values
-directly out of `kwargs` by `param_name`.
+with a risk rating you can use as a starting point when you configure
+`ToolBlock` patterns.
 
-The catalog covers three sources that NullRun sees in production:
-
-- **LangChain built-in toolkits** (`langchain-community` — search, SQL,
-  Gmail, Slack, GitHub, file system, vector stores, code interpreters)
-- **Anthropic / OpenAI hosted tools** (OpenAI code interpreter, e2b
-  sandbox, Riza JS exec)
-- **MCP servers** (official + community — filesystem, git, github,
-  postgres, sqlite, redis, puppeteer, memory, time)
-
-Names are normalised to `snake_case` — that's the convention
-LangChain's docs recommend.
-
-Risk rating:
+`@protect` is the entry point for every protected tool. The tool name
+and the call's argument bag both reach the gateway, so a rule can match
+on the name and a typed approval rule can read an argument value.
 
 | Rating | Meaning |
 | --- | --- |
 | `low` | Read-only or reversible. Safe to call without a policy decision. |
-| `medium` | Mutates external state but the change is reversible (issue created, draft email, S3 put). |
-| `high` | **Side effects you can't easily undo** — files written or deleted, money moved, messages sent, code executed, infra changed. Mark with `@protect` and route through a human approval gate. |
+| `medium` | Mutates external state, and the change is reversible — an issue created, a draft email, an object stored. |
+| `high` | **Side effects you cannot easily undo** — a file written or deleted, money moved, a message sent, code executed, infrastructure changed. Mark it with `@protect` and route it through an approval rule. |
+
+The rating is a starting point, not an enforced value. The gateway
+does not carry a risk table; it matches the names you write into a
+policy.
 
 ### Search & retrieval
 
@@ -7454,21 +6531,20 @@ Risk rating:
 
 ### Code execution
 
-Any tool that evaluates arbitrary code is `high` by definition —
-the blast radius is the entire host or sandbox the agent reaches.
+Any tool that evaluates arbitrary code is `high` by definition. The
+blast radius is the whole host or sandbox the agent reaches.
 
 `python_repl`, `python_repl_ast`, `execute_python`,
-`code_interpreter` (OpenAI built-in), `e2b_code_interpreter`,
-`execute_javascript` (Riza), `execute_code`, `run_command`,
-`run_bash_command`, `terminal`, `bash`, `shell`, `repl` — all
-**`high`**. Register a blanket pattern (see the starter list below)
-rather than enumerating them.
+`code_interpreter`, `e2b_code_interpreter`, `execute_javascript`,
+`execute_code`, `run_command`, `run_bash_command`, `terminal`, `bash`,
+`shell`, `repl` — all **`high`**. Cover them with one pattern per
+family rather than enumerating every framework's code runner.
 
 ### Databases
 
 | Tool | Risk |
 | --- | --- |
-| `sql_db_schema`, `sql_db_query_checker`, `read_query` (sqlite) | low |
+| `sql_db_schema`, `sql_db_query_checker`, `read_query` | low |
 | `list_tables`, `describe_table` | low |
 | `sql_db_query`, `query_sql_database`, `db_query` | medium |
 | `redis_set` | medium |
@@ -7512,8 +6588,8 @@ rather than enumerating them.
 
 `stripe_charge`, `stripe_create_customer`, `stripe_refund`,
 `stripe_create_payment`, `create_invoice`, `send_payment` — all
-**`high`**. Reads only (`get_balance_sheet`, `get_income_statement`,
-`get_cash_flow`) drop to `low`.
+**`high`**. Read-only calls (`get_balance_sheet`,
+`get_income_statement`, `get_cash_flow`) drop to `low`.
 
 ### Memory & vector stores
 
@@ -7531,25 +6607,29 @@ rather than enumerating them.
 | `puppeteer_navigate`, `puppeteer_click`, `puppeteer_fill`, `browser_navigate`, `browser_click` | medium |
 | `puppeteer_evaluate` | high |
 
-!!! note
-    `puppeteer_evaluate` runs JS in the browser page context — treat
-    it as `high` (cross-origin requests, DOM injection, credential
-    theft). `browser_navigate` and `browser_click` are `medium`
-    because they take actions on whatever URL the agent picks.
+`puppeteer_evaluate` runs JavaScript in the page, so it can make
+cross-origin requests, inject DOM, and read credentials. Treat it as
+`high`. `browser_navigate` and `browser_click` are `medium` because
+they act on whatever URL the agent picks.
+
+### MCP tools
+
+An MCP tool's name is whatever the server exposes. The SDK sends that
+name to the gateway unchanged, so a `ToolBlock` pattern has to spell it
+the way the server does. The **MCP servers** view in the dashboard
+lists the servers and the tools each one registers — read the names off
+there rather than guessing them from the server's documentation.
 
 ### Recommended ToolBlock starter list
 
-The SDK does **not** ship a built-in sensitive tool list (see
-[Sensitive tools](#24-sensitive-tools) for the rationale).
-You express "this tool needs review" with a `ToolBlock` policy on
-the server, evaluated by the gate on every `/gate` call. The
-recommended starter patterns below map to that policy mechanism.
+The SDK ships no built-in sensitive-tool list. You express "this tool
+needs review" with a `ToolBlock` policy, evaluated by the gateway on
+every gate call.
 
-Create a ToolBlock policy in the dashboard under
-**Policies → New policy** (pick **Tool block** as the type). The
-dashboard renders the
-canonical tool name for every framework integration so you can
-match against the right string:
+Create the policy in the dashboard under **Policies → New policy**, and
+pick **Tool block** as the type. The dashboard renders the canonical
+tool name for every framework integration, so you can match against
+the right string.
 
 ```json title="tool_block_policy.json"
 {
@@ -7560,17 +6640,17 @@ match against the right string:
       "scope": "Org",
       "config": {
         "tool_pattern": [
-          "stripe.*", "charge", "send_payment", "create_invoice", "refund",
+          "stripe*", "charge", "send_payment", "create_invoice", "refund",
           "send_email", "send_gmail", "send_message", "send_sms",
-          "slack_send.*", "office365_send.*",
+          "slack_send*", "office365_send*",
           "delete_file", "file_delete", "write_file", "file_write",
           "execute_sql", "run_sql", "db_write", "db_delete",
           "write_query", "create_table",
-          "s3_delete.*", "ec2_terminate.*", "ec2_stop.*",
+          "s3_delete*", "ec2_terminate*", "ec2_stop*",
           "lambda_invoke", "kubernetes_delete", "kubernetes_apply",
-          "python_repl.*", "bash", "shell", "terminal",
-          "execute_.*", "run_command", "run_bash_command",
-          "git_commit", "github_merge.*", "github_push.*", "github_delete.*",
+          "python_repl*", "bash", "shell", "terminal",
+          "execute_*", "run_command", "run_bash_command",
+          "git_commit", "github_merge*", "github_push*", "github_delete*",
           "memory_delete", "vector_store_delete", "delete_entities"
         ]
       }
@@ -7579,65 +6659,71 @@ match against the right string:
 }
 ```
 
-Patterns are glob-matched against the tool name the agent requested,
-case-insensitively — `"Stripe.Charge"` will match `"stripe.*"`.
+Note the trailing `*` on the family patterns. `stripe*` covers
+`stripe_charge`, `stripe_refund` and every other `stripe_…` name.
+`stripe.*` does not: it matches the bare name `stripe` and dotted
+names like `stripe.charge`, and nothing else.
 
-For finer-grained rules (e.g. "block refunds over $500", "require
-approval for sends to non-`@internal` addresses"), use the typed
-`BusinessImpact` predicate (`money_amount` or `tool_parameters`) — see
+### Pattern syntax
+
+`*` is the only metacharacter. There is no regex.
+
+| Pattern | Matches | Does not match |
+| --- | --- | --- |
+| `bash` | `bash` | `bash_foo`, `pybash` |
+| `bash*` | `bash`, `bash_foo`, `bash.foo` | `pybash` |
+| `*.secret` | `aws.secret`, `db.secret` | `secret` |
+| `bash.*` | `bash`, `bash.foo`, `bash.foo.bar` | `bash_foo` |
+| `*.drop_*` | `s3.drop_table`, `db.drop_user` | `s3.execute_drop` |
+
+Alternatives share one entry. The pipe character separates them, and
+each side is evaluated on its own:
+
+```text
+bash|sh|shell
+```
+
+That entry matches `bash`, `sh` and `shell`, and nothing else.
+
+| Rule | Behaviour |
+| --- | --- |
+| No `*` | Exact equality. A bare literal is never a substring match. |
+| One `*` | Anchored prefix and/or suffix. `db.drop_*` needs the prefix; `*.secret` needs the suffix. |
+| Two or more `*` | Every literal segment must appear in the value, in order. The ends stay anchored when the pattern does not start or end with `*`. |
+| `prefix.*` | The bare prefix **and** any dotted continuation. `bash.*` covers `bash`, `bash.foo` and `bash.foo.bar`. It does not cover `bash_foo`. |
+| `\|` | Separates alternatives inside one entry. Each alternative is evaluated on its own. |
+| `?` | An ordinary character, not a single-character wildcard. |
+| `**` | Matches nothing. A pattern with two adjacent stars is refused rather than read as one. |
+| Empty | Matches nothing. |
+
+Matching is case-sensitive. A built-in tool name is lowercase ASCII
+letters, digits, `_` and `-`, up to 64 characters, so write the pattern
+in the same shape.
+
+### What a pattern cannot do
+
+Matching reads the tool name only. A pattern never inspects the
+arguments, so `bash*` blocks every bash call whatever the command
+inside it, and no glob can express a condition on one argument.
+
+For a rule that depends on an argument — "block refunds over $500",
+"approve only sends to `@internal` addresses" — use the typed
+predicates on an approval rule. See
 [Human approval → typed predicates](#32-human-approval).
+
+### Other limits
+
+| Limit | Value |
+| --- | --- |
+| Pattern length | 4096 bytes per entry |
+| Pattern characters | No control characters. A pattern with a newline is refused when you save the policy. |
+| Enforcement | A tool block is always hard. Soft budget mode does not soften it. |
 
 ### See also
 
-- [Sensitive tools](#24-sensitive-tools) — the policy-
-  driven way to express "this tool needs review" (no built-in SDK
-  list, all server-side via ToolBlock)
-- [Tool policies](#23-tool-policies) — glob patterns,
-  per-tool block / allow rules
-- [Human approval](#32-human-approval) — typed
-  `BusinessImpact` predicates for narrower rules
-
-!!! info "Deep dive"
-
-    Enforcement does not live in the catalog. The catalog is a
-    starting point for rating tools; a tool is actually stopped by a
-    `ToolBlock` policy evaluated on the server against the canonical
-    tool name the agent requested. Keeping the decision server-side
-    means a pattern can be tightened or relaxed without an SDK
-    rollout. Because the gate classifies the name it receives and
-    that classification is authoritative, treat the names here as
-    documentation of what agents commonly call — the drift between
-    this page and the names a particular agent actually sends is a
-    real possibility, and the gate's view wins when they disagree.
-
-    The pattern language is deliberately narrow. `*` is the only
-    metacharacter and matches any run of characters, including
-    nothing at all, so `send_*` matches anything with that prefix and
-    `bash.*` matches the bare `bash` as well as `bash.foo` and
-    `bash.foo.bar`. A pattern with more than one star, such as
-    `*.drop_*`, matches when its literal segments appear in order,
-    which is why it catches `s3.drop_table` and `db.drop_user` but not
-    `s3.execute_drop`. `|` separates alternatives inside one entry, and
-    a bare literal matches exactly — never a substring. `?` and `**`
-    are not supported and are matched as ordinary characters, so a
-    pattern written as a regex habit matches less than intended. Each
-    entry is capped at 4096 bytes, which is a bound on matcher work
-    per gate call rather than a limit on how many patterns a policy
-    may carry.
-
-    Matching is name-only. A pattern never inspects arguments, so
-    `bash.*` blocks every bash call regardless of the command inside
-    it, and a glob cannot express a condition on one argument. For
-    command-level rules, the typed `tool_parameters` predicate reads
-    an argument by `param_name` in the approval rule editor. Tool
-    block is always hard, soft enforcement mode does not soften it,
-    and a request that reaches the gate without a tool name while
-    patterns are active is blocked rather than passed, so omitting the
-    field is not a way around a policy. Blanket patterns such as
-    `python_repl.*` and `bash.*` are the durable choice for execution
-    tools: enumerating every framework's code runner goes stale as
-    soon as a new server appears, while a prefix pattern keeps
-    working.
+- [Tool policies](#23-tool-policies) — how a `ToolBlock` policy is evaluated
+- [Sensitive tools](#24-sensitive-tools) — the policy-driven way to express "this tool needs review"
+- [Human approval](#32-human-approval) — typed predicates for narrower rules
 
 
 ## 7.6 Glossary
@@ -7657,16 +6743,16 @@ term means and links to the page that goes deeper on it.
 **Policy**
 :   A rule attached to your organization or to a single workflow. Each
     policy answers one enforcement question, and the applicable ones
-    are aggregated most-restrictive-wins across scopes. The four types
-    are `BudgetLimit`, `RateLimit`, `ToolBlock`, and
-    `LoopDetection`. See [Policies](#22-policies).
+    are aggregated most-restrictive-wins across scopes. There are three
+    types — `budget_limit`, `rate_limit`, and `tool_block`. See
+    [Policies](#22-policies).
 
 **ToolBlock**
 :   The policy type that decides which tools an agent may call. Its
     patterns are glob matches over canonical tool names, unioned across
-    every scope that applies. It is **always hard**: it fails closed on
-    a transport error regardless of the budget's
-    `enforcement_mode`. See [Tool policies](#23-tool-policies).
+    every scope that applies. It is **always hard**: a transport error
+    refuses the call regardless of the budget's `enforcement_mode`. See
+    [Tool policies](#23-tool-policies).
 
 **Sensitive tool**
 :   A tool that should never run without a human paying attention —
@@ -7675,18 +6761,26 @@ term means and links to the page that goes deeper on it.
     patterns. See [Sensitive tools](#24-sensitive-tools).
 
 **Fail-closed / fail-open**
-:   What the gate does when it cannot reach the policy engine.
-    `ToolBlock` and aggregate rate limiting fail **closed** (the call is
-    refused) because the policy is the authoritative gate; per-key rate
-    limits and budget checks fail **open** because the budget
-    enforcement layer behind them is the real backstop. See
-    [Policies](#22-policies).
+:   What happens when the gate cannot get the signal it needs. The
+    enforcement path fails **closed**: a missing tool block, a missing
+    aggregate rate-limit answer, or a missing budget answer refuses the
+    call. The SDK-side circuit breaker is the one component that fails
+    **open**, and only locally — an unreachable gateway short-circuits
+    the SDK's calls instead of hanging. See
+    [Policies](#22-policies) and
+    [Circuit breaker](#21-circuit-breaker).
 
 **Circuit breaker**
 :   The SDK-side guard that short-circuits gate calls after repeated
     infrastructure failures, so an unreachable gateway does not turn
     into a hang. It opens on transport errors and closes again after a
     cooldown. See [Circuit breaker](#21-circuit-breaker).
+
+**Protocol version**
+:   The wire contract version the SDK sends on every gateway request in
+    the `X-NULLRUN-PROTOCOL` header. The SDK sends version `4`. The
+    gateway refuses a request whose version it does not support. See
+    [HTTP API](#73-http-api).
 
 ### Cost
 
@@ -7703,11 +6797,30 @@ term means and links to the page that goes deeper on it.
     returns to Hard mode once the cap is exhausted. See
     [Budgets](#31-budgets).
 
+**execution_id**
+:   The id the gateway mints for one tool call. It is a UUIDv7, so ids
+    sort by time, and the gateway — not the client — issues it. The
+    gateway binds it to your organization and API key, so a call can
+    only be settled by the identity that reserved it. See
+    [HTTP API](#73-http-api).
+
 **Reservation**
 :   The amount a workflow commits at gate time, before the call runs.
     The actual cost is consumed against it afterwards, so the reserve /
     consume invariant keeps a single call from being implicitly
     re-reserved. See [Budgets](#31-budgets).
+
+**Consume**
+:   The settlement of a reservation after the call runs. The consumed
+    amount may not exceed the reserved amount plus a small fixed
+    tolerance. A call that overshoots is refused. See
+    [Budgets](#31-budgets).
+
+**operation_id**
+:   The id the SDK attaches to one gate call, so several calls in the
+    same scope stay distinguishable from one another. It is a client
+    value and carries no authority of its own. See
+    [HTTP API](#73-http-api).
 
 ### Runtime
 
@@ -7754,6 +6867,14 @@ term means and links to the page that goes deeper on it.
     `action_digest`; if the payload drifts, the grant is refused. See
     [Human approval](#32-human-approval).
 
+**Approval rule**
+:   A policy that asks for a human instead of answering `allow` or
+    `block` on its own. Its predicate reads the call's business
+    impact — an amount of money, or a named argument value. Approval
+    rules are separate from `ToolBlock`: the tool block says which
+    tools are off limits, the approval rule says which calls need a
+    person. See [Human approval](#32-human-approval).
+
 **action_digest**
 :   The SHA-256 hash that binds an approval to the action it approves.
     A digest mismatch after approval produces a hard block rather than
@@ -7775,8 +6896,9 @@ term means and links to the page that goes deeper on it.
 
 **Pause**
 :   The control-plane signal that suspends a workflow. It surfaces as
-    `WorkflowPausedException` carrying a `resume_after`, and maps to
-    HTTP `503` with a `Retry-After` header. See
+    `WorkflowPausedException` carrying an optional `resume_after`. A
+    gate call to a paused workflow is refused with `403`
+    `WORKFLOW_PAUSED`. See
     [Error handling](#43-error-handling).
 
 
@@ -7790,9 +6912,9 @@ tool payloads it decides on. This section documents that view: what
 data crosses the wire, what is persisted, who can reach it, and what
 happens when it is deleted.
 
-| Page | Purpose | Reference |
-| --- | --- | --- |
-| Data handling & vendor review | The full data inventory — what is transmitted, what is stored, retention windows, sub-processors, and vendor review. | [Data handling & vendor review](#82-data-handling-vendor-review) |
+| Page | Purpose |
+| --- | --- |
+| [Data handling & vendor review](#82-data-handling-vendor-review) | The full inventory — what is transmitted, what is stored, retention, sub-processors, and the answers to a standard vendor risk questionnaire. |
 
 !!! info "What NullRun does and does not inspect"
 
@@ -7802,515 +6924,487 @@ happens when it is deleted.
     or `require_approval` before the call executes.
 
     It does not read the free-text arguments of a tool call to decide
-    whether the *content* is acceptable. A payload that slips past the
-    gate because its metadata looked benign is not retroactively
-    scanned. If you need content-level inspection, enforce it in the
-    agent, upstream of NullRun.
+    whether the *content* is acceptable. A payload that passes the
+    gate because its metadata looked benign is not scanned
+    afterwards. Enforce content-level inspection in the agent,
+    upstream of NullRun.
 
-    The inverse is also true: the gate never needs the call to have
+    The inverse also holds: the gate never needs a call to have
     completed in order to block it. A decision is returned before
     execution begins, so a blocked call costs nothing and leaves no
     side effect behind.
 
+### See also
+
+- [Data handling & vendor review](#82-data-handling-vendor-review) — the full
+  inventory
+- [Performance & limits](#92-performance-limits) — timeouts and
+  the fail-closed posture
+- [API keys](#25-api-keys) — signing, rotation, revocation
+
 
 ## 8.2 Data handling & vendor review
 
-A consolidated response to the standard vendor-risk questionnaire, written
-for an employee assessing NULLRUN as a vendor. Every value below reflects
-the deployed product; rows marked **Not attested** are honest gaps — the
+A consolidated answer to the standard vendor-risk questionnaire, for
+an employee assessing NULLRUN as a vendor. Every value reflects the
+deployed product. Rows marked **Not attested** are honest gaps: the
 implementation does not document them.
 
-This page is the load-bearing companion to the
-[Compliance overview](#81-overview). That page gives the short version;
-this one answers the vendor-risk questionnaire in full — *what NULLRUN
-does with the data it sees*.
+This page is the detailed companion to the
+[Compliance overview](#81-overview). That page gives the short version.
 
 **Reading conventions.** `[V]` = verified · `[D]` = derived or inferred
 · `[N]` = not attested.
 
-### At-a-glance
+### At a glance
 
-| Question | Answer | Evidence |
+| Question | Answer | Section |
 |---|---|---|
-| What does the SDK send? | Tool name, cost estimate, optional typed `business_impact`, optional `action_digest` (SHA-256 of canonical payload). | [§1 Data transmitted](#1-data-transmitted) |
-| What does the backend store in Postgres? | Org / user / key / workflow / policy / approval / cost / audit rows. `audit_events` is **immutable** (4-layer defence). | [§2 Data stored](#2-data-stored-postgres) |
-| What does the backend store in Redis? | Period cost counters, execution bindings, rate-limit buckets, session indexes, chain state. **No PII.** | [§3 Data stored](#3-data-stored-redis) |
-| Where is it hosted? | DigitalOcean (US with EU regions). Self-hosted Postgres + Redis in Docker on a single VPS. | [§4 Hosting](#4-hosting-placement) |
-| Who can access production data? | Owners / Admins / Operators / Viewers (4-level RBAC). SSH to prod only via allowlisted `vps` wrapper. | [§5 Access controls](#5-access-controls) |
-| How is it encrypted? | TLS 1.2/1.3 edge, pgcrypto column-level for Slack OAuth tokens, HMAC-SHA256 for request signing, audit-export sidecar signing. | [§6 Encryption](#6-encryption) |
-| Which third parties see data? | DigitalOcean, Brevo (DE), Polar (SE), Slack, GitHub, Google. Listed at `/api/v1/subprocessors`. | [§7 Sub-processors](#7-sub-processors) |
-| How is data deleted? | Soft-delete with 60-day grace, then a hard purge of tenant data; two-phase revoke for API keys. | [§8 Deletion](#8-deletion) |
-| Where physically is data? | Region selectable at signup (EU or US). Single-region deployment. | [§9 Residency](#9-data-residency-sovereignty) |
-| What's the compliance posture? | DPA available at `/api/v1/orgs/{org}/dpa`. No SOC 2 / ISO 27001 / HIPAA attestation is available. | [§10 Compliance](#10-compliance-posture) |
+| What does the SDK send? | Tool name, cost estimate, optional typed business impact, optional action digest, and the argument bag. | [Data transmitted](#1-data-transmitted) |
+| What does the backend store in Postgres? | Organization, user, key, workflow, policy, approval, cost, and audit rows. The audit table is immutable. | [Data stored](#2-data-stored) |
+| What does the backend store in Redis? | Budget counters, execution bindings, rate-limit buckets, session and chain state. No PII. | [Data stored](#2-data-stored) |
+| Where is it hosted? | DigitalOcean, with EU regions available. Self-hosted Postgres and Redis on one VPS. | [Hosting](#3-hosting) |
+| Who can access production data? | Four role levels. Production shell access through an allowlisted wrapper. | [Access controls](#4-access-controls) |
+| How is it encrypted? | TLS at the edge, column-level encryption for Slack OAuth tokens, HMAC-SHA256 for request signing and audit exports. | [Encryption](#5-encryption) |
+| Which third parties see data? | DigitalOcean, Brevo (DE), Polar (SE), Slack, GitHub, Google. | [Sub-processors](#6-sub-processors) |
+| How is data deleted? | Soft-delete with a 60-day grace, then a purge of tenant data. API key revocation is two-phase. | [Deletion](#7-deletion) |
+| Where physically is data? | Region selectable at signup. Single-region deployment. | [Residency](#8-data-residency) |
+| What is the compliance posture? | A data processing agreement is available at the org endpoint. No SOC 2, ISO 27001, or HIPAA attestation exists. | [Posture](#9-compliance-posture) |
 
 ### 1. Data transmitted
 
-#### 1.1 SDK → backend `/api/v1/gate`
+#### 1.1 SDK to gateway
 
-Wire schema:
+The gate request carries:
 
 | Field | Source | Notes |
 |---|---|---|
-| `execution_id` | SDK-supplied | Server **mints a UUIDv7** and echoes it back. Client-supplied IDs are not honoured for ownership. |
-| `trace_id`, `tool`, `mode`, `operation_id` | SDK-supplied | Standard envelope. |
-| `business_impact {Money{direction, amount_minor, currency}}` | SDK-supplied | Optional; only required for typed approval rules. |
-| `action_digest` | SDK-supplied | SHA-256 hex of canonicalised payload. Verified again at `/execute` time. |
-| `tool_params` | SDK-supplied | Raw `kwargs` under `input_data.kwargs`; backend reads by `param_name` in ToolParameters approval rules. |
-| `workflow_id`, `parent_execution_id` | SDK-supplied | Body `workflow_id` MUST match the authenticated key's `workflow_id`, else `400 WORKFLOW_ID_BODY_MISMATCH`. |
+| `execution_id` | SDK-supplied | The gateway **mints a UUIDv7** and echoes it back. A client-supplied id is not honoured for ownership. |
+| `trace_id`, `tool`, `mode`, `operation_id` | SDK-supplied | The request envelope. |
+| `tool_arguments` | SDK-supplied | The call's argument bag. A `tool_params` field is accepted as an alternative name. A typed approval rule reads a named argument from it. |
+| `business_impact` | SDK-supplied | Optional. Required only for typed approval rules. |
+| `action_digest` | SDK-supplied | SHA-256 hex of the canonicalised payload. Verified again at execute time. |
+| `workflow_id` | SDK-supplied | Must match the workflow bound to the authenticated key, or the request is refused with `WORKFLOW_ID_BODY_MISMATCH`. |
 
-**Org-mismatch guard (IDOR):** the body `organization_id` must match the
-authenticated context. A mismatch returns an `OrgMismatch` block.
+**Organization mismatch guard.** The organization in the body must
+match the authenticated context. A mismatch is refused.
 
-**No email / no actor name** is sent by the SDK.
+**No email address and no actor name** is sent by the SDK.
 
-#### 1.2 SDK → backend `/api/v1/track`
+#### 1.2 SDK to gateway, cost tracking
 
-`TrackRequestRaw` carries `event_id`,
-`workflow_id` (required), `tokens`, `cost_cents` (accepted int/float/string
-but **not trusted for enforcement** — the server overwrites it via a
-5%-delta rule: client-supplied `execution_id` and `cost_cents` are never
-trusted), `tool_name`, `is_retry`, `operation_name`, `client_created_at`,
-`input_tokens`, `output_tokens`, `agent_id`, `environment`, `agent_type`,
-`reservation_id`, `reserved_cost_cents`, `provider`, `model`, `execution_id`,
-`type_` (`llm_call`/`tool_call`/`span_start`/`span_end`), `trace_id`,
-`span_id`, `parent_trace_id`, `metadata`, `parent_span_id`, `depth`,
-`fn_name`, `error`, `idempotency_key`, `latency_ms`, `cost_source`,
-`attempt_index`, `cache_read_tokens`, `cache_write_tokens`,
-`reasoning_tokens`, `tool_names[]`, `finish_reason`.
+The cost-tracking request carries the event id, the workflow id, token
+counts, the tool or model name, the provider, the model, trace and span
+correlation ids, agent and organization ids, latency, retry flag, the
+reserved amount, the provider-reported amount, a cost source label, and
+free-form metadata.
 
-#### 1.3 Backend → SDK gate response
+The cost figure the client sends is **not trusted for enforcement**.
+The gateway recomputes it.
 
-The gate response carries `decision`, `decision_source`,
-`explanation`, `approval_id`,
-`approval_timeout_seconds`, server-minted `execution_id`,
-`action_digest` echo, `policy_hash` (reserved), `idempotent_replayed: bool`.
+#### 1.3 Gateway to SDK
 
-**PII in gate responses:** decision/explanation text + approval IDs only.
-No email, no org name, no actor identifier echoed. `[V]`
+The gate response carries the decision, its source, an explanation, an
+approval id when a human is required, the approval timeout, the
+server-minted `execution_id`, and an echo of the action digest.
 
-#### 1.4 Backend ↔ upstream LLM provider
+**PII in gate responses:** decision text, the explanation, and
+approval ids. No email address, no organization name, no actor
+identifier. `[V]`
 
-- Provider types cover OpenAI / Anthropic / Google / Azure.
-- **The proxy route is not wired into the live router** — NULLRUN does
-  not proxy LLM calls. The SDK talks to providers directly with the
-  customer's own API keys. `[D]`
-- **Credential invariant:** the SDK never sees raw provider API keys;
-  credentials are resolved server-side.
+#### 1.4 Gateway to the LLM provider
 
-#### 1.5 WebSocket control plane
+- Provider types cover OpenAI, Anthropic, Google, and Azure.
+- **NULLRUN does not proxy model calls.** The SDK talks to providers
+  directly, using the customer's own API keys. `[D]`
+- **Credential invariant:** the SDK never holds a raw provider API key.
 
-- `WS_HMAC_MAX_AGE_SECONDS = 300` — replay window.
-- HMAC-SHA256 over canonical JSON (sorted keys, no whitespace), keyed
-  by per-API-key secret.
-- The wire is signed; the receiver verifies the decoded signed payload
-  — never the full wire bytes. `[V]`
+#### 1.5 Control plane
+
+- The WebSocket is signed with HMAC-SHA256 over canonical JSON, keyed
+  by a per-API-key secret, with a 300-second replay window.
+- The receiver verifies the decoded signed payload, not the raw wire
+  bytes. `[V]`
 
 #### 1.6 Webhooks received
 
 | Webhook | Verification |
 |---|---|
-| **Polar** (billing) | HMAC-SHA256 verified BEFORE any processing. Accepts Standard Webhooks headers (`webhook-id`, `webhook-timestamp`, `webhook-signature: v1,<base64>`) and the `polar-signature: t=…,v1=…` fallback. The sandbox environment bypasses verification; production does not. |
-| **Slack events** | Signing-secret validation; bot tokens stored via pgcrypto encryption. |
+| **Polar** (billing) | HMAC-SHA256 verified before any processing. Both Standard Webhooks headers and the `polar-signature` form are accepted. |
+| **Slack events** | Signing-secret validation. Bot tokens are stored encrypted. |
 
 #### 1.7 Email
 
-- **Sub-processor:** Brevo (Sendinblue GmbH, **DE**). SMTP via
-  `BREVO_SMTP_HOST` / `BREVO_SMTP_LOGIN` / `BREVO_SMTP_PASSWORD`. `[V]`
-- **Email types:** invitation, invite-declined, 2FA recovery, password
-  reset, verification, data-export-ready notification.
-- **PII redaction in logs:** email addresses render as a 12-char
-  SHA-256 prefix, never plaintext. `[V]`
+- **Sub-processor:** Brevo (Sendinblue GmbH, **DE**).
+- **Email types:** invitation, invitation declined, two-factor
+  recovery, password reset, verification, and data-export-ready
+  notice.
+- **PII redaction in logs:** an email address renders as a short
+  SHA-256 prefix, never as plaintext. `[V]`
 
-### 2. Data stored — Postgres
+### 2. Data stored
+
+#### 2.1 Postgres
 
 | Table | Stored | Mutable? | Encryption at rest | Retention |
 |---|---|---|---|---|
-| `audit_events` | `id`, `organization_id`, `actor_id`, `action`, `event_type`, `decision`, `policy_id`, `policy_version`, `policy_hash`, `matched_rule`, `reason_code`, `execution_id`, `action_digest`, `tool_name`, `tool_version`, `tool_digest`, `metadata`, `content_hash`, `previous_hash`, `created_at` | **IMMUTABLE** | DB-level | Persistent until org purge (60-day grace) |
-| `execution_records` | Per-execution outcome rows; joined on `execution_id` | Mutable | DB-level | Per `plan.history_days` (Lite=3, Scale=90) |
-| `cost_events` | `cost_cents`, `cost_millicents`, `tokens`, `provider_reported_cost_cents`, `authoritative_cost_cents`, `cost_integrity` (provided/computed/estimated/provisional/reconciled), tool/model, trace/span/correlation IDs, agent/org IDs, `received_at`. Partitioned by month. | Mutable | DB-level | Env-driven `COST_EVENTS_RETENTION_DAYS`; defaults to per-plan `history_days` |
-| `approvals` | Approval decisions, `decided_by_kind` (user / system_expiry / unknown) | Mutable (pending→approved/denied/expired/revoked) | DB-level | Pending GC'd by 5-s sweep worker |
-| `organizations` | `id`, `name`, `slug`, `contact_email`, `plan`, `deleted_at`, `audit_purge_after` | Mutable; soft-delete via `deleted_at` with 60-day grace | DB-level | Hard-deleted by retention worker after grace |
-| `users` | `id`, `email`, `display_name`, `password_hash` (Argon2), `role`, `default_organization_id`, `tombstoned_at`, `onboarding_completed_at` | Mutable; tombstone via `tombstoned_at` | DB-level | Persistent until org cascade |
-| `organization_api_keys` | `id`, `name`, `key_prefix`, `key_suffix`, `key_hash` (SHA-256), `secret_key` (**HMAC plaintext — required for hot path**), `status` (active/rotating/revoked), `version`, `last_used_at`, `expires_at`, `scopes` | Mutable | DB-level | Persistent until org cascade |
-| `sessions` | Bearer token store; session_token, user_id, org_id, expires_at | Mutable (revoke = DEL) | DB-level | 7-day TTL (Redis + PG) |
-| `policies` | `id`, `scope` (Org/Workflow), `policy_type`, `enforcement_mode`, `budget_cents`, `max_overdraft_cents` | Mutable (soft-delete) | DB-level | Per `plan.history_days` |
-| `audit_export_secrets` | Per-org HMAC secret for audit export signing | Mutable | DB-level | Persistent until org cascade |
-| `workflows` | Workflow metadata, `state` (Normal/Flagged/Tripped/Paused/Killed), `budget_cents`, `archived_at`, `deleted_at` | Mutable | DB-level | Persistent |
+| `audit_events` | Organization, actor, action, event type, decision, policy id, policy version, policy hash, matched rule, reason code, `execution_id`, `action_digest`, tool name and version, metadata, content hash, previous hash, timestamp | **Immutable** | Database level | Until the organization purge, after a 60-day grace |
+| `execution_records` | One row per execution, joined on `execution_id` | Mutable | Database level | The plan's history window |
+| `cost_events` | Cost in cents and millicents, token counts, provider-reported and authoritative cost, an integrity label, tool and model, correlation ids, agent and organization ids, receipt timestamp. Partitioned by month. | Mutable | Database level | The plan's history window |
+| `approvals` | The decision, and who made it — a person, a system expiry, or an unknown source | Mutable: pending becomes approved, denied, expired, or revoked | Database level | Pending rows are collected by a sweep worker |
+| `organizations` | Id, name, slug, contact email, plan, deletion timestamp, purge date | Mutable, soft delete | Database level | Hard-deleted by the retention worker after the grace |
+| `users` | Id, email, display name, password hash (Argon2), role, default organization, tombstone timestamp | Mutable | Database level | Until the organization cascade |
+| `organization_api_keys` | Id, name, key prefix and suffix, key hash (SHA-256), the HMAC signing secret, status, version, last use, expiry, scopes | Mutable | Database level | Until the organization cascade |
+| `sessions` | Bearer token store: token, user id, organization id, expiry | Mutable; a revocation is a delete | Database level | 7-day lifetime |
+| `policies` | Id, scope, policy type, enforcement mode, budget amount, overdraft cap | Mutable, soft delete | Database level | The plan's history window |
+| `approval_rules` | The typed predicates that ask for a human, mirroring the policy quota | Mutable | Database level | The plan's history window |
+| `audit_export_secrets` | The per-organization signing secret for audit exports | Mutable | Database level | Until the organization cascade |
+| `workflows` | Metadata, state (normal, flagged, tripped, paused, killed), budget amount, archive and deletion timestamps | Mutable | Database level | Persistent |
 
-#### Audit-events immutability — 4-layer defence-in-depth
+#### 2.2 Immutability of the audit table
 
-This is the SOC2 control surface:
+Four independent controls protect the audit table:
 
-1. Row-level `BEFORE UPDATE / DELETE` triggers raise an error
-   unconditionally.
-2. A DDL event trigger blocks `ALTER / CREATE / DROP` on the audit
-   event and audit export tables.
-3. `DELETE` and `TRUNCATE` are revoked on the audit export table from
-   the application role.
-4. `ENABLE ALWAYS TRIGGER` hardening closes the
-   `session_replication_role = 'replica'` bypass — an audit-event
-   immutability bypass found during internal penetration testing.
+1. Row-level triggers refuse an update and a delete.
+2. A schema-level event trigger refuses schema changes to the audit
+   and audit-export tables.
+3. Delete and truncate are revoked from the application role on the
+   audit-export tables.
+4. The triggers are armed so that a session-level replication-role
+   change cannot disable them.
 
-#### Column-level encryption
+#### 2.3 Column-level encryption
 
-Column-level encryption uses pgcrypto AES. It is applied to **Slack
-OAuth bot tokens**. Threat model: stolen disk image OR
-read-only DB dump yields ciphertext; plaintext requires DB +
-`APP_ENCRYPTION_KEY`.
+Column-level encryption uses pgcrypto AES. It is applied to the Slack
+OAuth bot tokens. The threat model: a stolen disk image or a
+read-only dump yields ciphertext, and the plaintext needs both the
+database and the encryption key.
 
-### 3. Data stored — Redis
+#### 2.4 Redis
 
-| Key pattern | Purpose | PII | TTL |
-| --- | --- | --- | --- |
-| `bp:{ts}:cost_cents` | Period-bound budget counter (cents). **Authoritative for enforcement.** | No (integer only) | `period_end_ts - now()`, capped `PERIOD_BUDGET = 35d` |
-| `bp:{ts}:executions` | Period-bound execution rate counter | No | Same TTL |
-| `execution:{execution_id}` | Hash binding (org_id, api_key_id). Anti-replay for `/track`, `/heartbeat` | No | `EXECUTION_BINDING = 24h` |
-| `rate_limit:{org_id}:{minute}` | Per-org rate-limit counter | No | `RATE_LIMIT = 120s` |
-| `rate_limit:gate:{key_id}:{minute}` | Per-API-key rate-limit counter on `/gate` | No | 120s |
-| `rl:tokens:{api_key_id}`, `rl:refill:{api_key_id}` | Token-bucket rate-limit state | No | 2× window |
-| `circuit_state:{org_id}:{wf_id}` | Workflow circuit-breaker state | No | `CIRCUIT_STATE = 3600s` |
-| `approval_request:{request_id}` | Approval pending metadata | No | `APPROVAL_REQUEST = 300s` |
-| `budget:reserved:{org_id}:{execution_id}` | Per-execution reservation | No | `authorization_deadline + 30s` (floor 60s, ceiling 24h) |
-| `pending_2fa:{token_key}` + `pending_2fa_user:{user_id}` | 2FA challenge (Redis-resident) | user_id only |
-| `recovery_2fa:{token}` + `recovery_2fa_user:{user_id}` | OAuth 2FA-disable recovery token | user_id only | `RECOVERY_2FA = 24h` |
-| `in_flight:{org_id}:{api_key_id}` | In-flight counter for two-phase revoke drain | No |
-| `chain:{org_id}:{chain_id}` | Chain state-machine hash | No | `CHAIN_IDLE = 300s` |
-| `audit_hash:{organization_id}` | Last event's `content_hash` for chain fast-path | No | No TTL (cleanup-on-delete) |
-| `session:{token}` | Session token → user lookup | user_id | 7d (`SESSION_MAX_AGE_SECS`) |
+Redis holds short-lived operational state. Grouped by purpose:
 
-**No PII** is stored in any of the above keys. Token keys, user indexes,
-and approval metadata carry only opaque IDs (UUIDs).
+| Purpose | Contents | PII |
+|---|---|---|
+| Budget | The period cost counter, the reserved amount per execution | No |
+| Execution binding | The organization and API key an `execution_id` belongs to | No |
+| Rate limiting | Per-organization and per-key counters | No |
+| Session and token | Session lookups, two-factor challenge and recovery tokens | User id only |
+| Chain state | The chain state machine for a chain of workflows | No |
+| Audit chain fast path | The last event's content hash per organization | No |
+| Circuit state | The workflow circuit-breaker state | No |
 
-### 4. Hosting & placement
+No personal data is stored in any of them. The keys hold opaque
+identifiers.
 
-| Layer | Provider / location |
+### 3. Hosting
+
+| Layer | Provider or location |
 |---|---|
-| **Cloud** | DigitalOcean LLC (US with EU regions). A single VPS hosts the whole deployment |
-| **Postgres** | Self-hosted Docker container on the VPS, with a dedicated application role and the pgcrypto extension |
-| **Redis** | Self-hosted Docker container on the same VPS, with AOF + RDB backup |
-| **Object storage** | S3-compatible (`BACKUP_S3_BUCKET` env-gated). Compatible with DO Spaces via `S3_ENDPOINT` override. Audit export + backup upload |
-| **Container orchestration** | Docker Compose on a single VPS. Blue-green deploys for budget/auth paths; rolling deploys for everything else |
-| **CDN / edge** | None. nginx on the VPS terminates TLS and reverse-proxies. Direct origin exposure |
-| **DNS** | nginx virtual hosts: `nullrun.io`, `www.nullrun.io`, `api.nullrun.io`. DNS provider not documented |
+| **Cloud** | DigitalOcean LLC, US with EU regions. One VPS hosts the whole deployment. |
+| **Postgres** | Self-hosted container on the VPS, with a dedicated application role and the pgcrypto extension. |
+| **Redis** | Self-hosted container on the same VPS, with AOF and RDB backups. |
+| **Object storage** | S3-compatible, for audit exports and backups. Compatible with DigitalOcean Spaces. |
+| **Orchestration** | Docker Compose on one VPS. Blue-green deploys on the budget, billing, and gate paths; rolling deploys elsewhere. |
+| **Edge** | No CDN. nginx on the VPS terminates TLS and reverse-proxies. The origin is directly reachable. |
+| **DNS** | nginx virtual hosts for the marketing site and the API host. |
 
 #### Container hardening
 
-Per the production container configuration:
-
-- `read_only: true` root FS
-- `cap_drop: [ALL]`
-- `no-new-privileges: true`
-- `tmpfs /tmp` (noexec / nosuid / nodev, 100M)
+- Read-only root filesystem.
+- All Linux capabilities dropped.
+- No privilege escalation.
+- A tmpfs for temporary files, mounted noexec, nosuid, and nodev.
 
 #### TLS
 
-- `ssl_protocols TLSv1.2 TLSv1.3;` (no SSLv3 / TLS 1.0 / 1.1)
-- Mozilla "intermediate" cipher list
-- HSTS preload candidate, `Strict-Transport-Security: max-age=31536000; includeSubDomains`
-- Certbot-managed Let's Encrypt at `/etc/letsencrypt/live/nullrun.io/`
-- `[V]`
+- TLS 1.2 and 1.3 only.
+- A Mozilla "intermediate" cipher list.
+- HSTS with a one-year max age and subdomain inclusion.
+- Certificates managed by Certbot. `[V]`
 
-### 5. Access controls
+### 4. Access controls
 
-#### 5.1 RBAC
-
-4-level hierarchy:
+#### 4.1 Roles
 
 | Role | Level | Used for |
 |---|---|---|
-| Viewer | 0 | Read-only dashboard |
-| Operator | 1 | Operator-tier mutations (kill / pause workflows, decide approvals). **Runtime-tier only** — does not exist in storage |
-| Admin | 2 | Org management, member management |
-| Owner | 3 | Org deletion, billing changes, ownership transfer |
+| Viewer | 0 | Read-only dashboard. |
+| Operator | 1 | Operator-tier mutations: kill and pause workflows, decide approvals. This level exists only at runtime. |
+| Admin | 2 | Organization and member management. |
+| Owner | 3 | Organization deletion, billing changes, ownership transfer. |
 
-**Storage-layer role** is parallel but not isomorphic:
-`Viewer / Member / Admin / Owner`.
+The storage layer has a parallel hierarchy: viewer, member, admin,
+owner.
 
-**Machine API keys** carry no user role. RBAC-protected mutations
-require a user-bound key.
+**Machine API keys carry no user role.** A mutation that the role
+model protects needs a user-bound key.
 
-**Platform admin** additionally requires TOTP enabled + Owner role;
-fail-CLOSED on TOTP-lookup error.
+**Platform admin** additionally needs two-factor enabled and the owner
+role. A lookup failure refuses the request.
 
-#### 5.2 Auth methods
+#### 4.2 Authentication
 
 | Method | Wire |
 |---|---|
-| Session cookies (browser) | `__Host-nullrun_session` (prod) / `nullrun_session` (dev). The `__Host-` prefix requires Secure + Path=/ + no Domain. HttpOnly, SameSite=Lax, 7-day TTL. Fails CLOSED to prod (not dev) by default |
-| API keys (machine) | `nr_live_*` prefix; HMAC-SHA256 over `timestamp + ":" + api_key + ":" + body_hash`. Key rotation is versioned and fanned out to every instance. Constant-time comparison |
-| OAuth (identity) | GitHub + Google OAuth 2.0 redirect |
-| SSO | SAML / OIDC single sign-on |
+| Session cookie (browser) | A host-prefixed cookie in production, HttpOnly, SameSite=Lax, 7-day lifetime. It fails closed to production rather than to development. |
+| API key (machine) | A prefixed key; the request body is signed with HMAC-SHA256 over the timestamp, the key, and a hash of the body. Rotation is versioned and fans out to every instance. The comparison is constant-time. |
+| OAuth (identity) | GitHub and Google. |
+| SSO | SAML and OIDC single sign-on. |
 
-#### 5.3 2FA
+#### 4.3 Two-factor
 
-- **TOTP RFC 4226:** 6 digits, 30s period, 160-bit secret, 10 recovery
-  codes on enable. Setup/verify/disable/recovery-codes endpoints under
-  `/api/v1/auth/2fa/*`.
-- **Platform admin endpoints** require TOTP-enabled user.
-- **Recovery tokens** for OAuth users disabling 2FA: 24h TTL, held in
-  Redis, single-use.
-- `[V]`
+- TOTP with six digits, a 30-second period, and ten recovery codes on
+  enable.
+- Platform-admin endpoints need a two-factor-enabled user.
+- Recovery tokens for OAuth users disabling two-factor are
+  single-use, hold a user id, and expire after 24 hours. `[V]`
 
-#### 5.4 API key scopes
+#### 4.4 API key scopes
 
-- `SCOPE_ADMIN` is required for non-Owner admins on `/admin/*` paths.
-- Workflow binding: API keys carry `workflow_id`; the body
-  `workflow_id` MUST match the authenticated key's workflow, else
-  `400 WORKFLOW_ID_BODY_MISMATCH`.
-- Status: `active` / `rotating` / `revoked`.
+- An admin scope is required for non-owner admins on admin paths.
+- A key carries its workflow id. A body `workflow_id` that does not
+  match the key is refused with `WORKFLOW_ID_BODY_MISMATCH`.
+- Status: active, rotating, or revoked.
 
-#### 5.5 Audit log access
+#### 4.5 Audit log access
 
-- **Plan-gated:** `plan.features.audit_log` controls read access; Lite
-  plan has `audit_log: false` (no customer access).
-- **RLS:** a per-org SELECT policy on the audit log. Every raw
-  database reader must set the current-organization context.
-- **Plan tier retention:** `plan.history_days` controls
-  customer-visible history retention; `-1` = unlimited.
+- **Plan-gated.** A plan feature flag controls read access. Plans
+  without the flag give the customer no access.
+- **Database policy.** A per-organization row policy exists on the
+  audit table, and a raw reader must set the current-organization
+  context. The deployed application role is a superuser with row-level
+  security bypassed, so the policy does not bind there. Tenant scoping
+  in production comes from the queries, not from the policy.
+- **Retention.** The plan's history window controls customer-visible
+  history. A value of -1 means unlimited.
 
-#### 5.6 Operator access to production
+#### 4.6 Operator access to production
 
-- SSH only via the allowlisted `vps` wrapper. Allowlisted
-  subcommands: `redis-cli`, `psql`, `journalctl -u <unit>`.
-- **Blocked:** `printenv`, `docker inspect`, raw `cat` of `.env.prod`,
-  mutating docker subcommands.
-- Production creds sourced from GH Secret `ENVPROD_FILE`, atomic render
-  by CI.
+- Shell access goes through an allowlisted wrapper that permits a
+  small set of read-only commands.
+- Blocked: environment dumps, container inspection, reading the
+  production environment file, and every mutating container command.
+- Production credentials come from a CI secret and are rendered
+  atomically.
 
-### 6. Encryption
+### 5. Encryption
 
 | Layer | Mechanism | Attestation |
 |---|---|---|
-| **In transit — server edge** | TLS 1.2 / 1.3, Mozilla intermediate ciphers, HSTS preload candidate | `[V]` |
-| **In transit — WebSocket** | HMAC-SHA256 over canonical JSON, replay window 300 s | `[V]` |
-| **At rest — Postgres (column)** | pgcrypto AES, hex-encoded. Applied to Slack OAuth bot tokens. Threat model: stolen DB dump + missing `APP_ENCRYPTION_KEY` = ciphertext | `[V]` |
-| **At rest — Postgres (disk)** | **Not attested**; relies on DigitalOcean droplet disk encryption | `[N]` |
-| **At rest — Redis** | **Not attested**; bind-mounted AOF/RDB volumes rely on host disk encryption | `[N]` |
-| **At rest — S3 / object storage** | S3-compatible object storage, gated on `BACKUP_S3_BUCKET`. Bucket-side encryption (SSE-S3 / SSE-KMS) configuration is **not exposed** | `[D]` |
-| **KMS / key management** | `APP_ENCRYPTION_KEY` env var drives pgcrypto AES. No AWS KMS / GCP KMS / HashiCorp Vault integration. Rotation requires a manual runbook (breaks 2FA and Slack) | `[D]` |
-| **HMAC for request signing** | `NULLRUN_GATEWAY_SIGNING_KEY` (≥32 bytes, never auto-generated), used for HMAC-SHA256 of gate/execute/track bodies | `[V]` |
-| **API keys at rest** | `key_hash` SHA-256 stored; `secret_key` plaintext stored (HMAC hot-path requirement). Key prefix / suffix surfaced for UI display | `[V]` |
-| **Cookie security flags** | `__Host-` prefix, Secure, HttpOnly (session), SameSite=Lax, Path=/, 7-day Max-Age. CSRF cookie NOT HttpOnly (SPA reads it). Production = fail-CLOSED default | `[V]` |
-| **Audit export signing** | Per-export HMAC-SHA256 sidecar via `NULLRUN_AUDIT_EXPORT_SECRET` (or per-org secret). Fail-CLOSED in prod (no dev fallback) | `[V]` |
+| **In transit, server edge** | TLS 1.2 and 1.3, Mozilla intermediate ciphers, HSTS | `[V]` |
+| **In transit, WebSocket** | HMAC-SHA256 over canonical JSON, 300-second replay window | `[V]` |
+| **At rest, Postgres columns** | pgcrypto AES, hex-encoded, on the Slack OAuth bot tokens | `[V]` |
+| **At rest, Postgres disk** | **Not attested**; relies on the provider's disk encryption | `[N]` |
+| **At rest, Redis** | **Not attested**; the backup volumes rely on host disk encryption | `[N]` |
+| **At rest, object storage** | S3-compatible storage. Bucket-side encryption settings are **not exposed** | `[D]` |
+| **Key management** | One environment-held key drives the column encryption. No managed key service is integrated. Rotation needs a manual runbook, and it breaks two-factor and Slack until every copy is replaced | `[D]` |
+| **Request signing** | HMAC-SHA256 over gate, execute, and track bodies. The signing key is at least 32 bytes and is never generated automatically | `[V]` |
+| **API keys at rest** | The key itself is stored as a SHA-256 hash. The signing secret is stored in plaintext because the hot path needs it. A prefix and suffix are kept for display | `[V]` |
+| **Cookies** | Host prefix, Secure, HttpOnly for the session, SameSite=Lax, Path=/, 7-day lifetime. The CSRF cookie is readable by the single-page app by design | `[V]` |
+| **Audit exports** | A per-organization HMAC-SHA256 sidecar signature. There is no development fallback | `[V]` |
 
-### 7. Sub-processors
+### 6. Sub-processors
 
-The canonical list is versioned and served from the public endpoint
-`GET /api/v1/subprocessors` (ETag-cached).
+The canonical list is served from a public endpoint and cached with an
+entity tag.
 
 | Sub-processor | Role | Country | Transfer mechanism | Opt-in |
 |---|---|---|---|---|
-| **DigitalOcean LLC** | Hosting (PG, Redis, app servers) | US (EU regions) | EU SCCs (Module 2/3) for US-region; EU residency available | No |
-| **Brevo (Sendinblue GmbH)** | Transactional email | DE (Germany) | Adequacy decision (EU) | No |
-| **Polar.sh (Polar Software Sweden AB)** | Payment, subscriptions, tax (merchant of record) | SE (Sweden) | Adequacy decision (EU) | No |
-| **Slack Technologies, LLC** | Alert delivery (OAuth) | US | EU SCCs (Module 3) | Yes |
-| **GitHub Inc.** | OAuth identity provider | US | EU SCCs (Module 3) | Yes |
-| **Google LLC** | OAuth identity provider | US | EU SCCs (Module 3) | Yes |
+| **DigitalOcean LLC** | Hosting: Postgres, Redis, application servers | US, with EU regions | EU standard contractual clauses for the US region | No |
+| **Brevo (Sendinblue GmbH)** | Transactional email | DE | EU adequacy decision | No |
+| **Polar.sh (Polar Software Sweden AB)** | Payment, subscription, tax, merchant of record | SE | EU adequacy decision | No |
+| **Slack Technologies, LLC** | Alert delivery and OAuth | US | EU standard contractual clauses | Yes |
+| **GitHub Inc.** | OAuth identity provider | US | EU standard contractual clauses | Yes |
+| **Google LLC** | OAuth identity provider | US | EU standard contractual clauses | Yes |
 
-**LLM providers:** NULLRUN does not proxy calls to OpenAI /
-Anthropic / Google / Azure. The SDK talks to providers directly with its
-own keys.
+**Model providers.** NULLRUN does not proxy calls to OpenAI,
+Anthropic, Google, or Azure. The SDK talks to providers directly with
+the customer's own keys.
 
-**Analytics / observability vendors:** Self-hosted stack — Prometheus,
-Grafana, alertmanager, vector, and Loki. No Datadog / Sentry / Segment /
-Mixpanel / Amplitude.
+**Analytics and observability.** Self-hosted: Prometheus, Grafana,
+Alertmanager, Vector, and Loki. No third-party analytics vendor.
 
-**Backup storage:** S3-compatible (`BACKUP_S3_BUCKET` env-gated); config
-tar encrypted with GPG before upload.
+**Backup storage.** S3-compatible, with the configuration archive
+encrypted before upload.
 
-### 8. Deletion
+### 7. Deletion
 
-#### 8.1 Organization deletion
+#### 7.1 Organization deletion
 
-**Soft-delete path**:
+**Soft-delete.** The organization row is marked deleted and a purge
+date is set 60 days out. Audit rows stay for the grace period because
+the audit chain must stay intact. An owner can restore the
+organization, which clears both markers. A delete request that would
+leave audit history behind is refused with a `409` that names the
+grace period and its length. Child records — keys, policies,
+workflows, invitations — are updated in the same transaction.
 
-- The organization row is marked deleted, and a purge date is set 60
-  days out.
-- Audit rows **intentionally retained** during grace for SOC2 immutability.
-- Owner can restore via `/restore` endpoint, which clears both.
-- Handler returns `409 AUDIT_HISTORY_RETAINED` with `grace_period_days: 60`
-  when audit history exists.
-- Child records (API keys, policies, workflows, invites) are updated in
-  the same transaction.
+**Hard purge.** The purge runs after the purge date. It scrubs the
+audit log, the decision history, the cost events, and the billing
+events, then deletes the organization row. The update and delete
+triggers on the audit table are disabled inside that transaction and
+re-armed afterwards, so they cannot be bypassed by a session-level
+setting.
 
-**Hard purge path:**
+#### 7.2 User account deletion
 
-- Runs hourly after `audit_purge_after`.
-- Scrubs the audit log, decision history, cost events, and billing
-  events.
-- Deletes the organization row.
-
-**Audit immutability bypass:** within the same transaction the update and
-delete triggers on the audit event table are disabled, the rows are
-deleted, and the triggers are then re-armed with `ENABLE ALWAYS TRIGGER`
-so they cannot be bypassed again by a session-level setting.
-
-#### 8.2 User account deletion
-
-`DELETE /api/v1/auth/account`. Three cases:
+Three cases:
 
 | Case | Behaviour |
 |---|---|
-| Sole-owner sole-member org | Auto soft-deleted (no decision required) |
-| Co-member org, decision = `delete_and_notify` | Soft-delete + fail-CLOSED revoke of all co-member sessions |
-| Co-member org, decision = `transfer { to_user_id }` | Promote new owner, no delete |
+| The only owner of the only member's organization | The organization is soft-deleted. No decision is required. |
+| Co-member organization, the user chooses delete and notify | Soft delete, and every co-member session is revoked. A revocation failure refuses the request. |
+| Co-member organization, the user chooses transfer | A new owner is promoted and nothing is deleted. |
 
-Wire-additive: an `ownership_decisions` map keyed by user id.
-Fail-CLOSED if Redis hiccups on session revoke (503). `[V]`
+The request carries an ownership-decisions map keyed by user id. A
+session-revocation failure refuses the request. `[V]`
 
-#### 8.3 API key revocation — two-phase with in-flight drain
+#### 7.3 API key revocation
 
-1. **Phase 1:** the key transitions to `rotating` and every instance is
-   notified; a deny list short-circuits warm-cache hits.
-2. **Phase 2:** a drain supervisor polls the
-   `in_flight:{org_id}:{api_key_id}` counter until it reaches 0 or the
-   timeout expires.
-3. **Phase 3:** status → `revoked`. The counter does not return
-   (preserved for audit / reconciliation).
+Three phases:
 
-TTL of the deny list = 2× the auth-cache TTL = 600 s.
+1. The key moves to rotating, every instance is notified, and a deny
+   list short-circuits warm-cache hits.
+2. A drain supervisor waits for the in-flight counter to reach zero,
+   or for the timeout to expire.
+3. The key becomes revoked. The counter is preserved for audit and
+   reconciliation.
 
-#### 8.4 GDPR / right-to-erasure
+The deny list lives for twice the authentication cache lifetime.
+
+#### 7.4 GDPR
 
 | Right | Implementation |
 |---|---|
-| **Art. 15 — right of access** | `POST /api/v1/auth/data-export`, a per-user export job. 7-day download TTL, 100k-record cap per section |
-| **Art. 17 — right to erasure** | The tenant purge scrubs tenant-scoped data; triggered automatically 60 days after org soft-delete. No manual kickoff path is documented for self-serve |
-| **Audit retention on erasure** | Audit rows are physically deleted when the org is purged (after the 60-day grace). Before the purge they are retained even on soft-delete (intentional — SOC 2) |
-| **Drift guard** | An automated check prevents payloads from accumulating PII (e.g., email) that would later need GDPR erasure to scrub |
+| **Access** | A per-user export job. The download expires after 7 days, and each section is capped at 100 000 records. |
+| **Erasure** | The tenant purge scrubs tenant-scoped data, and runs automatically 60 days after the soft delete. There is no self-serve kickoff path. |
+| **Audit retention on erasure** | Audit rows are physically deleted when the organization is purged. They are retained through the grace period on purpose. |
+| **Drift guard** | An automated check keeps personal data from accumulating in payloads where it would later need to be scrubbed. |
 
-### 9. Data residency & sovereignty
+### 8. Data residency
 
-- **Physical storage:** DigitalOcean droplets. Region selectable at
-  signup: customers who pick EU get EU-resident Postgres / Redis.
-- **Cross-region replication:** **Not attested**. Single-region
-  deployment posture.
+- **Physical storage:** DigitalOcean. The region is selectable at
+  signup, and a customer who picks EU gets EU-resident Postgres and
+  Redis.
+- **Cross-region replication:** **Not attested**. The deployment is
+  single-region.
 - **Cross-border transfers:**
-  - US sub-processors (DO US regions, Slack, GitHub, Google) →
-    **EU SCCs (Decision 2021/914) Module 2/3**.
-  - EU sub-processors (Brevo DE, Polar SE, DO EU) → adequacy decision
-    (no SCC needed).
-- **In-product region enforcement:** customers who select EU residency
-  at signup have data physically in EU. Wire transfers: EU SCCs for US
-  endpoints; otherwise data never leaves EU. `[D]`
-- **Customer-side region selection:** the DPA states that EU residency
-  is available and is the default for customers who select the EU
-  region; the signup-time selection mechanism is not exposed. `[D]`
+  - US sub-processors — DigitalOcean US, Slack, GitHub, Google — use
+    EU standard contractual clauses, modules 2 and 3.
+  - EU sub-processors — Brevo in DE, Polar in SE, DigitalOcean EU —
+    rely on the EU adequacy decision.
+- **Region enforcement:** the region chosen at signup decides where the
+  data physically sits. The signup mechanism is not exposed on the
+  wire. `[D]`
 
-### 10. Compliance posture
+### 9. Compliance posture
 
 | Item | Status | Attestation |
 |---|---|---|
-| **DPA** | Available. `GET /api/v1/orgs/{org}/dpa` returns the accepted version + history; `POST /api/v1/orgs/{org}/dpa/accept` is idempotent on `(org_id, dpa_version)`. Acceptance is recorded as a `compliance.dpa.accepted` audit row. | `[V]` |
-| **DPA text version** | Versioned. The accepted version is returned by the endpoint; the sub-processor list carries its own pinned version. | `[V]` |
-| **Sub-processor endpoint** | `GET /api/v1/subprocessors` (public, ETag-cached) | `[V]` |
-| **GDPR Art. 15** | Per-user export implemented | `[V]` |
-| **GDPR Art. 17** | Right-to-erasure via the tenant purge (60-day grace) | `[V]` |
-| **SOC 2** | The audit-log immutability guarantee is the SOC 2 control surface. **No SOC 2 Type II report is available.** | `[D]` |
+| **Data processing agreement** | Available. The org endpoint returns the accepted version and its history. Acceptance is idempotent per version and is recorded as an audit row. | `[V]` |
+| **Sub-processor list** | Served from a public endpoint, cached with an entity tag. | `[V]` |
+| **GDPR access** | Per-user export implemented. | `[V]` |
+| **GDPR erasure** | Right to erasure through the tenant purge, after a 60-day grace. | `[V]` |
+| **SOC 2** | The audit-table immutability guarantee is the control surface. **No SOC 2 Type II report is available.** | `[D]` |
 | **ISO 27001** | **Not claimed** | `[N]` |
 | **HIPAA** | **Not claimed** | `[N]` |
 | **CCPA** | **Not claimed** | `[N]` |
-| **Privacy policy URL** | Reachable from the `/dpa` and `/privacy` pages | `[N]` |
-| **Audit export** | HMAC-signed JSONL / S3 download, produced by a background worker | `[V]` |
+| **Audit export** | HMAC-signed JSONL or an object-storage download, produced by a background worker. | `[V]` |
 
-### 11. Breach & incident response
+### 10. Breach and incident response
 
 | Item | Status | Attestation |
 |---|---|---|
-| **Alerting surface** | Self-hosted **Prometheus alertmanager** + Slack (per-channel via OAuth). Alert rules cover track error rate >1% for 2m, P95 >200ms for 5m, P99 >500ms for 3m, out-of-order events, and similar. PagerDuty is not supported. | `[V]` |
-| **Alert channels** | `Webhook` and `Slack`. Email, PagerDuty, and Discord channels are not supported. | `[V]` |
-| **Runbooks** | 30+ topic-specific runbooks (track-error-rate, audit-drain-stuck, outbox-dlq, period-rollover-decision, envprod-leak, billing-drift, etc.) | `[V]` |
+| **Alerting surface** | A self-hosted Prometheus Alertmanager plus Slack, with per-channel OAuth. Rules cover the cost-tracking error rate, latency percentiles, out-of-order events, and similar. PagerDuty is not supported. | `[V]` |
+| **Alert channels** | Webhook and Slack. Email, PagerDuty, and Discord are not supported. | `[V]` |
+| **Runbooks** | Topic-specific runbooks exist for the cost-tracking error rate, a stuck audit drain, a stuck outbox, a period rollover, a credential leak, and billing drift. | `[V]` |
 | **Status page** | **Not referenced** | `[N]` |
 | **Breach-notification SLA** | **Not documented** | `[N]` |
 | **On-call rotation** | **Not documented** | `[N]` |
 
-### 12. Penetration testing
+### 11. Penetration testing
 
 | Item | Status |
 |---|---|
-| **Internal pentest** | A comprehensive pentest profile plan exists, executed in phases against a local Docker stack |
-| **Findings materialised in code** | `ENABLE ALWAYS TRIGGER` hardening closed an audit-event immutability bypass via `session_replication_role='replica'` |
+| **Internal pentest** | A phased pentest profile exists, executed against a local Docker stack. |
+| **Findings fixed in code** | Trigger hardening closed an audit-table immutability bypass that a session-level replication-role change could have opened. |
 | **External pentest report** | **Not available** |
 | **Bug bounty program** | **Not advertised** |
 
-### 13. Other load-bearing controls
+### 12. Other load-bearing controls
 
-- **HMAC required for all gate calls.** `NULLRUN_HMAC_REQUIRED=true`
-  enforced in production. Missing / invalid → reject before enforcement.
-- **Protocol header required.** `X-NULLRUN-PROTOCOL` on every gate
-  request; `/health` returns min/max (min=2, max=4, current=4).
-- **Fail-CLOSED on enforcement paths.** Budget path (Redis down → 402
-  `REDIS_UNAVAILABLE`).
-- **IDOR guards.** Body org mismatch, `workflow_id` body-vs-key
-  mismatch, parent-execution cross-org rejection.
-- **CSRF double-submit** for browser POSTs; `Authorization: Bearer`
-  bypasses for API path. SHA-256-then-constant-time comparison.
-- **PII redaction** for log lines.
-- **Secret scanning pre-commit.** trufflehog (~700 provider sigs) +
-  gitleaks (NullRun-specific key shapes). 500 KB max file size.
+- **Signed gate calls.** Signature verification is mandatory in
+  production. A missing or invalid signature is refused before
+  enforcement runs.
+- **Protocol header required.** Every gate request carries a protocol
+  version header. The service publishes the minimum and maximum it
+  accepts.
+- **Fail-closed on enforcement paths.** When the budget store is
+  unreachable the gate answers `402` with
+  `BUDGET_REDIS_UNAVAILABLE`. It never answers "allow" without a
+  budget answer.
+- **Cross-tenant guards.** Body organization mismatch, workflow-id
+  mismatch between the body and the key, and a parent execution from
+  another organization are each refused.
+- **CSRF double-submit** on browser POSTs, with a bearer-token
+  exemption for API paths. The comparison hashes first and compares in
+  constant time.
+- **PII redaction** in log lines.
+- **Secret scanning before commit.** Two scanners, one general and one
+  for NULLRUN key shapes, plus a file-size limit.
 
 ### Honest gaps
 
-These items are either not documented or rely on third-party evidence.
-They are the questions a vendor reviewer should follow up on:
+These are the questions a vendor reviewer should follow up on.
 
 #### Not attested `[N]`
 
-1. **SOC 2 / ISO 27001 / HIPAA / CCPA formal attestations.** No
-   certificates or reports are available. The "SOC 2 immutability"
-   wording refers to a self-imposed control, not third-party
-   certification.
-2. **External penetration test report.** Only an internal pentest plan
-   and journal exist.
+1. **Formal attestations.** No SOC 2, ISO 27001, HIPAA, or CCPA
+   certificate or report exists. The immutability wording describes a
+   self-imposed control, not a third-party certification.
+2. **External penetration test report.** Only an internal plan and
+   journal exist.
 3. **Bug bounty program.** Not advertised.
-4. **Status page.** No reference to `status.nullrun.io` or similar.
-5. **Public breach-notification SLA / DPA SLA.** Not documented.
-6. **Postgres tablespace / disk-level encryption at rest.** pgcrypto
-   column-level encryption is used for Slack OAuth bot tokens;
-   full-disk / tablespace encryption is not explicitly attested (relies
-   on DigitalOcean droplet disk).
-7. **Redis disk encryption.** AOF/RDB volumes are bind-mounted; no
-   explicit encryption-at-rest on Redis noted.
-8. **S3 / object-storage encryption settings.** S3-compatible object
-   storage is implemented; bucket-side encryption configuration
-   (SSE-S3 / SSE-KMS) is not exposed.
-9. **Customer-side region selection mechanism.** The DPA wording ("EU
-   residency available (default for customers who select the EU
-   region)") references a signup-time choice; the wire path that
-   records the customer's region preference is not exposed.
-10. **DPA and privacy pages.** The public `/dpa` and `/privacy` pages
-    were not part of this review.
-11. **Cross-region replication / DR posture.** Single-region (one VPS)
-    is the deployed topology. No documented failover.
-12. **Privacy policy URL.** Not published on this site.
+4. **Status page.** No public status host is referenced.
+5. **Breach-notification SLA.** Not documented.
+6. **Disk-level encryption at rest.** Column-level encryption covers
+   the Slack OAuth bot tokens. Full-disk or tablespace encryption
+   relies on the provider's disk encryption.
+7. **Redis disk encryption.** The backup volumes are bind-mounted
+   with no documented encryption at rest.
+8. **Object-storage encryption settings.** Bucket-side encryption
+   configuration is not exposed.
+9. **Customer-side region selection.** The agreement refers to a
+   signup-time choice, and the wire path that records it is not
+   exposed.
+10. **Cross-region replication and disaster recovery.** The deployed
+    topology is one region on one VPS. No failover is documented.
+11. **Privacy policy page.** Not published on the site.
 
 #### Derived, not directly attested `[D]`
 
-13. **Wire shapes for `/api/v1/proxy`.** The proxy request and response
-    types are present and complete, but no live route registration was
-    located.
-14. **`api.nullrun.io` TLS minimum version on the SDK client side.**
-    TLS 1.2/1.3 is enforced at the nginx edge; whether the SDK pins a
-    minimum TLS version was not audited.
-15. **KMS / key management.** `APP_ENCRYPTION_KEY` is an env var; no
-    AWS KMS / GCP KMS / HashiCorp Vault integration. Key rotation
-    requires a manual runbook.
-16. **Operator access logs / session recording.** The production SSH
-    access path is documented (`vps` wrapper); there is no evidence of
-    operator-action audit logging on the database tier itself, beyond
-    the audit rows the product writes.
-17. **API key scopes beyond admin.** `SCOPE_ADMIN` is the only named
-    scope. Granular scopes per workspace / operation were not
-    enumerated.
+12. **Managed key service.** The encryption key is an environment
+    value with no managed key service behind it, and rotation needs a
+    manual runbook.
+13. **Operator action logging.** The production shell path is
+    allowlisted, and the product writes its own audit rows. There is
+    no separate record of operator actions at the database tier.
+14. **Granular API key scopes.** An admin scope is the only named
+    scope. Per-workspace or per-operation scopes are not enumerated.
+15. **Client-side TLS minimum.** TLS 1.2 and 1.3 are enforced at the
+    nginx edge. Whether the SDK pins a minimum version was not
+    audited.
 
 ### See also
 
 - [Compliance overview](#81-overview)
-- [Performance & limits](#92-performance-limits) — latency,
-  failure-mode behaviour, timeouts
-- [API keys](#25-api-keys) — HMAC, rotation, drain
-- [Organization](#56-organization) — delete-org flow
-- [Profile settings](#57-profile-settings) — account delete flow
+- [Performance & limits](#92-performance-limits) — timeouts and
+  the fail-closed posture
+- [API keys](#25-api-keys) — signing, rotation, revocation
+- [Organization](#56-organization) — the delete-organization
+  flow
+- [Profile settings](#57-profile-settings) — the delete-account flow
 
 
 # 9. Operations
@@ -8318,1140 +7412,488 @@ They are the questions a vendor reviewer should follow up on:
 
 ## 9.1 Troubleshooting
 
-What to expect when NullRun is doing its job — and how to recover
-when it isn't.
+Format: symptom → cause → fix. If your case is not here, see the
+[Errors reference](#74-error-codes), or send a report from the
+dashboard's **Help → Send feedback** form with the `workflow_id` and
+the failing decision id.
 
-> **Format:** symptom → diagnosis → fix. If your question isn't here,
-> see the [Errors reference](#74-error-codes) or open a ticket
-> from the dashboard's **Help → Send feedback** form (include the
-> `workflow_id` and the failing row's `decision_id`).
+!!! info "The endpoint that enforces"
+    The enforcement endpoint is **`POST /api/v1/gate`**. The server
+    answers `410 Gone` on `POST /api/v1/check`, so a client that
+    calls `/check` never reaches enforcement. The SDK calls `/gate`.
 
-### What can go wrong (and how NullRun reacts)
+### The gate refused the call
 
-| Situation | Default behaviour | Exception raised |
-| --- | --- | --- |
-| Workflow exceeds budget (Hard mode) | Halt at next `/gate` call | `NullRunBudgetError` (`error_code = "NR-B004"`) |
-| Soft mode over-budget | Allow bounded overrun if chain active, otherwise block | `NullRunBudgetError` (`error_code = "NR-B004"`) |
-| Agent calls a sensitive tool | Block the call before the function body runs (per ToolBlock policy) | `NullRunToolBlockedError` (`error_code = "NR-T001"`) |
-| Gateway unreachable, budget gate | **Fail-CLOSED** — 402 | `NullRunBackendError` |
-| Gateway unreachable, per-key rate limit | **Fail-OPEN** (secondary signal; budget gate is the backstop) | `NullRunBackendError` (warn-logged) |
-| Gateway unreachable, aggregate rate limit | **Fail-CLOSED** — 503 | `NullRunRateLimitRedisError` |
-| Workflow killed via dashboard | Raise at next `/gate` call (or at WS push receipt) | `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) |
-| Workflow paused via dashboard | Raise at next `/gate` call | `WorkflowPausedException` |
-| Missing `NULLRUN_API_KEY` | Raise at first SDK call | `NullRunAuthenticationError` |
-| HMAC signature missing / stale | Reject the request (401) | `NullRunAuthenticationError` |
-| Plan monthly / per-dimension cap reached | Reject the request (422 `plan_limit_exceeded`; `details.resource` names the dimension) | `NullRunBlockedException` (HTTP 422 via `exc.status_code`) |
-| Consume over-budget on commit | Reject the `/track` commit (422; actual cost > reserved + ε) | `NullRunConsumeOverbudgetError` |
-| Per-minute rate cap reached | Reject the request (429 with `Retry-After`) | `RateLimitError` |
-| Chain expired (`max_chain_duration_seconds` exceeded) | 402 | `NullRunChainError` |
-| Protocol version too old | 400 | `NullRunProtocolError` |
+Every row below is a decision the gateway made. The wire code is in
+the response body, and the SDK raises the exception in the last
+column.
 
-!!! note "Endpoint naming"
-    The canonical enforcement endpoint is **`POST /api/v1/gate`**
-    (returns a server-minted `execution_id` on `allow` decisions).
-    **`POST /api/v1/check`** is not served: it returns `410 Gone`
-    with `replacement: /api/v1/gate`. Every SDK calls `/gate`
-    directly.
+| Symptom | Wire code | Status | SDK exception | Fix |
+|---|---|---|---|---|
+| The workflow ran out of budget | `BUDGET_HARD_BLOCKED` | `402` | `NullRunBudgetError` | Raise the budget in the dashboard, or wait for the next billing period. |
+| The organization's ceiling was reached | `BUDGET_ORG_CEILING_BLOCKED` | `402` | `NullRunBudgetError` | Raise the plan ceiling, or lower the workflow budgets under it. |
+| The call cost more than its reservation | `CONSUME_OVERBUDGET` | `422` | `NullRunConsumeOverbudgetError` | Report the real cost. A cost above the reservation plus the tolerance is refused. |
+| A tool matches a block pattern | `TOOL_BLOCKED` | `403` | `NullRunToolBlockedError` | Change the pattern, or use a different tool. |
+| An MCP tool is destructive | `MCP_DESTRUCTIVE_BLOCKED` | `403` | `NullRunMcpDestructiveBlockedError` | The tool is off limits for this workflow. |
+| The plan's executions quota is spent | `EXECUTION_QUOTA_EXCEEDED` | `402` | `NullRunBlockedException` | Raise the plan, or wait for the quota to reset. |
+| The workflow is not running | `WORKFLOW_INACTIVE` | `403` | `NullRunWorkflowInactiveError` | Restore the workflow in the dashboard, or create a new one. |
+| The workflow is paused | `WORKFLOW_PAUSED` | `403` | `NullRunBlockedException` | Resume it in the dashboard. |
+| A policy rate limit was hit | `RATE_LIMIT_EXCEEDED` | `429` | `RateLimitError` | Back off. The window is fixed, not sliding. |
+| The plan's aggregate cap was hit | `RATE_LIMIT_PLAN_TIER` | `429` | `RateLimitError` | Raise the plan. The cap belongs to the plan, not to your policy. |
+| Too many approvals are waiting | `TOO_MANY_PENDING_APPROVALS` | `429` | `NullRunBlockedException` | Clear the backlog in the Approvals view. The cap is 50 per organization. |
+| The chain ran past its duration | `CHAIN_MAX_DURATION_EXCEEDED` | `402` | `NullRunChainError` | Start a new chain, or raise the chain duration. |
+| The request used a stale protocol version | `PROTOCOL_TOO_OLD` | `400` | `NullRunProtocolError` | Upgrade the SDK. It sends version 4. |
+| The key is revoked, expired, or disabled | `API_KEY_REVOKED`, `API_KEY_EXPIRED`, `API_KEY_INVALID` | `401` | `NullRunAuthError` | Rotate the key in the dashboard. |
 
-> Critical paths refuse to run when the gateway is unreachable;
-> secondary signals may let calls through.
+#### The refusal is the wrong one
 
-### What happens when the NullRun service is unavailable
+**The tool name does not match the pattern you wrote.** Matching is
+case-sensitive and reads the tool name only. A pattern of
+`stripe.*` matches `stripe` and `stripe.charge`, and it does not
+match `stripe_charge`. Use `stripe*`. See
+[Tool catalog → Pattern syntax](#75-tool-catalog).
 
-NullRun's service is the gateway that evaluates every `/check` and
-`/track` call. When it's down, behaviour is intentionally asymmetric:
-**enforcement paths fail-CLOSED** (the safest choice — never let a
-tool run that should have been blocked), while **secondary signals**
-(per-key rate limits, cost-event outbox writes, dashboard reads) may
-fail-OPEN or be queued, because blocking on them would lose data
-without protecting the budget.
+**The approval says the digest does not match.** The approval is bound
+to the exact payload it approved. If the arguments changed, the
+binding no longer holds, and the call is refused with
+`APPROVAL_DIGEST_MISMATCH`. Send the payload that was approved.
 
-This table describes every surface that can be affected. If a row
-isn't here, the surface behaves as documented in its own concept
-page.
+**The approval says the tool does not match.** An approval covers the
+tools it was granted for. Running a different tool under that grant is
+refused with `APPROVAL_TOOL_MISMATCH`.
 
-| Surface | What you observe during an outage | How to handle it |
-| --- | --- | --- |
-| **Active `/gate` — budget gate** | Fail-CLOSED. SDK raises `NullRunBackendError`; the next `@protect`-wrapped call is refused. No implicit re-reserve. The reservation TTL eventually releases the cents. | Catch the exception; retry with exponential backoff. Long outages will exceed your tool timeout. The budget counter is never decremented by a call the gate never approved. |
-| **Active `/gate` — sensitive-tool gate** | Fail-CLOSED. The sensitive tool body never runs. SDK raises `NullRunBackendError`. | Treat as **indeterminate** — don't retry the side-effect blindly. Surface the error to the user and let a human decide. This is the canonical reason `@protect` is the default for irreversible actions (every `@protect` is gated, the SDK collects facts, the server decides what to do with them). |
-| **Active `/gate` — per-key rate limit** | Fail-OPEN (secondary signal). SDK warns and the call proceeds. The budget gate remains the backstop. | No action required. The budget gate still applies on the next call. |
-| **Active `/gate` — aggregate (per-org) rate limit** | Fail-CLOSED — 503 `NullRunRateLimitRedisError`. | Back off and retry with jitter. This is a true outage of the aggregator, not a transient blip. |
-| **Active `/track` — cost commit** | Returns 200 with the cost event queued in the SDK's local outbox. The inference already happened; blocking would lose the cost record. | None required. The SDK persists the event locally and the outbox drains when the gateway returns. **No cost record is lost during the outage window.** |
-| **Control plane (WebSocket)** | Connection drops. SDK reconnects with exponential backoff. The local snapshot of workflow status (active / paused / killed) survives. | No operator action — reconnect is automatic. Long outages mean no live kill/pause signals reach the SDK; the next `/gate` call picks them up server-side. |
-| **In-flight approval request** | Held server-side; not surfaced to operators until the gateway returns. The SDK continues to wait for an approval decision (subject to your approval timeout). | If your approval timeout is short, expect `NullRunApprovalTimeoutError`. The pending request is preserved server-side and reappears in the approvals inbox once the gateway recovers — operators can still answer it. |
-| **Dashboard UI** | Pages return 503; read paths may serve cached fragments where possible. The top banner shows "NullRun is currently unavailable." | Refresh once `GET /health/ready` returns 200. Read-only views (audit log, dashboards) resume first; writes (kill, approve, edit) resume once the gateway is fully ready. |
-| **HTTP API (programmatic)** | 502 / 503 / 504 on read and write paths. Writes are rejected — the server has no record of success, so there is no implicit retry. | Idempotent reads (`GET`) can be retried freely. Writes (`POST /kill`, `POST /approve`) should not be retried blindly — gate them behind your own idempotency keys if your client retries. |
-| **Cost-event outbox (reconciliation)** | Events queue in Redis; the drain loop resumes when the gateway returns. | None — reconciliation is automatic. The outbox catches up on the next gateway tick. Provisional reservations eventually reconcile to final `cost_events` rows. |
-| **Alerts & notifications** | Rule evaluation pauses (the gateway can't see new events to score). Outbound delivery depends on channel: Slack messages buffer at Slack's edge; webhook deliveries drop. | Check the channel after recovery. Slack messages sent during the outage arrive late but are not lost; webhook deliveries need a replay tool. See [Notifications](#52-notifications). |
-| **Configured workflows, policies, MCP servers, API keys** | Read-only. Nothing can be created, edited, killed, or revoked until the gateway returns. **Already-active rules continue to enforce** on the next gate call — the gate caches the merged Effective Policy. | Plan configuration changes outside the outage window. Operators can still read existing state from cached dashboard fragments. |
-| **`GET /health/live`** | Always 200 if the binary is running — even when downstream deps are down. | Use this for liveness probes. **Do not use it as a "is NullRun usable" signal** — it will lie during a Redis or Postgres outage. |
-| **`GET /health/ready`** | 200 when DB + Redis + policy cache are reachable; 503 otherwise. | Use this for readiness probes and to page on. This is the signal that flips first as the service recovers. |
-| **`GET /api/v1/capabilities`** | 200 with the cached protocol version when the gateway can read from cache; 503 if Redis is unreachable. | Treat 5xx as "stay on the version you already have" — don't auto-upgrade during an outage. The SDK already pins the version it probed at startup. |
+### The gateway cannot be reached
 
-#### Operator playbook during an outage
+Two different failures look alike from the outside. The distinction
+matters, because one is a transport fault and the other is a policy
+refusal.
 
-1. **Confirm the scope.** Check `GET /health/ready` (or the status
-   page). If `/health/ready` is 503 but `/health/live` is 200, the
-   gateway process is up but Redis or Postgres is unreachable — every
-   enforcement path will fail-CLOSED.
-2. **Watch the recovery cascade.** `/health/ready` flips first, then
-   `/api/v1/capabilities`, then the WebSocket reconnects, then the
-   cost-event outbox finishes draining, then dashboard writes unlock.
-   Each layer takes a few seconds; the whole cascade usually finishes
-   inside a minute.
-3. **Audit the outage window afterwards.** Open the workflow's detail
-   page and filter the audit log to the outage window. Every decision
-   (including the fail-CLOSED ones) is retained — nothing is lost, and
-   the row counts reconcile against the cost-events outbox.
-4. **Don't disable the gate to "fix" the outage.** Setting
-   `NULLRUN_SKIP_BUDGET_CHECK=1` or `NULLRUN_SENSITIVE_FAIL_OPEN=1`
-   bypasses the gate entirely and is unsafe in production. Let the
-   gate fail-CLOSED; catch and retry in your code.
+| Symptom | Cause | SDK exception | Fix |
+|---|---|---|---|
+| `NullRunTransportError` right after `init()` | The gateway did not answer, or the SDK's circuit breaker was already open. The breaker opens after 5 consecutive failures. | `NullRunTransportError` (NR-B001) | Check the gateway URL and the network. The breaker tries again after 30 seconds. |
+| `NullRunBackendError` with a `5xx` status | The gateway answered and reported a fault. | `NullRunBackendError` (NR-B002) | Read the wire code in `details.error_code` and follow its runbook. |
+| `NullRunRateLimitRedisError` | The aggregate per-organization rate limiter could not read its counter. The refusal is `503` `RATE_LIMIT_REDIS_UNAVAILABLE`. | `NullRunRateLimitRedisError` (NR-R002) | Back off and retry with jitter. |
+| `NullRunBackendError` with a `402` and `BUDGET_REDIS_UNAVAILABLE` | The budget store was unreachable. The refusal is fail-closed. | `NullRunBackendError` (NR-B002) | Wait for the store to recover. Do not retry the side effect blindly. |
+| `NullRunAuthenticationError` or `NullRunAuthError` | The key is missing, rejected, expired, or disabled. | `NullRunAuthenticationError` (NR-A001), `NullRunAuthError` (NR-A003) | See the authentication section. |
 
-### Common runtime questions
+The circuit breaker is the one component that fails open, and it fails
+open locally: an unreachable gateway short-circuits the SDK's calls
+instead of hanging. The enforcement path itself never fails open. A
+missing tool-block answer, a missing rate-limit answer, or a missing
+budget answer refuses the call.
 
-#### "Why is my call being rejected with `NullRunBlockedException`?"
+#### Do not disable the gate to survive an outage
 
-The most common causes, in order of frequency:
+`NULLRUN_SKIP_BUDGET_CHECK` and `NULLRUN_SENSITIVE_FAIL_OPEN` are
+development opt-outs. Each one also needs a second opt-in, and the
+sensitive-tool set is empty by default. Neither belongs in a
+production deployment. Catch the exception and retry in your code.
 
-1. **Budget exhausted** — your `policy.budget_cents` ran out, or the
-   per-org plan cap (`max_executions_per_month`, `history_days`,
-   etc.) was hit. Either raise the cap in the dashboard or wait for
-   the next billing cycle.
-2. **Tool blocked by ToolBlock policy** — the function name matches
-   a glob pattern in an active ToolBlock policy. Inspect the
-   merged Effective Policy on the workflow's detail page to see
-   which patterns are in scope.
-3. **Workflow inactive** — the workflow was soft-deleted, paused,
-   or killed. The gate returns 403 `WORKFLOW_INACTIVE` (SDK surfaces as
-   `error_code = "NR-W004"`). Restore the workflow from the dashboard
-   or create a new one.
-4. **Consume over-budget on `/track`** — actual cost exceeded the
-   reservation + ε. The gate returns 422 `CONSUME_OVERBUDGET` and
-   refuses to commit. Report the actual cost accurately from the
-   LLM response.
+### The approval never arrives
 
-#### "Why is my workflow paused / killed without me doing anything?"
+| Symptom | Cause | SDK exception | Fix |
+|---|---|---|---|
+| The wait ended with nothing decided | Nobody answered inside the approval window. The default is 300 seconds, and the SDK clamps the value to between 1 and 3600 seconds. | `NullRunApprovalExpiredError` (NR-A012) | Raise the timeout, or ask a human to answer sooner. |
+| The approval was declined | An operator said no. | `NullRunApprovalDeniedError` (NR-A011) | The refusal is final for that payload. Do not retry it. |
+| The approval is still pending | The decision has not been made yet. | `NullRunApprovalNotYetApprovedError` (NR-A010) | Wait, or ask the operator. |
+| The grant was already used | The same approval was presented twice. | `NullRunApprovalReplayRejectedError` (NR-A015) | Request a fresh approval. |
 
-Two usual suspects:
+The approval wait is bounded by
+`NULLRUN_APPROVAL_TIMEOUT_SECONDS`. A pending approval stays on the
+server through a gateway outage, so it reappears in the Approvals view
+once the gateway recovers.
 
-- **Operator action** — open the workflow's detail page; the audit
-  log shows the actor and timestamp.
-- **Plan or workflow limit** — `max_workflows_per_plan` was hit
-  (Lite 3, Starter 8, Growth 50, Scale 200, Enterprise unlimited),
-  causing auto-pause. Check the plan picker for your tier's cap — the
-  full per-tier table is in
-  [Billing & Plan → Per-tier caps](#55-billing-plan).
+### The call is rejected with `NullRunBlockedException`
 
-#### "Why is the SDK raising `NullRunAuthenticationError`?"
+The base class covers every refusal that has no more specific class.
+Read `exc.status_code` and `exc.details` to find the reason.
 
-- `NULLRUN_API_KEY` is unset or the key was revoked.
-- `NULLRUN_SECRET_KEY` is unset. Set both `NULLRUN_API_KEY` and
-  `NULLRUN_SECRET_KEY`.
-- The host clock skew between your SDK process and the gateway is
-  too large for the HMAC signature window. Sync the host clock.
-- The protocol header `X-NULLRUN-PROTOCOL` is missing or below the
-  gateway's min_required_version. The SDK auto-probes capabilities
-  on first call; upgrade past the min version.
+1. **Budget exhausted.** The workflow budget or the organization
+   ceiling ran out. Raise the cap in the dashboard or wait for the
+   next billing period.
+2. **Tool blocked.** A `ToolBlock` pattern matched the tool name. The
+   workflow's detail page lists the merged policies in scope.
+3. **Workflow not running.** The workflow was deleted, paused, or
+   killed. See [Workflow context](#41-workflow-context).
+4. **Cost above the reservation.** The reported cost exceeded the
+   reservation plus the tolerance. Report the real cost from the
+   model response.
 
-#### "Why are some calls tracked and others aren't?"
+### The workflow paused or killed on its own
 
-`@protect` fires on the functions it's wrapped around. Plain
-LLM calls (no `@protect`, no auto-instrumented framework) are
-**invisible** to NullRun. If you use a framework that the SDK
-auto-instruments (see [How-to → LLM frameworks](#65-llm-frameworks)),
-you do not need `@protect` to get cost tracking.
+- **An operator acted.** The workflow's audit log shows the actor and
+  the timestamp.
+- **A plan cap was reached.** The plan limits the number of live
+  workflows. The per-tier table is in
+  [Performance & limits → Per-plan limits](#92-performance-limits).
+
+### The SDK raises `NullRunAuthenticationError`
+
+- `NULLRUN_API_KEY` is unset or empty. `init()` reports this with
+  error code `NR-C001`.
+- The key was revoked, expired, or disabled. The gateway answers `401`
+  with the specific code, and the SDK raises `NullRunAuthError`.
+- The host clock is too far from the gateway's clock for the signed
+  request window. Sync the clock.
+- The protocol version is outside the range the gateway supports. The
+  SDK sends version 4, and a gateway that answers `PROTOCOL_TOO_OLD`
+  does not accept it.
+
+### The SDK raises `ValueError` for the chain id
+
+A chain id must be a UUID v4. The SDK validates the format, the
+canonical structure, and the version, and rejects anything else with
+a `ValueError`. The `chain()` context manager also takes an
+operation, and the valid values are `start`, `continue`, `end`, and
+`auto`.
+
+```python
+import uuid
+
+import nullrun
+
+with nullrun.chain(str(uuid.uuid4()), op="start"):
+    ...
+```
+
+### Some calls are tracked and others are not
+
+`@protect` fires on the functions it wraps. A plain model call with
+no `@protect` and no auto-instrumented framework is invisible to
+NullRun. The SDK instruments `httpx`, LangChain, LangGraph, the
+OpenAI Agents SDK, LlamaIndex, CrewAI, AutoGen, and the `requests`
+library on its own, so a model call made through one of those
+libraries is tracked without a decorator. See
+[LLM frameworks](#65-llm-frameworks).
 
 ### Health endpoints
 
 | Endpoint | Purpose |
-| --- | --- |
-| `GET /health/live` | Process liveness (always 200 if the binary is running) |
-| `GET /health/ready` | Dependency readiness (DB + Redis; 503 if down) |
-| `GET /api/v1/capabilities` | Gateway protocol version + feature flags |
+|---|---|
+| `GET /health/live` | Process liveness. It answers 200 while the binary runs, even when a dependency is down. Do not use it as a readiness signal. |
+| `GET /health/ready` | Dependency readiness. It answers 503 when the database or the budget store is unreachable. This is the signal to page on. |
+| `GET /api/v1/capabilities` | The protocol version and the feature flags. |
+
+During an outage, `/health/ready` flips first, then the capability
+probe answers, then the control-plane WebSocket reconnects, then the
+cost-event outbox finishes draining.
 
 ### See also
 
-- [Errors → exception hierarchy](#74-error-codes)
-- [Concepts → Circuit breaker](#21-circuit-breaker)
-- [Concepts → Control plane (WebSocket)](#44-control-plane-websocket)
-- [Concepts → Budgets](#31-budgets)
-- [Reference → HTTP API](#73-http-api)
+- [Errors reference](#74-error-codes) — the exception hierarchy
+- [Circuit breaker](#21-circuit-breaker)
+- [Control plane](#44-control-plane-websocket)
+- [Budgets](#31-budgets)
+- [HTTP API](#73-http-api)
 
 
 ## 9.2 Performance & limits
 
-A consolidated reference for technical buyers evaluating NULLRUN's
-operational characteristics. Every value below reflects the deployed
-product; rows marked **Not measured** are honest gaps — we surface what
-we don't know rather than quote a number we haven't earned.
+The bounds a NullRun integration runs inside. Every number here is
+enforced in code, not a target.
 
-This page is the load-bearing complement to the
-[Circuit breaker](#21-circuit-breaker) and
-[Error handling](#43-error-handling) concept pages:
-those explain the *what* and *why*, this page enumerates the
-*bounds*.
+### Timeouts
 
-### Hot-path latency
-
-The gate hot path is **`/api/v1/gate`** → an atomic budget reservation
-against the budget store → an audit outbox write to the state store.
-Wall-clock budgets are layered; the inner cap is the binding one.
-
-| Stage | Bound |
-| --- | --- |
-| Outer HTTP request (`/api/v1/*`) | **30 s** (env `REQUEST_TIMEOUT_SECS`, default 30) |
-| `/api/v1/gate` inner hard timeout | **5 s** (`GATE_HANDLER_HARD_TIMEOUT`) |
-| Gate orchestrator inner hard timeout | **3 s** (`ORCHESTRATOR_HARD_TIMEOUT`) |
-| `/api/v1/execute` inner timeout | **None** — relies on outer 30 s + budget-store breaker fail-fast (<100 ms once tripped) |
-| `/api/v1/track` inner timeout | **None** — relies on outer 30 s |
-| Reservation scan loop cap | **256 iterations** |
-| Reservation scan page size | **1 000** keys per iteration (256 k slot visits worst case) |
-| Partial-scan reservation result | typed result carrying the reserved and projected amounts — fail-CLOSED 402, never silent truncation |
-
-Both stores sit behind bounded connection pools, and those bounds are
-part of the observed latency envelope. Against the budget store the pool
-holds at most **32** connections; a caller waiting for a connection to
-become free gives up after **5 s**, and a caller that cannot open a new
-connection at all gives up after **10 s** (clamped to the 1–60 s range).
-The state-store pool gives up waiting for a connection after **10 s** and
-caps each individual statement at **30 s** per connection.
-
-#### Healthy-path budget
-
-When the budget store is healthy and no `/check` style fan-out is
-required:
-
-1. Network RTT to the budget store: sub-millisecond within a region.
-2. The single atomic reservation step: <5 ms typical, <50 ms at p99.
-3. Orchestrator evaluation: <2 ms typical.
-4. Total `/api/v1/gate` server-side: **<10 ms typical, <60 ms p99**.
-
-The 3 s orchestrator cap is the binding inner budget; the 5 s gate
-handler cap is a one-above safety net. The 30 s outer request timeout
-should never fire against a healthy budget store.
-
-#### First-burst (breaker not yet tripped)
-
-If the budget store is reachable but slow, the worst case before the
-breaker trips is:
-
-- 1 connection open × 10 s + 1 pool wait × 5 s + 1 scan cap × ~50 ms ≈ **up to 15 s**
-- On the 5th consecutive failure, the breaker trips and subsequent
-  calls short-circuit **sub-100 ms** returning the budget-store
-  unavailable response (see [Budget store failure](#budget-store-failure) below).
-
-#### Not measured
-
-- Real p99 RTT to the budget store at production scale for the
-  worst-case reservation path (256 scan iterations + 256 bulk reads
-  ≈ 512 operations).
-- Worst-case first-request latency on a budget-store partition before
-  the breaker trips.
-
-### Behaviour when a service is unavailable
-
-Every enforcement-path failure mode below is **fail-CLOSED** unless
-explicitly noted. The default posture is "do not let the agent proceed
-when an enforcement signal is missing".
-
-#### Budget store failure
-
-The budget-store circuit breaker has three profiles, picked by
-call-site:
-
-| Profile | Consecutive failures | Recovery window | Half-open probes | Used for |
-|---|---|---|---|---|
-| **default** | 5 | 30 000 (30 s) | 1 | Generic budget-store paths |
-| **critical** | 3 | 60 000 (60 s) | 1 | Budget enforcement on the gate hot path (fail-CLOSED) |
-| **high-traffic** | 20 | 10 000 (10 s) | 3 | Buffered / stale-cache / analytics paths |
-
-The breaker short-circuits in **sub-100 ms** once open.
-
-| Failure point | HTTP | Behaviour |
+| Bound | Value | Set by |
 | --- | --- | --- |
-| Atomic reservation failure on the gate path | **402** | fail-CLOSED — the call is blocked, never the client |
-| Per-org aggregate rate-limit bucket unavailable | **503** | fail-CLOSED |
-| Idempotency store unavailable | **503** | fail-CLOSED |
-| Sub-workflow depth cycle-walk lookup fails | **503** | fail-CLOSED |
-| Invoke-persist step fails | **503** | fail-CLOSED |
-| Inline pre-check on `/track` idempotency | varied | fails through to the generic error envelope |
+| One gateway request | **30 s** | The SDK, via `NULLRUN_REQUEST_TIMEOUT` |
+| Gate handler | **5 s** | The gateway |
+| Gate evaluation | **3 s** | The gateway |
+| Waiting for an approval | **300 s** by default, between 1 s and 3 600 s | The SDK, via `NULLRUN_APPROVAL_TIMEOUT_SECONDS`, clamped |
+| A reservation lives for | **300 s** by default. An approval rule with a deadline extends it to that deadline plus 30 s, and the ceiling is 24 h. | The gateway |
 
-**Retry behaviour:** no automatic retry in the
-reservation/consume/idempotency handlers — failures surface directly to
-the breaker. The breaker is the retry mechanism.
+The 3 s evaluation cap is the binding one. The 5 s handler cap is a
+safety net above it, and the 30 s request cap is the outermost bound.
 
-Every reservation outcome maps to a fixed HTTP status. A hard budget
-block, an org ceiling, a workflow budget, an overdraft cap, an anti-DoS
-reserved cap, and a partial reservation scan all return **402**; the
-first two carry the public wire codes `BUDGET_HARD_BLOCKED` and
-`BUDGET_ORG_CEILING_BLOCKED`. A consume-side budget overrun returns
-**429** with `Retry-After: 1`, and a consume overshoot — actual cost
-above the reservation — returns **422** with the public code
-`CONSUME_OVERBUDGET`. A reservation whose TTL has expired or that is
-otherwise orphaned returns **503**, and a broken invariant on an
-unconfigured policy returns **500**.
+Two consequences worth planning around:
 
-#### State store failure
-
-The state-store connection pool is sized at `min(cores, 12) × 2 + 10`
-connections — roughly 25–34 on a 12-core host. Idle connections are
-released after **600 s** and retired after **1 800 s** (which protects
-against DNS and connection-pooler rollover). A session that is idle
-inside an open transaction is terminated after **60 s**, and an
-individual statement is capped at **30 s** per connection. The state
-store has its own circuit breaker that mirrors the default profile
-(5 consecutive failures, 30 s recovery), and it short-circuits in
-**<100 ms** once open.
-
-##### `/track` outbox path (the only enforcement-side state-store write)
-
-The audit-row insert is **best-effort and off the request path**:
-
-- The write runs through the state-store circuit breaker in
-  degraded mode.
-- On insert error: a warning is logged, the connection error is
-  recorded as a metric, and the request **continues** — the gate
-  response is unchanged. The audit row is not on the critical path.
-- A background drain worker picks the rows up on a fast ticker.
-- Drain tick interval: **5 s** default, clamped to the 2–300 s range.
-- Per-tick batch size: **100**.
-- Per-tick timeout: **30 s**.
-- Per-row backoff: **1 / 2 / 4 / 8 / 16 s** exponential.
-- Consecutive-error cap per tick: **5** (tick break on persistent errors).
-- Dead-letter at `retry_count >= 5`: hard ceiling.
-- Permanent failures are dead-lettered immediately rather than retried.
-- Retention once dead-lettered: **30 days**.
-
-##### Other outbox partitions
-
-| Partition | `max_attempts` | Backoff base |
-|---|---|---|
-| governance | **3** | 30 s × 2^attempt + jitter |
-| notification | **5** | 30 s × 2^attempt + jitter |
-| analytics | **1** (fire-and-forget) | — |
-
-#### Upstream LLM / provider failure
-
-The provider module is sparse — only the OpenAI provider is
-registered; Anthropic / Google / Azure types exist but are not
-registered, and `/api/v1/proxy*` is not wired into the live router.
-
-| Thing | Value |
-| --- | --- |
-| OpenAI HTTP client timeout | **Not configured** — no connect, read, idle-pool, or TCP-keepalive setting |
-| Provider retry | **None** — one outbound call per invocation, immediate return |
-| HTTP status on provider failure | bare `502 BAD_GATEWAY` — no `error_code`, no `Retry-After`, no JSON envelope |
-| OpenAI `429` parse | rate-limit hint is **dropped on the floor** — the **60 s value is never emitted as `Retry-After`** |
-| Streaming failure shape | the governance event carries the error text, but the HTTP status stays 200 |
-
-This is the area with the **largest gap** between SDK promise and
-backend reality. Practical implication: a hung OpenAI socket stalls
-until the outer 30 s request timeout fires; there is no per-call
-connect timeout, no retry, and no machine-readable error envelope.
-
-### Timeouts and integration limits
-
-#### HTTP / WebSocket / SSE
-
-| Surface | Setting | Value |
-| --- | --- | --- |
-| `/api/v1/*` outer request | request-level timeout | **30 s** |
-| HMAC re-read cap (`MAX_BODY_SIZE`) | body cap before HMAC verify | **10 MiB** |
-| WebSocket server ping interval | `Message::Ping(vec![])` | **30 s** |
-| WebSocket HMAC replay window | `WS_HMAC_MAX_AGE_SECONDS` | **300 s** |
-| WebSocket idle disconnect | **None** — closed only on Close frame / stream error / send failure | — |
-| WebSocket per-org connection cap | **None** (SSE has `MAX_SSE_PER_ORG=5`) | — |
-| WebSocket max frame / message size | **None configured** — axum defaults apply | — |
-| SSE max connection duration | hard cap | **24 h** |
-| SSE JSON heartbeat cadence | informational heartbeat | **30 s** |
-| SSE protocol-level keepalive (axum `KeepAlive`) | text `"ping"` | **15 s** |
-| SSE per-org concurrent cap | `MAX_SSE_PER_ORG` | **5** |
-| EventBus default capacity | bounded queue | **4 096 events** (overflow at **3 072 / 75%**) |
-| Slow-consumer signal | server emits `WsMessage::ResyncRequired` to force SDK reconnect | — |
-
-#### OAuth / webhook clients (cold path)
-
-| Client | Total timeout | Connect timeout |
-| --- | --- | --- |
-| GitHub OAuth | **10 s** | **5 s** |
-| Google OAuth | **10 s** | **5 s** |
-| SSO | **10 s** | **5 s** |
-| Cron egress (litellm pricing) | **10 s** | **5 s** |
-| Slack `chat.postMessage` | **10 s** | none (covered by the total timeout) |
-
-#### HMAC policy
-
-| Setting | Value |
-| --- | --- |
-| `NULLRUN_HMAC_REQUIRED` default | `false` (warns at runtime) |
-| `NULLRUN_HMAC_MAX_AGE_SECS` default | **300 s** |
-| `NULLRUN_CONSUME_RACE_WINDOW_SECONDS` default | **2 s**, clamped `[0..30]` |
-| HMAC-verified SDK paths | `["/api/v1/check", "/api/v1/execute", "/api/v1/gate", "/api/v1/track", "/api/v1/track/batch"]` |
-| Gateway signing key min length | **32 bytes** (env `NULLRUN_GATEWAY_SIGNING_KEY`) |
-
-#### Webhook signature replay windows
-
-| Webhook | Algorithm | Replay window |
-| --- | --- | --- |
-| Slack Events | HMAC-SHA256 over `v0:{ts}:{raw_body}`, header `X-Slack-Signature: v0=<hex>` | **300 s** |
-| Slack OAuth state | TTL | **600 s** |
-| Slack install ticket | TTL | **300 s** |
-| Polar | Stripe-shaped `t=<unix>,v1=<hex>` over `timestamp.payload`, HMAC-SHA256, raw bytes | **300 s** |
-| Polar sandbox mode | dev-only — verification bypassed (production requires signed webhooks) | — |
-| Stripe | **Not supported** — Polar is the sole payment provider | — |
-
-### Hard limits and caps
-
-#### Body / payload caps
-
-| Cap | Value |
-| --- | --- |
-| HTTP request body cap | **10 MiB** (`10 * 1024 * 1024`) |
-| MCP discovery SSE chunk | **65 536 bytes** (64 KiB) |
-
-#### Validation caps
-
-| Constant | Value |
-| --- | --- |
-| `MAX_WORKFLOW_NAME` | **80** |
-| `MAX_POLICY_NAME` | **80** |
-| `MAX_API_KEY_NAME` | **80** |
-| `MAX_ORG_NAME` | **100** |
-| `MAX_ALERT_RULE_NAME` | **80** |
-| `MAX_KILL_REASON` | **500** |
-| `MAX_SUPPORT_MESSAGE` | **5 000** |
-| `MAX_DESCRIPTION` | **2 000** |
-| `MAX_JUSTIFICATION` | **500** |
-| `MAX_EMAIL_LEN` | **254** (RFC 5321) |
-| `MIN_PASSWORD` / `MAX_PASSWORD` | **12 / 256** (NIST 800-63B) |
-| `MIN_TWO_FACTOR_CODE` / `MAX_TWO_FACTOR_CODE` | **6 / 6** |
-| `MIN_ORG_SLUG_LEN` / `MAX_ORG_SLUG_LEN` | **2 / 32** |
-| `MAX_WEBHOOK_URL_LEN` | **2 048** |
-| `MAX_CALLBACK_URL_LEN` | **2 048** |
-| `MAX_FILTER_INPUT` | **100** |
-| **`MAX_POLICY_PATTERN_BYTES`** (ToolBlock pattern) | **4 096** (4 KiB) |
-| **`MAX_WORKFLOW_DEPTH`** (sub-workflow chain depth) | **8** — the gate returns 422 beyond it |
-| `MAX_DISPLAY_NAME` (XSS-guard) | **255** |
-| `DEFAULT_MAX_RATE_LIMIT_RPM` (per-policy ceiling) | **1 000 000** (env `NULLRUN_POLICY_MAX_RATE_LIMIT_RPM`) |
-
-#### Approval-rule limits
-
-| Setting | Value |
-| --- | --- |
-| `expires_in_seconds` default (DB) | **300 s** |
-| Service clamp `[min..max]` | **30..=3 600** (1 min – 1 h) |
-| `priority` bounds | `[0..=1 000]` (i16) |
-| `action_label` max length | **200** |
-| `VALID_RISK_LEVELS` | `["LOW","MEDIUM","HIGH"]` |
-| `DEFAULT_RISK_LEVEL` | `"MEDIUM"` |
-| **Per-org pending approvals cap** | **50** (env `NULLRUN_MAX_PENDING_APPROVALS_PER_ORG`, range 1–1 000) |
-| Envelope TTL floor / ceiling | **60 s** / **86 400 s** (24 h) |
-| `APPROVAL_ENVELOPE_GRACE_SECONDS` | **30** |
-| `APPROVAL_CLOCK_SKEW_MARGIN_SECONDS` | **5** |
-| Approval-rule predicate JSON byte cap | **Not supported** — only the typed schema validates shape |
-
-#### Reservation / chain TTLs
-
-| Constant | Value |
-| --- | --- |
-| `DEFAULT_RESERVATION_TTL_SECONDS` | **300 s** (5 min) |
-| `CHAIN_IDLE` | **300 s** |
-| `CHAIN_REGISTERED` | **300 s** |
-| `max_chain_duration_seconds` default | **3 600 s** (1 h) |
-| `period_ttl_seconds` default | 3 600 × 24 × 30 = **30 days** |
-| `EXECUTION_BINDING` TTL | **24 × 3 600 s** (24 h) |
-| Heartbeat dedup marker | **35 s** |
-| In-flight execution counter | **300 s** |
-
-#### Retention
-
-| Constant | Value |
-| --- | --- |
-| `OUTBOX_DLQ_RETENTION_DAYS` | **30** |
-| `DECISION_HISTORY_FALLBACK_DAYS` | **3** |
-| `METERING_IDEMPOTENCY_WINDOW_DAYS` / `_SECONDS` | **30** / **2 592 000** |
-| `METERING_EVENT_LOG_TTL_DAYS` / `_SECONDS` | **90** / **7 776 000** |
-| `INGESTION_DLQ_RESOLVED_RETENTION_DAYS` | **7** |
-| `INGESTION_DLQ_MAX_REPLAY_ATTEMPTS` | **5** |
-| `INGESTION_DLQ_EXHAUSTED_RETENTION_DAYS` | **30** |
-| `BILLING_DEAD_LETTER_RETENTION_DAYS` | **30** |
-
-Per-tier decision-history retention:
-
-| Plan | Decision history retention | Audit log |
-|---|---|---|
-| Lite | **3 d** | immutable on Growth+ only |
-| Starter | **7 d** | immutable on Growth+ only |
-| Growth | **30 d** | immutable |
-| Scale | **90 d** | immutable |
-| Enterprise | **unlimited** | immutable |
+- A tool call that runs longer than the reservation lifetime loses
+  its reservation. The cost that follows is refused, so budget the
+  tool's runtime against the reservation, not against the budget.
+- An approval that no human answers inside the window fails. The
+  exception is `NullRunApprovalExpiredError`.
 
 ### Rate limits
 
-#### Edge / per-IP
+#### By address and account
 
-| Layer | Default | Algorithm |
+| Limit | Value | Response |
 | --- | --- | --- |
-| Per-IP edge | **60 RPM** token bucket (env `NULLRUN_IP_RATE_LIMIT_RPM`) | Token bucket; refill = max_rpm/60 |
-| Per-IP edge bypass | operator-configurable kill-switch (fail-OPEN in dev only); bypass paths `/health`, `/metrics`, `/internal/*` | — |
-| Per-IP edge multi-pod | shared counter store (fail-CLOSED on store error) | — |
-| Per-IP edge response | 429 + `Retry-After` + `X-RateLimit-Limit/Remaining` | — |
-| Auth endpoints | **5 req/min/IP** (`IpAuthRateLimiter::default`) | Token bucket (IP) + per-email counter |
-| Email lockout | **5 failures → 300 s** lockout | — |
+| Per IP address | **60 requests per minute**, burst 60 | `429` with `Retry-After` |
+| Auth endpoints, per IP | **5 attempts per minute** | `429` |
+| One email address | **5 consecutive failures** → 300 s lockout | `429` with `Retry-After` |
 
-#### Per-org / per-key
+#### By policy
 
-| Layer | Default | Algorithm |
+| Limit | Value | Response |
 | --- | --- | --- |
-| Per-org aggregate | plan-driven per-org ceiling; global fixed capacity **10 000 RPM**; per-workspace fallback **1 000 RPM**; refill 100 tok/s | Token bucket (`PlanAwareRateLimiter`) |
-| Per-org fallback (unknown org) | **5 RPM** — known hazard when the org cannot be resolved | — |
-| Per-`(org, api_key)` | per-policy `limit`/`ttl_secs` (default `max_calls_per_minute × 60`) | **Fixed-window counter** (one atomic increment-and-expire step; NOT sliding) |
-| Per-key fail-OPEN on store error | warn-and-fall-through, no wire code | — |
-| Per-org aggregate fail-CLOSED on store error | **503**, `retry_after_seconds: 60` (surfaced to the SDK as `NR-R002`) | — |
+| Per organization and API key | The rate-limit policy's `limit`, counted over the policy's own window. A fixed window, not a sliding one. | `429` `RATE_LIMIT_EXCEEDED` |
+| Per organization | The plan's aggregate cap, in requests per minute | `429` `RATE_LIMIT_PLAN_TIER` |
 
-The per-org aggregate rate limit is fail-CLOSED when the counter store
-errors (returns 503), the per-key is fail-OPEN. This asymmetry is
-intentional: a per-key miss only affects one key, but a per-org miss
-would mask abuse.
+An explicit `RateLimit` policy wins over the plan tier. A policy that
+asks for more than the plan allows is clamped down to the plan's cap,
+and the clamp is reported in `details.clamped_from_rpm`.
+
+#### The plan's aggregate cap
+
+| Plan | Requests per minute, per organization |
+| --- | --- |
+| Lite | 10 000 |
+| Starter | 50 000 |
+| Growth | 200 000 |
+| Scale | 1 000 000 |
+| Enterprise | unlimited |
 
 ### Per-plan limits
 
-The unified budget check shares its `policies` and `approval_rules`
-slots.
+| Plan | Workflows | Tokens per hour | Executions per month | Requests per second | API keys | Seats | Policies |
+|---|---|---|---|---|---|---|---|
+| **Lite** | 3 | 10 000 | 75 000 | 5 | 10 | 1 | 3 |
+| **Starter** | 8 | 25 000 | 100 000 | 10 | 15 | 3 | 10 |
+| **Growth** | 50 | 300 000 | 750 000 | 50 | 100 | 10 | 25 |
+| **Scale** | 200 | unlimited | 2 000 000 | 300 | 350 | 75 | 150 |
+| **Enterprise** | unlimited | unlimited | unlimited | unlimited | unlimited | unlimited | unlimited |
 
-| Plan | workflows | tokens/hr | exec/mo | RPS | parallel | api_keys | seats | policies |
-|---|---|---|---|---|---|---|---|---|
-| **Lite** | **3** | **10 000** | **75 000** | **5** | **1** | **10** | **1** | **3** |
-| **Starter** | **8** | **25 000** | **100 000** | **10** | **3** | **15** | **3** | **10** |
-| **Growth** | **50** | **300 000** | **750 000** | **50** | **10** | **100** | **10** | **25** |
-| **Scale** | **200** | unlimited | **2 000 000** | **300** | **50** | **350** | **75** | **150** |
-| **Enterprise** | unlimited | unlimited | unlimited | **1 000** | **100** | unlimited | unlimited | unlimited |
+Approval rules need a plan that includes approvals. Lite and Starter
+do not include it, so the create call is refused with `403`
+`feature_not_available`. Every other plan carries an approval-rule
+quota alongside its policy quota.
 
-### Wire-contract essentials
+### When the gateway is unreachable
 
-The gate emits `GateResponse` over HTTP 200/402/422/429/503. Key
-fields:
+The SDK ships a circuit breaker in front of every gateway call. It is
+the one component in the chain that fails open, and it fails open
+locally: the call is short-circuited inside your process, so a gateway
+outage does not turn into a hang.
 
-- `execution_id` — server-minted **UUIDv7**. Client-supplied IDs are
-  never honoured, so billing ownership is unambiguous and the
-  identifier cannot be replayed.
-- `projected_cost_cents` — **informational only**. The only
-  enforcement-readable field is `remaining_budget_cents`.
-- `cost_cents` on `/track` — server marks cost as `provisional` until
-  reconciliation.
-- `retry_after_ms` (top-level) — only present on `RATE_LIMIT_EXCEEDED`;
-  milliseconds.
-- `details.{retry_after_seconds, retry_after_ms}` — set on rate-limit
-  and idempotency-unavailable responses.
-
-**No `Retry-After` HTTP header on the gate path.** Body-only retry
-hints. The header is emitted only by the per-IP edge middleware and
-by `ApiError` on non-gate paths (429 → 30 s, 503 → explicit
-`retry_after_seconds`).
-
-**`X-NULLRUN-PROTOCOL`** is required on
-`/api/v1/{gate,execute,track,track/batch,heartbeat,cancel,approvals/:id/consume}`.
-Current=4, MIN=2, MAX=4; rejected at the protocol-version
-middleware.
-
-#### Idempotency surfaces
-
-| Endpoint | Mechanism | TTL | Outcome discriminator |
-|---|---|---|---|
-| `/api/v1/gate` | atomic insert-if-absent plus a conditional mutate; body field `operation_id` (NOT an `Idempotency-Key` header) | **24 h** | hit+match+Completed → 200 + `idempotent_replay:true`; hit+match+Pending → 409; hit+mismatch → 409; store down → 503 fail-CLOSED |
-| `/api/v1/track` | same mechanism; body field `idempotency_key` | — | mismatch → 409; Completed → 200 + `idempotent_replay:true`; Pending → 409 + `retry_after_ms:500`; Failed → the record is wiped and the call falls through; store down → 503 |
-| `/api/v1/cancel` | atomic insert-if-absent keyed on the execution id | 24 h | replay → 200 `{already_canceled:true}` |
-| `/api/v1/heartbeat` | atomic insert-if-absent | 30 s | dedup |
-| `/api/v1/approvals/:id/consume` | atomic row update flipping APPROVED→CONSUMED | — | 200 with `status: consumed\|already_consumed\|not_approved` |
-
-**No use of the IETF `Idempotency-Key` header convention.** Drift from
-any IETF-style clients — the header is silently ignored.
-
-### Retry / backoff defaults
-
-| Component | Settings |
+| Setting | Value |
 | --- | --- |
-| Slack alert delivery | `MAX_ATTEMPTS=3, BASE_BACKOFF_MS=1_000, MAX_BACKOFF_MS=30_000` (pure exponential, **no jitter**) |
-| Litellm pricing cron | `PRICING_RETRY_MAX_ATTEMPTS=3` |
-| Audit outbox | per-row 5-step exponential 1/2/4/8/16 s |
-| Governance outbox | `max_attempts=3`, 30 s × 2^attempt + jitter |
-| Notification outbox | `max_attempts=5`, 30 s × 2^attempt + jitter |
-| Analytics outbox | `max_attempts=1` (fire-and-forget) |
-| Detector retry | `retry.max_retries=5`, `retry.window_seconds=60` |
+| Consecutive failures before the breaker opens | **5** |
+| How long the breaker stays open | **30 s** |
+| Probe calls allowed while half-open | **1** |
 
-**No jitter** in the audit-outbox or Slack-alert retry loops. This is a
-known limitation worth tracking if a thundering-herd pattern emerges.
+A call that the breaker short-circuits raises
+`NullRunTransportError`. A call that reaches the gateway and gets a
+refusal raises the refusal's own exception. The two are different
+outcomes and only one of them is a policy decision.
 
-### Gaps (honest)
+The enforcement path itself never fails open. Every signal below is
+required, and a missing signal refuses the call.
 
-These are the things we haven't measured in production. We list them
-explicitly so technical buyers can ask the right questions during
-evaluation.
+| Missing signal | Response |
+| --- | --- |
+| The tool-block answer | `403` `TOOL_BLOCKED` |
+| The aggregate rate-limit answer | `503` `RATE_LIMIT_REDIS_UNAVAILABLE` |
+| The budget answer | `402` `BUDGET_REDIS_UNAVAILABLE` |
+| The protocol header | `400` `PROTOCOL_HEADER_REQUIRED` |
+| The state store, on the cost-tracking path | `200`, retried in the background |
 
-#### Verified absent
+The last row is the only exception. The cost event is written after
+the inference has already happened, so the gateway acknowledges the
+call and retries the write. The spend is not lost.
 
-1. **OpenAI HTTP client has no timeout** — no connect, read,
-   idle-pool, or TCP-keepalive setting.
-2. **Anthropic / Google / Azure providers** — only the OpenAI
-   provider is registered; `/api/v1/proxy*` is not wired into the
-   live router.
-3. **Provider retry** — rate-limited and unavailable provider errors
-   are marked retryable but no caller retries; one outbound call, then
-   return.
-4. **`Retry-After` HTTP header on `/api/v1/proxy*` 502** — bare status,
-   no header, no JSON envelope.
-5. **OpenAI `429` retry hint** — the hardcoded 60 s value is
-   **dropped on the floor**, never emitted as `Retry-After`.
-6. **No per-call timeout** on counter-store script or command
-   execution — only a 5 s *connection* timeout; no per-call timeout
-   wrapper.
-7. **No automatic retry** in the gate/track handlers.
-8. **No jitter in any retry loop** — Slack alerts (1 s → 30 s), pricing
-   cron, audit outbox, governance outbox. Pure exponential only.
-9. **No server-side tool-execution timeout on `/execute`** — SDK runs
-   the tool locally; the server has no watchdog.
-10. **No client-initiated cancellation of in-flight `/gate` or
-    `/execute`** — no DELETE/HEAD routes are registered;
-    `/cancel` is the only de-facto abort (separate call).
-11. **No server-side deadline on `/execute` independent of `/gate`** —
-    only the budget-store breaker fail-fast at `/execute`.
-12. **WS idle timeout** — 30 s ping is a probe, not an
-    idle-disconnect policy; a silent client stays connected.
-13. **WS per-org connection cap** — `MAX_SSE_PER_ORG=5` exists; WS has
-    no equivalent cap.
-14. **WS max frame size / max message size** — no
-    `max_frame_size`/`max_message_size` override; axum defaults apply.
-15. **`WS_PING_INTERVAL` / `WS_RECONNECT_MAX` env var** — not
-    configurable.
-16. **State-store audit-outbox queue depth cap** — only a per-row retry
-    cap (5) then dead-letter; no global cap.
-17. **Explicit concurrency cap on the audit-outbox drain** — only a
-    consecutive-error cap of 5 per tick break.
-18. **Key-count cap on the reservation scan script** — only the
-    256-iteration cap exists; the consume-side script has no scan /
-    time-bound.
-19. **Approval-rule predicate JSON byte cap** — a free-form JSON value
-    only, no byte validator.
-20. **Stripe webhook** — not supported; Polar is the sole payment
-    provider.
-21. **`X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset`
-    on gate path** — emitted only by the per-IP edge rate-limit
-    middleware.
-22. **`Retry-After` HTTP header on gate** — gate uses body
-    `retry_after_ms` / `retry_after_seconds` only.
-23. **Auth-class gate error variants** — the typed registry carries
-    only a revoked-key code; missing, invalid, and expired keys flow
-    through the generic error envelope.
-24. **The in-flight idempotency code on `/track`** is emitted inline on
-    the track path but is not one of the typed gate error variants — a
-    drift from inline emission.
+### What a refusal looks like
 
-#### Not measured (would require load test)
+| Situation | Status | Code |
+| --- | --- | --- |
+| The workflow's budget is exhausted | `402` | `BUDGET_HARD_BLOCKED` |
+| The organization's ceiling is reached | `402` | `BUDGET_ORG_CEILING_BLOCKED` |
+| The call costs more than its reservation | `422` | `CONSUME_OVERBUDGET` |
+| A tool matches a block pattern | `403` | `TOOL_BLOCKED` |
+| A policy's rate limit is hit | `429` | `RATE_LIMIT_EXCEEDED` |
+| The plan's aggregate cap is hit | `429` | `RATE_LIMIT_PLAN_TIER` |
+| Too many approvals are waiting | `429` | `TOO_MANY_PENDING_APPROVALS` |
+| The workflow was paused from the dashboard | `403` | `WORKFLOW_PAUSED` |
 
-1. Real p99 RTT to the budget store at production scale for the
-   reservation worst case (256 scan iterations + 256 bulk reads).
-2. Worst-case first-request latency on a budget-store partition
-   before the breaker trips (5 consecutive × 10 s acquire ≈ 50 s
-   before short-circuit).
-3. OpenAI upstream hung-socket behavior in practice — the outer 30 s
-   request timeout is the only bound; no per-call connect timeout.
-4. WS reconnect storms — no server-side cap; SDK could reconnect
-   indefinitely under split-brain.
-5. State-store pool contention under `/track` bursts — the bounded
-   ingestion queue holds 10 000 events, drops the oldest above 9 000,
-   and drops at a hard cap of 15 000, but actual write throughput is
-   not measured.
+A consume may exceed its reservation by a small fixed tolerance —
+1¢ by default. A larger overshoot is refused with
+`CONSUME_OVERBUDGET`.
 
-#### Drift between the OpenAPI contract and the server
+The per-organization pending-approval cap is **50** by default. A 51st
+waiting approval is refused with `TOO_MANY_PENDING_APPROVALS`, and the
+caller gets a `429`.
 
-1. **`GateResponse` in the published OpenAPI contract** is missing
-   wire fields the server actually returns: `approval_id`,
-   `approval_timeout_seconds`, `approval_expires_at`, `execution_id`,
-   `retry_after_ms`, `idempotent_replay`, `operation_id`,
-   `decision_context`, `details`. The OpenAPI contract declares
-   itself canonical; the server is wire-true.
-2. **`/check`** — returns 410 GONE, but the OpenAPI contract may
-   still document it as active.
+### Gaps
+
+The things we have not measured, stated plainly.
+
+#### Not measured
+
+- Real p99 latency to the budget store at production scale, on the
+  worst-case reservation path.
+- First-request latency during a budget-store partition, before the
+  gateway's own breaker trips.
+- Write throughput for the cost-event store under a tracking burst.
+- Reconnect behaviour for the control-plane WebSocket under a
+  split-brain. The gateway puts no cap on it.
+
+#### Known limits
+
+- The gateway does not set a timeout on the outbound provider call it
+  makes. The 30 s request cap is the only bound.
+- The gateway does not retry a failed gate or cost-tracking request.
+  The refusal reaches you, and the retry is yours.
+- The retry loops in the background workers use a fixed backoff with
+  no jitter.
+- `Retry-After` is a body field on the gate path. The HTTP header is
+  only set by the per-IP limiter.
+- The published OpenAPI contract carries fewer response fields than
+  the gateway returns. The running gateway is the wire truth.
 
 ### See also
 
 - [Circuit breaker](#21-circuit-breaker) — what the agent
   sees when a failure occurs
-- [Error handling](#43-error-handling) — wire code → exception
-  mapping
-- [Budgets](#31-budgets) — budget reserve/consume semantics
-- [API keys](#25-api-keys) — HMAC, rotation, drain
+- [Error handling](#43-error-handling) — wire code to
+  exception mapping
+- [Budgets](#31-budgets) — reserve and consume semantics
+- [API keys](#25-api-keys) — signing, rotation, drain
 - [Control plane](#44-control-plane-websocket) — WebSocket keepalive
-- [HTTP API → Capabilities](#73-http-api) —
-  protocol version + `/health` `min`/`max`
+- [HTTP API](#73-http-api) — endpoints and the protocol
+  version
 - [Compliance](#81-overview) — data-handling posture
 
 
 ## 9.3 Framework & ecosystem positioning
 
-This page is the **architectural companion** to the how-to guides in
-section 3 (`Protect a LangGraph agent`, `Use with OpenAI Agents`,
-`Use CrewAI`, `LLM frameworks`). Those pages show the wiring; this
-page answers the question teams actually ask first:
+Teams that already run an agent framework ask two questions: what
+does NullRun add, and where does it collide with what I have.
 
-> "We already use *X*. Why would we add NullRun on top, and where will
-> it collide with what we have?"
+This page answers both. The short version: the frameworks own
+**flow control**, NullRun owns **authorization**. The two layers
+answer different questions, and exactly one of them — approval for a
+sensitive tool — is a real overlap.
 
-Two perspectives are covered:
-
-1. **Framework overlap** — NullRun vs framework-native HITL / budget
-   patterns. Where there's overlap, when it bites, when it doesn't.
-2. **Category positioning** — NullRun vs other runtime-authorization
-   vendors in the same problem space.
-
-Both lenses are honest: the goal is not to claim more than the system
-delivers, but to make the trade-off legible to a buyer who already
-has tooling.
-
-> **Scope note.** NullRun self-claims are anchored to backend source
-> code; framework claims are cross-checked against official vendor
-> docs; competitor claims are cross-checked against vendor websites.
-> One competitor entry — *Microsoft AGT* — could not be verified to
-> a public product and is flagged below. The
-> [Verification log](#verification-log) at the bottom of the page
-> lists every claim and its source.
-
-### TL;DR — the overlap matrix
-
-The four layers the user is buying:
+### The overlap matrix
 
 | Layer | LangGraph | LangChain | CrewAI | AutoGen | OpenAI Agents | **NullRun** |
 |---|---|---|---|---|---|---|
-| **Flow-level HITL** (pause a graph step for input) | ✅ `interrupt()` + `Command(resume=...)` | ✅ `interrupt_before`/`_after` | ⚠️ `human_input=True` per-task | ⚠️ `HandoffMessage` v0.4 | ⚠️ `RunHooks` chain | 🟡 complement — sit *above* this layer, not instead of it |
-| **Hard budget gate** (block before invocation) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **atomic cost reservation**, period-bound, fail-CLOSED |
-| **Tool-call policy** (declarative block / allow) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **declarative policy list + pattern match** |
-| **Immutable audit trail** (refusal-as-evidence) | ⚠️ LangSmith — call trace, not gate decisions | ⚠️ LangSmith | ❌ | ❌ | ⚠️ Tracing only | ✅ **hash-chained audit log**, gate decisions kept separate from execution records |
-| **Cross-org RBAC + policy as data** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ per-org / per-team / per-policy |
+| **Flow-level HITL** — pause a graph step for input | `interrupt()` + `Command(resume=...)` | `interrupt_before` / `interrupt_after` | `human_input=True` per task | `HandoffMessage` | `RunHooks` | Sits **above** this layer, not instead of it |
+| **Hard budget gate** — block before the call runs | — | — | — | — | — | Atomic cost reservation, period-bound, fail-closed |
+| **Tool-call policy** — declarative block or allow | — | — | — | — | — | Policy list with pattern matching |
+| **Immutable audit trail** — refusals included | Call trace only | Call trace only | — | — | Tracing only | Hash-chained log of gate decisions, kept separate from execution records |
+| **Policy as data** — per organization, per workflow | — | — | — | — | — | Scopes and versions in the dashboard |
 
-The single-column answer:
+Two layers have no framework equivalent:
 
-- **Budget + tool policy + audit + RBAC** — NullRun only. No framework has these as enforcement.
-- **Flow-level HITL** — frameworks only. NullRun doesn't replace it; it sits beside it.
-- The only real overlap zone is **action-level approval** (LangGraph `interrupt()` on a sensitive tool, vs NullRun approval for the same tool). See [LangGraph HITL coexistence](#langgraph-hitl-coexistence-the-real-adoption-question) below.
+- **Budget and tool policy as enforcement.** A framework callback can
+  observe a tool call. It cannot hold the call frame while a server
+  decides.
+- **An audit log of decisions.** A trace records what happened. It
+  does not record that the call was *refused*, and it is not a
+  tamper-evident chain.
 
-### What NullRun actually does (re-grounding)
+One layer belongs to the frameworks alone:
 
-The headline capabilities, anchored to the wire contract and the
-SDK README:
+- **Flow-level HITL.** NullRun does not manage graph state, and it
+  does not decide whether the agent's plan is a good plan.
 
-- **Hard budget gate.** The server reserves cost atomically against
-  the period-bound budget counter (in cent precision, with a
-  parallel millicents counter — 1 cent = 1 000 millicents) before the
-  LLM/tool call. If the budget store is unavailable the server
-  fails-CLOSED, returning `402` and blocking the call — never the
-  client.
-  ([Performance & limits → Budget store failure](#92-performance-limits))
-- **Tool policy.** Declarative tool patterns, with per-pattern
-  approval rules. Block / allow / require_approval are server-side
-  decisions; the SDK has no veto.
-- **Approval flow.** Pauses the SDK on a `threading.Event` until the
-  operator clicks Approve or Deny on the dashboard, or the approval
-  times out (default 300 s, clamp 30–3600 s). Bound to a SHA-256
-  `action_digest` so the grant refuses if the payload drifts.
-  ([Human approval](#32-human-approval))
-- **Audit trail.** Every gate decision, approval resolution, and
-  execution-lifecycle event lands in an immutable, hash-chained audit
-  log. Refusal is recorded too — refusal-as-evidence.
-  ([Tracing](#42-tracing))
-- **Zero-code instrumentation.** `nullrun.init()` patches `httpx` once
-  for any vendor; framework-specific callbacks register on the first
-  `@protect` call. No opt-in list to maintain.
+### The one real overlap: action-level approval
 
-### Framework HITL — what each framework actually gives you
+Both layers can ask a human about the same sensitive tool. They ask
+different questions, and the people who answer them are usually
+different.
 
-#### LangGraph (most mature)
-
-Per the [official LangGraph interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts):
-
-- `interrupt(value)` inside a node — pauses execution, emits the
-  value to the caller, suspends graph state.
-- `Command(resume=...)` — caller resumes with same `thread_id`.
-- Static `interrupt_before` / `interrupt_after` are **not the HITL
-  mechanism**; use `interrupt()` inside a node instead.
-- Best-practice trio: a durable checkpointer (any LangGraph-supported
-  store, or the built-in in-memory saver), stable `thread_id`,
-  decision-order matching.
-- Decision payload is arbitrary JSON the reviewer can act on
-  (approve / edit / reject / redirect).
-
-What LangGraph does **not** give:
-
-- No hard budget enforcement. LangSmith is observability, not gate.
-- No tool-policy DSL. The only "block dangerous tools" path is to
-  write it into graph code.
-- No cross-org audit hash chain.
-
-#### LangChain
-
-- `interrupt_before` / `interrupt_after` on `AgentExecutor`.
-- LangSmith for trace + observability — same gap as above.
-
-#### CrewAI
-
-- `human_input=True` flag on a `Task`. The crew pauses on that task
-  and prompts the operator. Per-task, not declarative, not composable
-  with other tools.
-- No budget gate, no policy.
-- *Caveat:* flow-level breakpoints and `Flow` runtime HITL could not
-  be confirmed against the public docs. Cross-check
-  [docs.crewai.com](https://docs.crewai.com/) when you are
-  evaluating against the latest release.
-
-#### AutoGen
-
-- `UserProxyAgent` and `HandoffMessage` / `InputRequest` in the
-  v0.4 Core API. Conversational HITL (user = participant in
-  the dialog), not action-gated approval.
-
-#### OpenAI Agents SDK
-
-- `RunHooks` (non-streaming `Runner.run`) and `RunStreamedHooks`
-  (`Runner.run_streamed`) for lifecycle events: `on_agent_start` /
-  `on_agent_end`, `on_llm_start` / `on_llm_end`, `on_tool_start` /
-  `on_tool_end`, `on_handoff`. There is **no `on_run_start` /
-  `on_run_end` / `on_run_abort`** — aborting is *cooperative*: raise
-  from inside a hook (or from inside a `@function_tool`), rely on
-  `input_guardrails` / `output_guardrails` for the canonical abort
-  path, or call `RunResultStreaming.cancel()` on the streaming path.
-- No built-in approval UI — you wire one yourself.
-
-### Where overlap is real vs imagined
-
-| Capability | Real overlap? | Notes |
-|---|---|---|
-| **Budget cap on LLM spend** | ❌ No framework overlap | Killer feature. Lead with this. |
-| **Block a dangerous tool before it runs** | ❌ No framework overlap | Framework callbacks can observe; they don't block the call frame. |
-| **Hash-chained audit log of gate decisions** | ❌ No framework overlap | LangSmith trace ≠ enforcement audit. Different shape, different consumer. |
-| **Approval for a sensitive tool** | ✅ **Real overlap** | Both layers can fire for the same tool. UX design required — see below. |
-| **Pause a step in the graph to ask the human a question** | 🟡 Partial — different abstraction | LangGraph `interrupt()` asks "is the plan right?", NullRun asks "is this action allowed?". Different question. |
-| **Streaming / async agent control flow** | ❌ Framework-only | NullRun doesn't manage graph state. |
-| **Streaming response truncation / redaction** | ❌ Framework-only | LangGraph / LangChain stream handling is outside NullRun's surface. |
-
-The honest summary: there is exactly **one zone** of real overlap —
-*action-level approval for sensitive tools*. Everywhere else, the
-layers are orthogonal.
-
-### LangGraph HITL coexistence (the real adoption question)
-
-This is the question we get most often from teams who already use
-LangGraph. Short answer:
-
-> NullRun `interrupt()` and NullRun approval **don't conflict** —
-> they fire at different points and answer different questions. They
-> *can* both fire on the same tool call; the UX must distinguish them.
-
-#### The mental model
-
-| Layer | Question | Where it fires | Who answers |
+| Layer | Question | When it fires | Who answers |
 |---|---|---|---|
-| LangGraph `interrupt()` | "Did the agent understand the problem? Is this step right? Continue?" | Inside a node, before/after LLM call or tool call | The flow's operator (Slack, UI, IDE) |
-| NullRun approval | "Is this tool allowed for this team / under this policy / within this budget?" | Pre-invocation, before the function body runs | The governance team (Approvals UI, Slack channel per rule) |
+| Framework `interrupt()` | "Is this step right?" | Inside a node, around the model or tool call | The flow's operator, in Slack, a UI, or an IDE |
+| NullRun approval | "Is this action allowed under this policy?" | Before the tool function body runs | The governance team, in the Approvals view |
 
-These are *different questions*, owned by *different people*, surfaced
-in *different UIs*. The pattern is:
+Both can fire on one tool call. That is the design point, not a
+conflict — a run can need both an operator who confirms the plan and
+a governance team that authorizes the action.
 
-```mermaid
-%%{init: {'theme': 'neutral'}}%%
-flowchart TD
-  A["LangGraph node executes"] --> B{"interrupt()<br/>flow check?"}
-  B -- "no" --> C
-  B -- "yes" --> D["Operator reviews plan<br/>Command(resume=...)"]
-  D --> C["Tool call (@protect)"]
-  C --> E{"NullRun gate<br/>policy check?"}
-  E -- "allow" --> F["Tool executes"]
-  E -- "block" --> G["403 BUDGET_ORG_CEILING_BLOCKED<br/>or policy block"]
-  E -- "require_approval" --> H["Operator reviews action<br/>(different person)"]
-  H -- "approved" --> F
-  H -- "denied" --> I["403 APPROVAL_DENIED"]
-  F --> J["Next node"]
-```
+#### Where it bites
 
-The two interruptions are independent and stackable. Both surface
-in their own UI; neither blocks the other.
+**Latency.** Every protected call adds one round trip to the gateway.
+For batch agents this is invisible. For a latency-sensitive chat UI it
+may matter. Two ways to reduce it:
 
-#### Where it *can* bite
+- Protect only the calls that carry policy weight.
+- Use the framework's own HITL for planning steps and NullRun
+  approval for sensitive tool calls only.
 
-1. **Latency overhead.** Every `@protect`-decorated call adds a
-   round-trip to `/api/v1/gate`. Healthy-path budget is **<60 ms p99**
-   ([Performance & limits → Hot-path latency](#92-performance-limits)).
-   For long-running batch agents this is invisible. For
-   latency-sensitive chat UIs it may matter; mitigate with conditional
-   `@protect` (only enforce on paths that hit sensitive tools or
-   exceed a cost threshold) or per-policy `consume_epsilon_cents`.
+**Two approval surfaces.** If both layers fire on the same tool, the
+operator can see two prompts. Ways out:
 
-2. **Double approval UX.** If both layers fire for the same sensitive
-   tool, the operator may see two approval surfaces. Mitigations:
-   - Surface a single dashboard view that joins LangGraph thread_id
-     ↔ NullRun execution_id
-   - Suppress the framework `interrupt()` when NullRun's policy is the
-     binding gate
-   - Use the framework HITL for non-sensitive planning steps and
-     NullRun approval for sensitive tool invocations only
+- Join the framework's thread id and the NullRun `execution_id` in one
+  dashboard view.
+- Use framework HITL for planning and NullRun approval for sensitive
+  invocations only.
 
-3. **Conceptual confusion.** "We already have HITL, why do we need
-   another?" The answer is governance: framework HITL is *flow
-   control*, NullRun is *organizational policy*. A team can have a
-   perfect LangGraph `interrupt()` workflow and still overspend, fire
-   unapproved production writes, or fail a SOC 2 audit because
-   LangSmith isn't an enforcement log.
+**Conceptual confusion.** A team can have a complete framework HITL
+setup and still overspend, still write to production without a
+decision, and still have no enforcement log to show an auditor.
 
-#### What the migration looks like
+### Coexistence guidance
 
-For an existing LangGraph team, the realistic adoption is **half a
-day**, not a sprint:
+#### LangGraph and LangChain
 
-1. `pip install nullrun` and `export NULLRUN_API_KEY` (one line).
-2. Add `@protect` on the LLM/tool calls that touch
-   production, money, or PII. The decorator replaces no existing
-   code; it wraps the call.
-3. Configure policies in the dashboard — sensitive tool list, budget
-   cap, approval rule for production writes.
-4. (Optional) Map `thread_id` → `execution_id` in your observability
-   stack so the team gets one trace instead of two.
-
-LangGraph `interrupt()` nodes are not touched. The framework patch is
-auto-attached on the first `@protect` call (see
-[Protect a LangGraph agent](#61-protect-a-langgraph-agent)).
-
-### Coexistence patterns by framework
-
-#### LangChain / LangGraph (recommended)
-
-- Keep your existing `interrupt()` nodes untouched.
-- Add `@protect` on tool functions and on the LLM call site
-  (typically inside the node that invokes the model).
-- For multi-agent setups: one policy per workflow; the SDK tags
-  calls automatically via the runtime context.
+Keep your `interrupt()` nodes as they are. Add `@protect` on the tool
+functions and on the model call site inside the node. The SDK attaches
+to the framework on the first `@protect` call, so there is no patch to
+install and no opt-in list to maintain.
 
 #### CrewAI
 
-- `human_input=True` on `Task` stays — use it for "is the task
-  framing right?" questions.
-- Add `@protect` on tool calls that have policy weight (DB writes,
-  outbound email, payments). Crew doesn't have a budget gate, so
-  this is purely additive value.
-- See [Use CrewAI](#63-use-crewai) for wiring.
+`human_input=True` on a task stays — it answers "is the framing
+right?". Add `@protect` on tool calls that carry policy weight:
+database writes, outbound email, payments. CrewAI has no budget gate,
+so this is additive.
 
 #### AutoGen
 
-- `UserProxyAgent` / `HandoffMessage` stays — conversational HITL is
-  outside NullRun's scope.
-- Wrap each `Agent.run` / `a_run` invocation site with `@protect`.
-- For v0.4 streams, the SDK patches message-streaming hooks on first
-  `@protect` call.
+Conversational HITL stays outside NullRun's scope. Wrap the agent
+invocation site with `@protect`.
 
 #### OpenAI Agents
 
-- `RunHooks` stays — use for run-level lifecycle (start, end, error).
-- Add `@protect` on the actual tool function. The nullrun SDK
-  instruments `Runner.run` / `run_streamed` automatically.
-- See [Use with OpenAI Agents](#62-use-with-openai-agents).
+`RunHooks` stays for run-level lifecycle events. Add `@protect` on
+the tool function itself. The SDK instruments `Runner.run` and
+`Runner.run_streamed` automatically.
 
-### Category positioning — runtime-authorization vendors
+### What NullRun does not claim
 
-The [/compare page](https://nullrun.io/compare) scores vendors on the
-same four axes we care about: **gate**, **approval**, **spend**,
-**audit**. The cells reflect publicly documented capability, not
-roadmap promises.
+These are outside the product by design, not gaps in the roadmap.
 
-#### Direct decision-layer competitors
+1. **Output moderation.** Content safety, PII redaction, prompt
+   injection blocking. Use a model-side guardrail.
+2. **Orchestration.** Graph state, DAG execution, and scheduling.
+3. **Retrieval governance.** Vector store and retrieval quality.
+4. **Network egress policy.** NullRun decides on call metadata. It
+   does not inspect a tool payload for exfiltration.
+5. **Provider-side cost reconciliation.** NullRun computes cost from
+   the response it sees. The upstream webhook is the authority for
+   what the provider billed.
 
-| Vendor | Gate | Approval | Spend | Audit |
-|---|---|---|---|---|
-| **NullRun** | ✓ | ✓ | ✓ | ✓ |
-| Microsoft AGT | ✓ | ~ | — | ✓ |
-| APort | ✓ | ~ | ~ | ✓ |
-| Credo AI | ~ | ✓ | — | ✓ |
-| Straiker | ~ | — | — | ✓ |
-| Isonapse | ✓ | ~ | ~ | ✓ |
+If your evaluation includes one of these, NullRun is a complement.
 
-**Legend:** ✓ Yes · ~ Partial / complements · — Not supported
+### Gaps
 
-**Notes on each vendor** (against the public vendor sites):
-
-- **Microsoft AGT** — Microsoft's open-source [Agent Governance
-  Toolkit](https://github.com/microsoft/agent-governance-toolkit)
-  (MIT, 6.3k stars, Public Preview). Tagline: *"Policy enforcement,
-  zero-trust identity, execution sandboxing, and reliability
-  engineering for autonomous AI agents. Covers 10/10 OWASP Agentic
-  Top 10."* Runtime gate is deterministic at the **application
-  middleware layer**, not OS-kernel — the policy engine and agents
-  share the same process boundary; the README's own recommendation
-  is to run each agent in a separate container for OS-level
-  isolation. Approval is `require_approval` as policy-as-data
-  (YAML approvers list); there is **no built-in human-approval UI**.
-  Audit is Merkle-based and tamper-evident ("Audit and Compliance
-  1.0" spec, 157 conformance tests). Spend/budget management is not
-  advertised — the scorecard's "—" is correct.
-- **APort** — Pre-execution authorization ("Open Agent Passport"
-  spec at [aport.io/spec](https://aport.io/spec/)). Enforces policy
-  in the platform hook (`before_tool_call`), bypass-resistant to
-  prompt injection. Native approval UI: not surfaced — the grant is
-  policy-driven.
-- **Credo AI** — "Govern, approve, monitor" AI agents. Agent
-  registry + "registry-only-approve" pattern + policy automation
-  ([credo.ai/product/agent-governance](https://www.credo.ai/product/agent-governance)).
-  Strong on approval + audit, weaker on tool-call enforcement.
-- **Straiker** — "Agentic AI Security Company"; Defend AI platform
-  with runtime protection + "agentic kill switch"
-  ([straiker.ai/blog/agentic-kill-switch-for-ai-agents](https://www.straiker.ai/blog/agentic-kill-switch-for-ai-agents)).
-  Detection-oriented; no human-approval flow.
-- **Isonapse** — Runtime governance layer positioned *between* agent
-  and external systems ([isonapse.com](https://isonapse.com/)).
-  "Control what AI agents can do — before they do it." Spend column
-  is a best-effort mapping; the public site emphasises governance,
-  not budget.
-
-#### Adjacent — gateways, security, advisory
-
-| Vendor | Gate | Approval | Spend | Audit |
-|---|---|---|---|---|
-| Portkey | ✓ | ~ | ✓ | ✓ |
-| Noma Security | ✓ | ~ | — | ✓ |
-| Prisma / Palo Alto | ~ | — | ~ | ~ |
-| Advisory shops | — | — | — | — |
-
-**Notes:**
-
-- **Portkey** — AI gateway with budget controls, configurable
-  approval policies, and observability across providers. Closest
-  adjacent to NullRun on the Spend column.
-- **Noma Security** — AI Detection & Response (AI-DR); runtime
-  protection with deterministic authorization and Segregation of
-  Duties. Delivered via Kong Gateway integration
-  ([noma.security](https://noma.security/)). No budget enforcement
-  visible on the public site.
-- **Prisma / Palo Alto** — Prisma AIRS
-  ([paloaltonetworks.com/prisma/airs](https://www.paloaltonetworks.com/prisma/airs))
-  — runtime agent policy governance + AI-SPM posture management.
-  No human-approval UI; spend handling unclear from public docs.
-- **Advisory shops** — Not a software product. Listed for
-  completeness against the `/compare` table.
-
-#### How NullRun frames the category
-
-The differentiator language NullRun uses on `/compare` (paraphrased
-from the page):
-
-> "The runtime decision point is the product. Everything else is
-> plumbing."
-
-The question NullRun claims to be uniquely answering:
-
-> "Is this action authorized, right now, by the policy that exists
-> today, before it runs?"
-
-The categories that **don't** answer this question, per the same
-page, and the reason:
-
-- **Prompt recorders** observe after the fact.
-- **Model guardrails** check the output, not the action.
-- **Observability dashboards** visualize; they don't enforce.
-- **Advisory decks** describe; they don't run.
-
-This is a positioning claim, not a benchmark. Verify it against your
-own procurement criteria — particularly around fail-CLOSED semantics
-on enforcement paths and what happens when the budget store is
-unavailable on the gate hot path. The mechanical answer for NullRun is
-in
-[Performance & limits → Budget store failure](#92-performance-limits)
-(402, never 200).
-
-### What NullRun *doesn't* claim
-
-This page is intentionally honest about scope. The following are not
-covered, by design:
-
-1. **LLM-call output moderation** — content safety, PII redaction,
-   prompt-injection blocking. Use a model-side guardrail for that.
-2. **Workflow orchestration / DAG** — LangGraph's job, not ours.
-3. **Vector store / retrieval governance** — outside the gate.
-4. **Network egress policy (egress firewall)** — NullRun decides on
-   call metadata but doesn't inspect LLM tool payloads for
-   exfiltration.
-5. **Provider-side cost visibility** — NullRun computes cost from
-   response bodies via the `httpx` patch; for exact reconciliation
-   the upstream webhook is the source of truth.
-
-If your evaluation includes one of these, NullRun is a complement,
-not a substitute.
-
-### Honest gaps and caveats
-
-- **Framework drift.** Features in LangGraph Studio, CrewAI
-  flow-level HITL, and AutoGen governance hooks move quickly. Cross-check
-  the current docs at the links in each subsection.
-- **No benchmark against `interrupt()` latency.** LangGraph's
-  in-memory pause is sub-millisecond; NullRun's gate round-trip is
-  the 50–200 ms figure from
-  [Performance & limits](#92-performance-limits). Apples
-  and oranges — one is a process-local suspension, the other is a
-  network authorization call. Choose based on whether you need
-  governance or just flow control.
-- **No empirical study of approval-UX friction.** The double-approval
-  mitigation strategies above are design guidance, not measured
-  results. Teams adopting both layers should A/B the UI surface
-  before committing.
-- **No automatic LangGraph-thread ↔ NullRun-execution mapping.**
-  The two IDs are different shapes (LangGraph string `thread_id`
-  from your code, NullRun server-minted UUIDv7 from
-  `/api/v1/gate`). Wiring them in your observability stack is on
-  the adopter; we don't auto-bind them.
-
-### Verification log
-
-Every load-bearing claim on this page was verified against the listed
-source. Future maintainers: when editing, add or amend a row below.
-
-| Claim | Source | Status |
-|---|---|---|
-| Budget reservation is atomic and period-bound | Reservation script + integration tests | ✅ verified |
-| Millicents precision counter (1¢ = 1 000 millicents) | Reservation script | ✅ verified |
-| 402 on budget-store outage during reservation | Gate handler + integration tests | ✅ verified |
-| `expires_in_seconds` clamp `30..=3600`, stored default 300 s | Approval-rule service | ✅ verified |
-| `action_digest = sha256(canonical(...))`, VARCHAR(64) | Approval repository + schema | ✅ verified |
-| Hash chain applied to audit events only (gate decisions kept separate from execution records) | Governance audit model | ✅ verified |
-| Refusal-as-evidence (every gate decision leaves a row) | Audit-chain end-to-end tests | ✅ verified |
-| httpx transport hook covers ~95% of LLM traffic | SDK auto-instrumentation | ✅ verified |
-| LangGraph auto-patch on first `@protect` | SDK auto-instrumentation (`patch_openai_agents`, `patch_langgraph_compiled`, `patch_crewai`, `patch_autogen`) | ✅ verified |
-| LangGraph `interrupt()` + `Command(resume=...)` | [LangGraph Interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts); [skakarh.com](https://www.skakarh.com/blog/langgraph-human-in-the-loop) | ✅ verified |
-| Static `interrupt_before`/`interrupt_after` are not the HITL mechanism | [LangGraph Interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts) ("Static interrupts … are not recommended for HITL workflows") | ✅ verified |
-| LangChain AgentExecutor → LangGraph migration recommended | [LangChain v1.0 blog](https://www.langchain.com/blog/langchain-langgraph-1dot0); [Migrating Classic LangChain Agents](https://dev.to/focused_dot_io/migrating-classic-langchain-agents-to-langgraph-a-how-to-nea) | ✅ verified |
-| AutoGen v0.4 — `HandoffMessage` + `InputRequest` | AutoGen v0.4 release notes (microsoft/autogen) | ✅ verified |
-| OpenAI Agents — no `on_run_abort`; abort via throw from hook / guardrail / `.cancel()` | [OpenAI Agents SDK reference](https://openai.github.io/openai-agents-python/ref/) | ✅ verified |
-| CrewAI `human_input=True` flag on `Task` | Stable pattern; flow-level HITL not confirmed in public docs | ⚠️ softened |
-| APort — Open Agent Passport, pre-execution authorization | [aport.io/spec](https://aport.io/spec/); [aporthq/aport-spec](https://github.com/aporthq/aport-spec) | ✅ verified |
-| Credo AI — Agent Governance Platform, registry-only-approve | [credo.ai/product/agent-governance](https://www.credo.ai/product/agent-governance) | ✅ verified |
-| Straiker — Defend AI, agentic kill switch | [straiker.ai](https://www.straiker.ai/); [Agentic Kill Switch blog](https://www.straiker.ai/blog/agentic-kill-switch-for-ai-agents) | ✅ verified |
-| Noma Security — AI-DR via Kong | [noma.security](https://noma.security/); [Kong × Noma](https://konghq.com/blog/enterprise/agentic-ai-security-runtime-protection-kong-noma) | ✅ verified |
-| Portkey — gateway with budget / approval / observability | portkey.ai docs | ✅ verified |
-| Prisma AIRS — runtime agent policy governance | [paloaltonetworks.com/prisma/airs](https://www.paloaltonetworks.com/prisma/airs) | ✅ verified |
-| Isonapse — runtime governance layer between agent and systems | [isonapse.com](https://isonapse.com/) | ✅ verified |
-| **Microsoft AGT** — Microsoft's Agent Governance Toolkit | [github.com/microsoft/agent-governance-toolkit](https://github.com/microsoft/agent-governance-toolkit); MIT; 6.3k stars; deterministic middleware gate; YAML `require_approval` approvers; Merkle tamper-evident audit; **no spend/budget management** | ✅ verified |
-| NullRun hot-path latency <60 ms p99 | `docs/operations/performance.md` §"Healthy-path budget" | ✅ verified |
+- **Framework drift.** Framework HITL features move quickly. Check
+  the vendor's current documentation for the framework you run.
+- **No latency benchmark against framework HITL.** A framework pause
+  is a process-local suspension. A NullRun decision is a network
+  authorization call. The two numbers are not comparable, and
+  NullRun's own p99 at production scale is not measured.
+- **No empirical study of approval friction.** The mitigations above
+  are design guidance. Teams running both layers should compare the
+  two surfaces before committing.
+- **No automatic link between a framework thread id and a NullRun
+  `execution_id`.** The two ids have different shapes, and joining
+  them is on the adopter.
 
 ### See also
 
-- [Performance & limits](#92-performance-limits) — gate hot-path latency,
-  fail-CLOSED semantics, idempotency surfaces
-- [Protect a LangGraph agent](#61-protect-a-langgraph-agent) — wiring code
+- [Performance & limits](#92-performance-limits) — timeouts, rate limits, and
+  the fail-closed posture
+- [Protect a LangGraph agent](#61-protect-a-langgraph-agent)
 - [Use with OpenAI Agents](#62-use-with-openai-agents)
 - [Use CrewAI](#63-use-crewai)
-- [LLM frameworks](#65-llm-frameworks) — multi-framework matrix
-- [Human approval](#32-human-approval) — approval rule shape
-- [Sensitive tools](#24-sensitive-tools) — policy DSL
-- [Budgets](#31-budgets) — reserve / consume semantics
-- [Tracing](#42-tracing) — audit + log surfaces
-- External: [LangGraph Interrupts docs](https://docs.langchain.com/oss/python/langgraph/interrupts) ·
-  [NullRun `/compare`](https://nullrun.io/compare) ·
-  [NullRun `/security`](https://nullrun.io/security) ·
-  [NullRun `/trust`](https://nullrun.io/trust)
+- [LLM frameworks](#65-llm-frameworks)
+- [Human approval](#32-human-approval)
+- [Sensitive tools](#24-sensitive-tools)
+- [Budgets](#31-budgets)
 
 
 ## 9.4 Changelog
@@ -9475,8 +7917,453 @@ entry, it is documented on one of those pages.
     All versions below the current one are available on PyPI:
 
     ```bash
-    pip install nullrun==0.18.5
+    pip install nullrun==0.24.0
     ```
+
+### 0.24.0 — 2026-11-08
+
+The enforcement path stopped swallowing refusals. A gate that answered
+"no" could be turned into `None`, and `None` is read by every caller as
+"yes". A refused `/track` could be logged and returned as an ordinary
+call. A LangChain callback dropped the refusal on the floor, so the
+agent got the call for free.
+
+The control plane got a second fix. The approval push read the unsigned
+outer body — the bytes the HMAC never covered — and handed them to the
+handler that releases a gate parked waiting for a human. The privileged
+branch now requires an authenticated frame and reads the verified
+payload only.
+
+There is no wire-format change. Every new error code the SDK names is a
+code the gateway already sends, and the one code that is new to both
+repos, `APPROVAL_TOOL_MISMATCH` (HTTP 409), shipped together with its
+gateway half.
+
+#### Changed
+
+- **`check_workflow_budget` lost its `use_gate_cache` parameter.**
+  Passing it now raises `TypeError` — remove the argument. The
+  in-process gate cache is gone. Every call is its own `/gate` call with
+  its own reservation.
+
+- **`NULLRUN_SENSITIVE_FAIL_OPEN` opens nothing on its own.** The
+  switch is still a whole-system switch, but the tools it may open are
+  now an explicit, code-level list. The list is empty by default, so
+  the switch alone opens nothing and every tool stays fail-CLOSED.
+  Four runtime methods drive it:
+
+  ```python
+  runtime.register_fail_open_tools(["charge_card"])
+  runtime.remove_fail_open_tool("charge_card")
+  runtime.get_fail_open_tools()
+  runtime.is_fail_open_allowed("charge_card")
+  ```
+
+- **A gate refusal now escapes the LangChain / LangGraph callback.**
+  The refusal is re-raised instead of being caught by a blanket
+  `except Exception`. A cosmetic failure is still swallowed at DEBUG —
+  only a refusal escapes.
+
+- **An indeterminate gate decision is a refusal, not a permission.**
+  When the SDK's own code faults while asking the gateway, the SDK
+  raises `NullRunGateIndeterminateError` (NR-P004) instead of returning
+  "no decision, carry on".
+
+- **The write-ahead log path changed.** The default is now
+  `<tempdir>/nullrun-<user>-<key>.wal`. Both scope tokens are SHA-256
+  digests, so the API key never reaches a path every user on the host
+  can list. `NULLRUN_WAL_PATH` still wins outright.
+
+- **`api_key_prefix` renders as a fingerprint.** The public field keeps
+  its name; the value is the first eight hex characters of the SHA-256
+  digest of the key. The log label is `api_key_fp=`. Log parsers that
+  matched the old raw prefix must change.
+
+- **The MCP tool-annotation cache window is 30 seconds.** A failed
+  refresh no longer presents the previous snapshot to the gateway — the
+  gateway gets the unknown shape the adapter uses for a tool it has
+  never seen, and falls back to its own classifier. Pass
+  `cache_seconds=0` for no staleness at all.
+
+- **Three new public exceptions.**
+  `NullRunGateIndeterminateError` (NR-P004),
+  `NullRunUnknownActionError` (NR-P005) and
+  `NullRunApprovalToolMismatchError` (NR-A017) are exported from the
+  package root. `NullRunChainError` now covers the gateway's
+  `CHAIN_KEY_MISMATCH` refusal.
+
+- **Six new metric counters** are exported in `to_dict()`:
+  `gate_indeterminate_total`, `unknown_action_total`,
+  `policy_gate_indeterminate_total`, `ws_unverified_approval_total`,
+  `ws_unverified_frame_total` and `dropped_llm_call_no_reservation`.
+
+#### Fixed
+
+- **A refused `/track` reaches the application.** The SDK asked the
+  wrong question — it decided open-vs-closed by exception class while
+  the gateway decides by error code. A refusal now raises, and the
+  auto-instrumentation layer stops swallowing it. The payload is written
+  to the write-ahead log before the raise, so a refusal is raised *and*
+  recoverable.
+
+- **A reservation id the SDK cannot bind is a refusal.** A gate answer
+  carrying a `reservation_id` that is not a UUID now raises
+  `NullRunMalformedGateResponseError` instead of proceeding with no
+  reservation.
+
+- **An SDK-internal fault in the `@protect` gate is a refusal.** The
+  decorator's catch-all raised a transport-shaped error that rendered as
+  HTTP 429 and category "decision". It now raises
+  `NullRunGateIndeterminateError` and is counted on its own counter.
+
+- **The LangChain callback obeys the same fail-CLOSED table as
+  `@protect`.** `NullRunAuthenticationError`,
+  `NullRunUnclassifiedRefusalError` and `NullRunRateLimitRedisError`
+  now raise instead of vanishing through the callback.
+
+- **Every MCP tool call runs its own `/gate` pre-flight.** The second
+  and later MCP tool calls in one scope ran no pre-flight: no budget
+  check, no reservation, no spend reserved for those calls.
+
+- **The MCP adapter derives one envelope from the tool call.** The MCP
+  path sent no `business_impact` and no `action_digest`, so an approval
+  on that path could not be spent at all. The adapter now derives one
+  envelope from the call it is about to make, plus that envelope's
+  digest, and puts both on the wire.
+
+- **The write-ahead log is scoped per user and per key.** The path was
+  the same string for every user and every organization on the host, so
+  two runtimes on one file destroyed each other's undelivered events.
+
+- **The approval push reads the verified payload, not the outer body.**
+  An unauthenticated approval frame is refused, counted and logged at
+  ERROR, and the waiter stays parked and fails closed on the approval
+  timeout.
+
+- **A control-plane frame the client could have verified is refused.**
+  A frame that arrives unsigned, or with a signature but no timestamp,
+  is refused before any branch reads a field out of it.
+
+- **An unknown control-plane action is refused, not silently dropped.**
+  The dispatcher now raises `NullRunUnknownActionError` instead of
+  logging and returning.
+
+- **The error-code catalog names a class the dispatcher can build.**
+  The catalog lagged the gateway registry by 34 codes, and the
+  blocked-family dispatch arm matched by identity, so every typed
+  subclass fell through to a generic fallback that raised `TypeError`.
+
+- **Redaction follows the credential, not only the argument name.** A
+  value-shaped pass runs beside the name-based one, so a secret that
+  arrives under a name nobody listed is scrubbed.
+
+- **No character of the API key reaches a log line.** Three places
+  printed a fragment of the key, and they disagreed about how much. One
+  helper answers it now.
+
+- **The production detector is not a substring test.** A host that
+  merely contained a dev marker was classified non-prod. Four ordered
+  rules now decide.
+
+- **The CI installs from the lock and pins every action.**
+
+### 0.23.0 — 2026-10-29
+
+Two enforcement paths that could not complete their own contract are
+closed. The MCP path could not finish an approval round trip: a retry
+after the operator approved was forwarded to the MCP server, so the
+gateway never saw the grant. The zero-code LLM path booked the call
+only after the provider had answered — the `llm_call` event is the only
+thing that moves the budget counter, so a call the ceiling was supposed
+to stop was counted instead of stopped.
+
+There is no wire-protocol change. The public surface grows by ten
+keyword-only parameters across four public methods, and one changed
+return value.
+
+#### Added
+
+- **`MCPAdapter.call_tool` can carry an approval grant.** The method
+  gains three named keyword-only parameters — `approval_id`,
+  `business_impact`, `action_digest` — placed before `**passthrough`
+  so they can never fall into the passthrough and be forwarded to the
+  MCP server.
+
+- **`NullRunRuntime.execute` gains `approval_id` and
+  `tool_arguments`.** Both are appended after the existing parameters,
+  so the positional order above them is unchanged. Each key reaches the
+  wire only when the value is not `None`.
+
+#### Changed
+
+- **`check_workflow_budget` returns the reservation id.** The method
+  gains `model`, `estimated_tokens`, `max_output_tokens` and
+  `use_gate_cache`, and its return type changes from `None` to
+  `str | None` — the server-minted reservation the gateway settles
+  when the matching `/track` arrives, or `None` when no reservation was
+  minted. Callers that ignored the return value are unaffected.
+
+- **`NullRunRuntime.track` gains `reservation_id`.** The reservation
+  travels with the cost event explicitly rather than through a
+  context variable, which is one slot per task — two concurrent calls
+  would swap reservations.
+
+- **The zero-code LLM path reserves before the provider request.** A
+  call the ceiling rejects never reaches the provider; the request is
+  not sent at all. This is visible: a capped zero-code caller sees
+  refusals where it saw successful calls that were billed anyway.
+
+#### Fixed
+
+- **The canonical argument bag reaches the wire.** The tool arguments
+  travelled only as the legacy `input` field, so every params-based
+  rule saw "no bag" and the approval decision had no argument snapshot
+  to bind to. The same dict now reaches the wire as both `input` and
+  `tool_arguments`.
+
+### 0.22.2 — 2026-10-16
+
+A status field that structurally could not report the failure it
+existed to report, a packaging extra the SDK's own error message told
+users to install but that was never declared, and a pre-flight that
+priced at the input rate and so silently under-reserved every real LLM
+call. None is a wire change.
+
+#### Changed
+
+- **`NullRunStatus` reflects a gateway that has actually been
+  attempted.** A backend unreachable since `init()` used to read
+  `backend_reachable=None`, so the degraded headline never fired.
+  "Answered" means transport-level, not HTTP-2xx — a 402, 403 or 429
+  is the gateway replying and stays reachable; only DNS, refused, TLS
+  or timeout sets it false.
+
+- **`pip install nullrun[websocket]` installs `websockets`.** The
+  extra is declared with a floor of 14.0.
+
+- **`set_call_context(max_output_tokens=…)` reaches `/gate`.** The
+  pre-flight always sent `estimated_tokens=1`, which prices at the input
+  rate and covers no output at all. The caller's declared cap is sent
+  when set, and the key is absent — not present-and-null — when it is
+  not.
+
+### 0.22.1 — 2026-10-15
+
+The SDK's public exception surface is restored. A QA pass found 24
+classes the SDK raises that were not importable from the top-level
+`nullrun` namespace. The classes existed, and enforcement was never
+affected — only the documented public name was missing.
+
+#### Added
+
+- **24 more exception names are reachable via `from nullrun import X`.**
+  The names are also added to `__all__`, so tab-completion and
+  `from nullrun import *` reach them. Code that imports a missing name
+  now succeeds.
+
+#### Fixed
+
+- **`on_policy_invalidated` fires on every WebSocket message.** The
+  wrapper was an un-awaited coroutine, so the log line and the
+  user-supplied callback never ran.
+
+### 0.22.0 — 2026-10-09
+
+The SDK's enforcement question can go to a local box that holds a
+signed lease instead of to `api.nullrun.io`. The write-ahead log is
+reworked around three loss paths: a `kill -9` while a refused event
+was held, a 200 batch that hid per-item refusals, and a recovery that
+unlinked the log before the events were provably safe.
+
+Minor, not patch: the `/track` wire loses a field, and `/track` batch
+refusals classify by whether the gateway already booked the spend.
+
+#### Changed
+
+- **A `CONSUME_OVERBUDGET` refusal that the gateway already booked is
+  delivered, not quarantined.** The exception now carries a `recorded`
+  tri-state (`True` / `False` / `None` for unparseable bodies) so a
+  caller can tell the two apart. Code that watched the dead-letter
+  queue for these events no longer sees them there.
+
+- **`/track` no longer sends `cost_cents`.** The field was always
+  zero and the gateway ignores it. `local_cost_cents` in the return
+  value is unchanged.
+
+- **4xx classification happens before quarantine, with a different
+  answer per class.** `408` and `429` are re-queued and never
+  dead-lettered. `401` and `403` stay in the log with a "blocked on
+  the key" line — the data is valid and the key is rotated or revoked.
+  `413` is the batch, not the events: the batch is halved and resent.
+  `400` and `422` are bisected to a single event, so exactly one event
+  is lost rather than the whole batch.
+
+- **A held refusal survives `kill -9`.** The holdover is now in
+  `<wal>.holdover` — deliberately not `.wal` and not `.inflight`.
+  Recovery loads it as a hold, not a replay.
+
+- **The `/track` batch path forwards the `provider` label.** Cached
+  pricing differs by provider, and the two paths now agree.
+
+- **The local box as the gate is opt-in.** Set `NULLRUN_EDGE_URL` and
+  the enforcement question goes to a box holding a signed lease instead
+  of to `api.nullrun.io`. `NULLRUN_EDGE_LEASE_ID` is required, not
+  discovered — a box that chose its own budget enforces a number nobody
+  granted. The mode refuses a silent fallback to the cloud, refuses a
+  caller that writes the money, and treats an unreachable box as a
+  refusal rather than a pass.
+
+#### Security
+
+- **The SDK never puts a price on the wire.** The field is absent from
+  both a minimal and a fully populated payload.
+
+- **The write-ahead log's guarantees are explicit, private and
+  observable.** Files are created `0600` rather than through the
+  process umask, mutations are serialised with an advisory lock, and
+  the dead-letter size cap deletes nothing: at the cap the append is
+  refused.
+
+### 0.21.0 — 2026-10-02
+
+The approval round trip closes. An operator approves an action and the
+agent still cannot run it: the SDK sent a constant sentinel instead of
+the business-impact envelope the gateway was looking for, and
+classified refusals by what the SDK's wrapper assumed rather than by
+what the wire said.
+
+Minor, not patch: `BusinessImpact.tool_call()` is restored, the
+`/track` path raises typed enforcement rejections where it dropped them
+silently, and the `/gate` pre-flight routes through the typed
+dispatcher.
+
+#### Added
+
+- **`BusinessImpact.tool_call()` is back.** Importable from
+  `nullrun.business_impact`. The constructor emits exactly what the
+  gateway's internally-tagged serialization produces, including
+  `extractor_id` and `extractor_version`.
+
+#### Changed
+
+- **The v3 `/track` single path raises typed enforcement rejections
+  instead of dropping them.** A 422 `CONSUME_OVERBUDGET` used to be a
+  warning log line and a return value that treated the call as
+  successful at the agent layer. It now raises
+  `NullRunConsumeOverbudgetError`. Network errors and 5xx that name no
+  enforcement failure still drop and log.
+
+- **The `/gate` pre-flight types its refusal instead of assuming
+  budget.** A rate-limit block, a tool block and a circuit-breaker
+  trip used to reach the caller as `NullRunBudgetError` (NR-B004),
+  which sends the operator looking for a spend-cap misconfiguration
+  when the actual cause is a throttle policy. The dispatcher routes by
+  wire code. A response with no machine-readable code still raises
+  `NullRunBudgetError`.
+
+#### Fixed
+
+- **`@protect` binds approvals to something.** Since 0.18.5 every
+  `@protect` call sent a constant `{"kind": "none"}` sentinel; a
+  constant hashes to a constant, so the digest the gateway stored on
+  the approval row matched the digest it recomputed at `/execute` for
+  every tool — while binding the approval to nothing at all. The
+  envelope is now carried on the call context, sent alongside the
+  digest, and built before the `/gate` pre-flight so both hops hash
+  the same bytes.
+
+- **`status().ws_connected` reads a real attribute.** It was
+  structurally pinned to `None`, so the never-established, live and
+  dropped states collapsed into one.
+
+### 0.20.0 — 2026-10-01
+
+Every gate refusal is classified, and an unclassifiable one raises.
+The SDK could read a body with no `category` as a permission.
+
+Minor, not patch: an unclassifiable refusal now **raises** where
+0.19.0 let the call proceed. That is a working loop becoming a
+throwing one.
+
+#### Added
+
+- **`on_denied` selects the shape of a `denied` refusal and nothing
+  else.** Default `"raise"`. Set `"message"` to get a
+  `NullRunDeniedError` carrying the server-authored `agent_message` —
+  the only text the SDK guarantees is safe to relay to a model. `budget`
+  and `halt` keep their own exceptions even with the flag set.
+
+#### Changed
+
+- **A `/gate` body must state who decided before it counts as a
+  verdict.** A body whose `decision_source` is absent or unrecognised
+  raises `NullRunMalformedGateResponseError`. A hand-written `/gate`
+  test double must now include `"decision_source": "gateway"`.
+
+- **`NULLRUN_SENSITIVE_FAIL_OPEN` is refused against production**
+  unless `NULLRUN_ALLOW_SENSITIVE_FAIL_OPEN=1` is set as well. The
+  guard refuses the bypass rather than raising, so enforcement falls
+  back to its own fail-CLOSED default and the attempt is logged at
+  ERROR with a metric.
+
+- **`NULLRUN_SKIP_BUDGET_CHECK` outside production logs and
+  increments a metric** when it skips the check. Enforcement behaviour
+  is unchanged.
+
+- **`/execute` refusal bodies carry `category` and `agent_message`.**
+  Additive on the wire.
+
+#### Fixed
+
+- **`@protect` no longer loses a LangChain tool when it is the outer
+  decorator.** Applied to a `@tool` result, `@protect` wrapped the
+  object with `functools.wraps` and returned a plain function, so
+  `.invoke`, `.name` and `.args_schema` were gone and an agent loop
+  could not bind the tool. A tool the loop cannot see raises no
+  refusal. Both decorator orders now gate identically.
+
+### 0.19.0 — 2026-09-30
+
+The SDK-side bypasses found by an audit of the enforcement path are
+closed: the gate answering the agent "allowed" on calls it had actually
+blocked or never checked.
+
+#### Removed
+
+- **`NullRunRuntime.execute(..., mode="inline")` is gone.** It returned
+  a synthesised local allow without contacting the gateway, so budget,
+  rate-limit and tool-block policies were all skipped. It now raises
+  `NullRunConfigError` (NR-S001). There is no replacement — every call
+  goes through `/execute`. Drop the argument; `mode="auto"` (the
+  default) already always contacts the gateway.
+
+- **`register_strict_mode_forced` and `is_strict_mode_forced` are
+  gone.** They existed only to force strict mode past the inline fast
+  path, and had zero callers.
+
+#### Changed
+
+- **`MCPAdapter(runtime=None)` no longer means "do not gate".**
+  `call_tool` was conditional on the runtime being present, and the
+  runtime defaulted to `None` — so a default-constructed adapter called
+  the MCP server with no `/execute` round-trip at all. `runtime=None`
+  now means "resolve the global runtime", resolved lazily at
+  `call_tool`. A missing API key raises rather than degrading to an
+  ungated call. Passing `runtime=` explicitly still works and still
+  wins.
+
+#### Fixed
+
+- **A real gate decision is no longer treated as a transport
+  fail-open.** The LangChain / LangGraph callback swallowed
+  `NullRunBlockedException` alongside transport errors. Enforcement
+  exceptions are now re-raised through a deferred handoff to the
+  `@protect` boundary.
+
+- **A skipped pre-flight gate is countable.** The no-op increments
+  `control_plane_no_workflow_total` /
+  `budget_preflight_no_workflow_total` instead of being
+  indistinguishable from normal operation.
 
 ### 0.18.5 — 2026-09-26
 
@@ -9510,7 +8397,7 @@ being importable.
 #### Removed
 
 These names are no longer importable from the top-level `nullrun`
-namespace. `dir(nullrun)` now returns exactly:
+namespace. At 0.18.5 the top-level namespace held exactly:
 
 ```text
 __version__, init, protect, shutdown, on_error, guard,
@@ -9553,7 +8440,7 @@ def my_tool(query: str) -> str:
     ...
 ```
 
-See [Decorators & extractors](#72-decorators-extractors) for the full
+See [Decorators & extractors](#72-decorators-context-managers) for the full
 decorator reference and [Tool policies](#23-tool-policies)
 for what the gate evaluates.
 
@@ -9584,8 +8471,8 @@ does not work.
 ### 0.17.1 — 2026-09-15
 
 - **Every gate call carries its own operation id.** A single id is no
-  longer reused across calls in the same scope, which removes a class of
-  spurious budget errors where an unrelated call inherited the identity
+  longer reused across calls in the same scope, which removes a class
+  of spurious budget errors where an unrelated call inherited the identity
   of the first one. The error codes in
   [Error codes](#74-error-codes) are unchanged.
 
@@ -9614,11 +8501,10 @@ change to it.
   stopped from the dashboard stops. See
   [Control plane](#44-control-plane-websocket).
 
-- **Fail-closed policy fetches.** A policy the gate cannot retrieve is a
-  refusal, not a pass. `ToolBlock` and aggregate rate limiting fail
-  closed; per-key limits and budget checks fail open, because the budget
-  layer behind them is the backstop. See
-  [Policies](#22-policies).
+- **Policy fetches fail closed.** A policy the gate cannot retrieve is
+  a refusal, not a pass. The enforcement path fails closed: the tool
+  block, the aggregate rate limit and the budget check all refuse when
+  their signal is missing. See [Policies](#22-policies).
 
 - **Cost accounting is decimal, not floating point.** Amounts are
   serialized without binary-float drift, so a reserved cost and its

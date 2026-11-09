@@ -1,54 +1,41 @@
+---
 title: 5-minute tour
+description: A walk through the NullRun dashboard that ends with an agent tripping a budget cap.
 maturity: stable
-description: Five-minute walkthrough of the NullRun dashboard, policies, and SDK — enough to evaluate the platform end-to-end.
+---
+
 # 5-minute tour
 
-This is the shortest path from "I have never used NullRun" to
-"I shipped an agent to production and it tripped a budget cap." It
-mirrors the dashboard tour at `nullrun.io/onboarding` — same five
-screens, same five CLI commands.
+This is the shortest path from "I have never used NullRun" to "my agent stopped itself at the budget cap". Six screens, one script, one cap.
 
-> **If you want to install first**, jump to [Install](install.md) and
-> come back. This tour assumes `nullrun` is already installed and an
-> API key is exported as `NULLRUN_API_KEY`.
+> **Install first?** Jump to [Install](install.md) and come back. This tour assumes the `nullrun` package is installed and `NULLRUN_API_KEY` is exported.
 
 ## What you will build
 
-A LangGraph agent that:
+A small agent that:
 
 1. Calls `gpt-4o-mini` through the NullRun gate
-2. Has a hard $0.50 budget per workflow
-3. Trips the circuit breaker when it tries to call `send_email`
-4. Recovers cleanly after you raise the budget
+2. Runs on a workflow with a budget of `$10`
+3. Books about two cents of spend in one run
+4. Stops at the cap once you lower it to one cent
 
-You will see each step land in the dashboard as a real audit row.
+Every call lands in the dashboard.
 
-## Step 1 — Create an organization
+## Step 1 — Set up the workspace
 
-If you do not already have one, open `nullrun.io/onboarding`,
-pick a name ("Acme AI"), and click **Create**. The dashboard
-provisions an `organization_id` and a default `policy_id` that
-allows everything except destructive tools.
+Open [nullrun.io/onboarding](https://nullrun.io/onboarding). The wizard walks through five steps: **Workspace**, **Workflow**, **API key**, **Connect**, **Ready**.
 
-!!! note "What you see"
-    On the dashboard home, a single card shows: organization name,
-    default policy name (`Permissive`), and an "API keys" tile that
-    is empty until step 2.
+1. **Workspace** — name it.
+2. **Workflow** — name it `tour-agent`. The wizard creates the workflow, a **Budget Limit** policy of `$10` scoped to it, and an API key bound to it.
 
 ## Step 2 — Create an API key
 
-In the dashboard:
+To use the key the wizard made, you can skip this step. To create another one:
 
-1. In the left sidebar, under **Access**, click **API keys**.
+1. In the sidebar, under **Access**, click **API keys**.
 2. Click **New API key** in the top right.
-3. In the dialog, pick the **Workflow** the key belongs to (the
-   tour-agent workflow you just created) and name the key
-   `tour-agent`. Pick an expiration — **Never**, **24 hours**,
-   **7 days**, **30 days**, or **90 days**.
-4. Click **Create**.
-5. Copy the `nr_live_…` public identifier and the HMAC secret.
-   The secret is shown **once** — store it in your secrets manager
-   immediately.
+3. In the dialog, pick the **Workflow** the key belongs to and name the key `tour-agent`. Pick an expiration: **Never**, **24 hours**, **7 days**, **30 days**, or **90 days**.
+4. Click **Create** and copy the `nr_live_…` identifier.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/api-keys-list-light.png"
@@ -60,18 +47,11 @@ In the dashboard:
   <figcaption class="nr-shot__caption">API keys · New key</figcaption>
 </figure>
 
-Export both in your shell:
+The dashboard shows the key once. The signing secret is never shown, and the SDK does not need it — it fetches the secret from the gateway on first use.
 
 ```bash title="shell"
 export NULLRUN_API_KEY="nr_live_xxxxxxxxxxxxxxxx"
-export NULLRUN_SECRET_KEY="hmac_xxxxxxxxxxxxxxxxxxxx"
 ```
-
-!!! warning "Where the HMAC secret lives"
-    The SDK pulls the HMAC secret via `POST /api/v1/auth/verify` on
-    first use, then caches it in memory. Re-exporting the env var
-    does NOT invalidate an existing cached secret — restart your
-    process to pick up a new one.
 
 ## Step 3 — Wire up the agent
 
@@ -80,16 +60,25 @@ Create a file `tour_agent.py`:
 ```python title="tour_agent.py"
 import nullrun
 from nullrun import protect, NullRunBudgetError
-from langchain_openai import ChatOpenAI
+from openai import OpenAI
 
-llm = ChatOpenAI(model="gpt-4o-mini")
+client = OpenAI()
+
+# One long prompt, so every call books real tokens.
+CONTEXT = "NullRun checks every tool call before it runs. " * 500
+
 
 @protect
 def ask(question: str) -> str:
-    return llm.invoke(question).content
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": CONTEXT + question}],
+    )
+    return response.choices[0].message.content
+
 
 if __name__ == "__main__":
-    for i in range(20):
+    for i in range(30):
         try:
             print(f"[{i}]", ask("Tell me a one-sentence joke."))
         except NullRunBudgetError as exc:
@@ -97,33 +86,26 @@ if __name__ == "__main__":
             break
 ```
 
-The first `@protect` call creates the runtime from `NULLRUN_API_KEY`.
+The long prompt is deliberate. A one-sentence question costs so little that no cap would ever trip. With `CONTEXT` in the prompt each call carries about 5,000 input tokens, so thirty calls cost about two cents on `gpt-4o-mini`.
 
 Run it:
 
 ```bash title="shell"
-pip install nullrun langgraph langchain-openai
+pip install nullrun openai
 python tour_agent.py
 ```
 
-You will see ~7–10 successful LLM calls, then
-`BLOCKED: You've used all your support credits. Upgrade to keep chatting.`
-(or whatever your catalog wording is).
+All thirty calls succeed.
 
 ## Step 4 — Watch the decisions
 
-Open `nullrun.io/control-center/audit` (the dashboard **Audit log**
-page, under **Governance** in the sidebar). You will see:
+Open **Governance → Audit log**. You see:
 
-- One row per `@protect` call across four columns: **Time**,
-  **Decision**, **Rule**, **Actor**.
-- `decision = allow` for the first ~7–10 rows. The **FilterBar**
-  above the table has period preset chips (1h / 24h / Today /
-  7d / 30d / 90d / All), decision chips, and an event-type selector.
-- `decision = block` on the last row with `error_code = NR-B004`,
-  `wire = BUDGET_HARD_BLOCKED` — click the row to open the
-  **DetailPanel** and see the budget snapshot at the time of the
-  block.
+- One row per protected call, in four columns: **Time**, **Decision**, **Rule**, **Actor**.
+- The period presets **24h**, **7d**, **30d**, **90d**, and **All**, plus a **Custom** range. The page opens on **30d**.
+- **Allow** on every row so far.
+
+The audit log is a plan feature. A workspace in its trial has it.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/audit-log-light.png"
@@ -135,63 +117,55 @@ page, under **Governance** in the sidebar). You will see:
   <figcaption class="nr-shot__caption">Governance · Audit log</figcaption>
 </figure>
 
-Each row is recorded by the gateway's audit pipeline and surfaces
-in your own customer's audit trail identically.
+## Step 5 — Trip the cap
 
-## Step 5 — Trip a ToolBlock
+In the sidebar, open **Governance → Policies**. You find the `tour-agent - starting budget` policy, a **Budget Limit** on the `tour-agent` workflow.
 
-Edit `tour_agent.py` and add a second protected function:
+1. Edit it and set **Max cost (USD/month)** to `0.01`. That is one cent, and it is the smallest cap the server accepts.
+2. Leave **Enforcement mode** on **Hard**.
 
-```python title="tour_agent.py"
-@protect
-def send_email(to: str, body: str) -> None:
-    # Pretend SMTP call.
-    print(f"SMTP → {to}: {body}")
+Run the script again:
+
+```bash title="shell"
+python tour_agent.py
 ```
 
-Then call it from `__main__`:
+The agent stops itself before the first call:
 
-```python title="tour_agent.py"
-# After the loop:
-try:
-    send_email("test@example.com", "hi from the tour")
-except nullrun.NullRunToolBlockedError as exc:
-    print(f"BLOCKED:", nullrun.format_user_message(exc))
+```
+[0] BLOCKED: You've reached the usage limit for this conversation. Please try again later.
 ```
 
-Run it again. The dashboard shows a `decision = block` row with
-`error_code = NR-T001`, `wire = TOOL_BLOCKED`. New organizations
-ship with a permissive default policy; if your admin has added a
-stricter default, you may see additional blocks.
+The cap covers the whole period, not one run. The first run booked about two cents, so a one-cent cap leaves nothing to spend and the gate refuses the next call. If your first run booked less than a cent, the block lands a few calls later instead.
 
-To allow `send_email`, open **Policies** in the sidebar, find the
-tool-block rule that matches `send_email`, and either narrow the
-pattern or scope it to a different workflow.
+That line comes from the SDK's message catalog. Replace it with your own wording if you want to:
 
-## Step 6 — Raise the budget and try again
+```python
+import nullrun
 
-Back in the dashboard:
+nullrun.set_user_message("NR-B004", "Your monthly limit is reached. Upgrade to keep going.")
+```
 
-1. Open the tour-agent workflow and stay on the **Overview** tab.
-2. In the budget card, raise the cap to `$5.00` (500 cents).
-3. Save.
+The audit log has a new row. **Decision** is **Deny**, and **Rule** names the budget policy. Open the row to read the reason code and the policy hash.
 
-Re-run `tour_agent.py`. The loop now completes all 20 calls. The
-**Overview** tab's spend bar shows ~$0.40 used (depending on token
-counts), and the progress bar sits at ~8%.
+The SDK error code for this refusal is `NR-B004`. It rides on the exception, and `nullrun.guard()` prints it in the developer report.
+
+## Step 6 — Raise the cap
+
+Edit the same policy and set **Max cost (USD/month)** to `5` (`$5.00`). Run the script once more. All thirty calls succeed.
+
+The **Overview** tab of the workflow shows the spend against the cap.
 
 ## What next?
 
 | You want to… | Open |
 | --- | --- |
+| Block a tool the agent must not touch | [Concepts → Tool policies](../concepts/tool-policies.md) |
+| Ask a human to approve a sensitive action | [Concepts → Human approval](../concepts/human-approval.md) |
 | Understand the gate in depth | [Concepts → Circuit breaker](../concepts/circuit-breaker.md) |
-| Wire up multiple agents | [How-to → Run multiple agents](../how-to/multi-agent.md) |
-| Add an approval flow for sensitive tools | [Concepts → Human approval](../concepts/human-approval.md) |
+| Run several agents | [How-to → Run multiple agents](../how-to/multi-agent.md) |
 | Stream responses | [How-to → Stream responses](../how-to/streaming.md) |
-| Deploy to production behind your gateway | [Configuration → Behaviour](configuration.md#behaviour) |
+| Tune the SDK | [Configuration → Behaviour](configuration.md#behaviour) |
 
 !!! tip "Where to send feedback"
-    Email `support@nullrun.io` with the dashboard's
-    **Help → Send feedback** form filled in. Include the workflow ID
-    (top-right of any dashboard page) and the failing row's
-    `decision_id`.
+    Email `support@nullrun.io`. Include the workflow ID and the `decision_id` of the row that surprised you.

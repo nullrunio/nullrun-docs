@@ -1,21 +1,22 @@
 ---
-title: Openai Agents
-description: Install nullrun alongside the OpenAI Agents SDK and gate every tool call from an Agents workflow.
+title: OpenAI Agents
+description: Gate and cost-track an OpenAI Agents run with @protect. No vendor extra is needed.
+maturity: stable
 ---
 
 # Use with OpenAI Agents
 
-Install (the OpenAI Agents framework hook is the only one that
-needs a vendor package — `openai-agents`):
+Install the framework next to the SDK. There is no NullRun vendor extra
+for it.
 
 ```bash title="shell"
 pip install nullrun openai-agents
 ```
 
-Wrap the `Runner.run_sync` call (or any sync / async runner) with
-`@protect`. The runtime + `openai-agents` `RunHooks` /
-`RunStreamedHooks` patch are attached lazily on the first `@protect`
-call:
+The SDK attaches to the framework on its own. Instrumentation goes in
+when `init()` runs, and again on the first `@protect` call.
+
+## The wiring
 
 ```python title="openai_agents_protect.py"
 from agents import Agent, Runner
@@ -36,10 +37,15 @@ def ask(prompt: str) -> str:
 print(ask("What is the capital of France?"))
 ```
 
-`@protect` tracks every tool call the agent makes and halts the run
-if the workflow exceeds budget, hits a sensitive tool, or is
-rate-limited by the policy.
+`@protect` runs the gate before the agent starts. The run is refused if
+the workflow is out of budget, if a tool the agent calls is blocked, or
+if the policy rate-limits the call.
+
+The framework hook reports the token counts of every model call the
+agent makes, so the spend lands on the workflow without any manual
+tracking.
 
 ## See also
 
+- [LLM frameworks](llm-frameworks.md) — the other supported frameworks
 - [Examples → OpenAI Agents](https://github.com/nullrunio/nullrun-examples/blob/master/examples/openai_agents_basic.py)

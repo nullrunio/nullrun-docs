@@ -1,50 +1,53 @@
+---
 title: Workflows
 maturity: stable
-description: Group agent calls into a named workflow, propagate parent_trace_id, and bind cost to a logical unit instead of a single session.
+description: Group agent calls into a named workflow, bind policies and keys to it, and scope a chain across several calls.
+---
+
 # Workflows
 
-A **workflow** is one agent you run. In the dashboard it shows up
-under **Workflows** in the left sidebar. Each workflow has its own
-budget and its own list of API keys.
+A **workflow** is one agent you run. It appears under **Workflows** in
+the sidebar. Each workflow has its own budget, its own policies and
+its own API keys.
 
 ## What you see in the dashboard
 
-The **Workflows** page lists every workflow you've created. Each
+The **Workflows** page lists every workflow in your organization. Each
 row shows:
 
-- The workflow's name (you picked this when you created it)
-- Whether it's **Active**, **Paused**, or **Killed**
-- Total spend for the current billing period
+- The workflow's name
+- Whether it is **Active**, **Paused** or **Killed**
+- Spend for the current period against the cap
 - How many API keys are bound to it
 - When it last saw traffic
 
-Click a workflow to open its detail page. The detail page has six
-tabs:
+Open a workflow for its detail page. The page has six tabs:
 
 | Tab | What it shows |
 |---|---|
-| **Overview** | Name, status (Active / Paused / Killed), current spend vs. the installed budget cap, applied policies, and the **Pause** / **Resume** / **Kill** / **Delete** controls. This is where you change the budget cap. |
-| **Policies** | The policies scoped to this workflow. Rate limit, budget limit, and tool block entries — same primitives as the org-level Policies page, filtered to this workflow. |
-| **Executions** | Every gate call your agent made — allowed, blocked, rate-limited. The raw list the gate uses to decide what your agent can do. |
-| **Traces** | Hierarchical view of one agent run — each LLM call, each tool call, with timing and cost. |
-| **API keys** | The API keys bound to this workflow. Use **Generate API key** in the top-right to mint one; the raw key value is shown only once at creation. |
-| **Coverage** | MCP servers and tools observed on this workflow in the last 30 days, with the "discovered but not registered" panel for un-enrolled servers. |
+| **Overview** | Name, state, spend against the cap, applied policies, and the **Pause**, **Resume**, **Kill** and **Delete** controls. You change the budget cap here. |
+| **Policies** | The policies scoped to this workflow, filtered to this workflow |
+| **Executions** | Every gate call this workflow made — allowed, blocked, rate-limited |
+| **Traces** | The nested view of one run: every LLM call, every tool call, with timing and cost |
+| **API keys** | The keys bound to this workflow. **Generate API key** mints a new one; the value is shown once. |
+| **Coverage** | The tools and MCP servers observed on this workflow, and what is not governed yet |
 
 ## How to create one
 
-1. In the dashboard sidebar, click **Workflows**.
-2. Click **New workflow** in the top right.
-3. Give it a name (e.g. `"production-support-bot"`). The name shows
-   up everywhere — keep it short. Names are 1–255 characters:
-   letters, digits, space, and `_ . , - & ( )` are allowed.
-4. Optionally set an **External ID** — alphanumeric with `-` and
-   `_`, up to 64 characters — for integrations that need to look up
-   the workflow from your own systems (e.g. a GitHub repo name or a
-   customer account id).
-5. Click **Create**. The budget cap is configured on the
-   **Overview** tab after creation via a budget-limit policy or the
-   installed budget control — there is no starting budget on the
-   dialog itself.
+1. Click **Workflows** in the sidebar.
+2. Click **New workflow**.
+3. Give it a name. Names allow letters, digits, spaces and `_ . , - & ( )`,
+   up to 255 characters.
+4. Optionally set an **External ID** — your own identifier for the
+   workflow, so your systems can look it up.
+5. Click **Create**.
+
+You land on the new workflow's detail page. From there:
+
+- **Mint an API key** under the **API keys** tab. The value
+  (`nr_live_...`) is shown **once**.
+- **Point your SDK at it** by exporting `NULLRUN_API_KEY`. The
+  workflow binding happens server-side.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/workflows-list-light.png"
@@ -66,139 +69,97 @@ tabs:
   <figcaption class="nr-shot__caption">Workflows · Create dialog</figcaption>
 </figure>
 
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../../assets/images/screenshots/workflow-detail-light.png"
-       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../../assets/images/screenshots/workflow-detail-dark.png"
-       alt="Workflow detail page — Overview tab with budget card, applied policies, Pause and Kill controls."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">Workflows · Workflow detail</figcaption>
-</figure>
-
-You'll land on the new workflow's detail page. From there:
-
-- **Mint an API key** under the **API keys** tab. The key value
-  (`nr_live_...`) is shown **once** — copy it into your secret
-  manager immediately.
-- **Point your SDK at it**: export `NULLRUN_API_KEY` and the workflow
-  binding happens server-side.
-
 ## How to control one
 
-Each workflow has three states that you control from the dashboard
-or via the API: **Active**, **Paused**, and **Killed**. Both Pause
-and Kill reach your running SDK over a WebSocket push; the agent
-doesn't have to wait for the next call to learn. See
-[Control plane](control-plane.md) for the full contract, the
-exceptions each state raises, and how the signal travels over the
-WebSocket.
+A workflow has three states you control from the dashboard or the API:
+**Active**, **Paused** and **Killed**.
+
+| State | What the agent sees |
+|---|---|
+| Active | Calls run normally |
+| Paused | Protected calls are refused with `WorkflowPausedException` (`NR-W003`) |
+| Killed | Protected calls are refused with the kill signal (`NR-W002`) |
+
+Pause and Kill reach a running agent over a WebSocket push, so the
+agent does not have to wait for its next call to learn. See
+[Control plane](control-plane.md) for the full contract.
+
+Killed is terminal. There is no way back to Active from Killed.
 
 ## The workflow's settings
 
-Five things you control per workflow:
-
-- **Budget** — the per-period cap in cents. Set this first. The
-  dashboard shows a horizontal bar of how much you've spent vs. the
-  cap.
-- **Enforcement mode** — `Hard` (block on budget exceeded) or
-  `Soft` (allow over-budget up to an overdraft cap, when there's an
-  active chain). Full configuration in
+- **Budget** — the per-period cap in cents. The dashboard shows a bar
+  of spend against the cap.
+- **Enforcement mode** — `Hard` (block on budget exceeded) or `Soft`
+  (allow a bounded overdraft when a chain is active). See
   [Policies → BudgetLimit extra fields](policies.md#budgetlimit-extra-fields).
-- **Human approvals** — turn on to require operator approval for
-  dangerous tools (payments, deletes, external API mutations).
-  Available on Growth+ plans.
+- **Human approvals** — require operator approval for sensitive
+  tools. Needs the Approvals feature, on Growth and above.
 - **Tool block list** — the patterns the agent must not call. See
   [Tool policies](tool-policies.md).
-- **Trace retention** — how long to keep detailed per-call traces
-  (default 30 days, plan-gated up to 90).
+- **Trace retention** — how long to keep detailed traces.
 
 ## Chain context
 
-A **chain** is a logical grouping across multiple `@protect` calls
-inside one user request, declared via `with chain(...)`. Chains are
-auto-registered on the first `/gate` call: the chain transitions
-from `null → ACTIVE` atomically.
+A **chain** groups several protected calls that belong to one user
+request. You declare it with the `chain` context manager:
 
-### When chains end
+```python
+import uuid
+import nullrun
 
-A chain dies on the **first** of:
+chain_id = str(uuid.uuid4())
 
-- `op="end"` is reached in the context manager
-- 5 minutes of `/gate` inactivity (idle TTL)
-- `max_chain_duration_seconds` exceeded (default 3600)
+with nullrun.chain(chain_id, op="start"):
+    research()   # first call opens the chain
+    draft()      # later calls continue it
+```
 
-For long streams, send a `POST /heartbeat` every 30 seconds — see
-[Heartbeat → how-to](../how-to/streaming.md#chain-heartbeat).
+`chain_id` **must be a UUID v4**. The SDK validates it in your
+process and raises `ValueError` on a malformed value, so a typo or a
+predictable identifier fails locally instead of silently registering a
+new chain on the server. Generate one with `uuid.uuid4()`.
+
+`op` is the chain operation for the first call inside the block:
+
+| `op` | What it does |
+|---|---|
+| `start` | Open the chain |
+| `continue` | Continue an existing chain |
+| `end` | Close the chain in the same call as the gate decision |
+| `auto` | Register the chain if it is not known, otherwise continue it |
+
+The default is `start`.
+
+### When a chain ends
+
+A chain closes on the **first** of:
+
+- `op="end"`
+- five minutes without a protected call
+- `max_chain_duration_seconds` exceeded, which defaults to 3600
+
+For a long stream, send a heartbeat roughly every 30 seconds. See
+[Heartbeat](../how-to/streaming.md#chain-heartbeat).
 
 ### Why chains exist
 
-Chains exist primarily to enable **soft-mode budget gating**: with
-an active chain, the gate allows the agent to run past its budget
-up to an overdraft cap (`max_overdraft_cents` or
-`max_overdraft_percent`, whichever is lower). Full soft-mode
-contract in
+Chains exist so the gate can tell "one call that happens to be
+expensive" from "a sequence of calls that together cost more than
+the budget". With an active chain, a Soft-mode policy lets the agent
+run past its budget up to the overdraft cap. See
 [Policies → BudgetLimit extra fields](policies.md#budgetlimit-extra-fields).
 
 ## How the workflow ends
 
-A workflow doesn't have an explicit "end" state in the sense of a
-final commit. Instead:
-
-- The workflow stays **Active** across many agent runs. Each run is
-  a sequence of `@protect` calls.
-- A run is **logically ended** when the agent's loop returns or
-  throws.
-- A workflow is **paused** or **killed** when you decide, or when
-  plan limits (max workflows per plan) cause auto-pause.
-
-There is no "clean up the workflow when done" step. Active workflows
-keep their policy, budget, and key bindings. Re-run the agent next
-week and the same workflow handles it.
+A workflow has no end state. It stays **Active** across many runs, and
+each run is a sequence of protected calls. The workflow keeps its
+policies, budget and key bindings. Run the agent again next week and
+the same workflow handles it.
 
 ## See also
 
-- [Budgets](budgets.md) — the budget cap and how rollover works
-- [Policies](policies.md) — what rules attach to a workflow
-- [Control plane](control-plane.md) — how Kill / Pause reach your agent
+- [Budgets](budgets.md) — the budget cap and how the period rolls over
+- [Policies](policies.md) — the rules attached to a workflow
+- [Control plane](control-plane.md) — how Pause and Kill reach the agent
 - [API keys](api-keys.md) — how to mint a key bound to this workflow
-
-!!! info "Deep dive"
-
-    A workflow combines a durable record with a runtime state that
-    the control plane can move between Active, Paused and Killed.
-    Transitions are validated rather than free-form: Killed is
-    terminal, and there is no path out of it, so a workflow that has
-    been killed has to be created again to be used again. Every
-    transition an operator triggers writes an audit entry and is
-    pushed to the agents attached to that workflow, so a manual kill
-    is visible both in the audit log and in the dashboard.
-
-    Delivery is a WebSocket push to connected agents, and it is
-    authenticated per organisation: frames are signed, an upgrade that
-    tries to carry a credential in the query string is refused, and
-    an envelope belonging to a different organisation is dropped
-    rather than forwarded. An agent that cannot hold a WebSocket open
-    falls back to polling, and that path is bounded by a short
-    server-side cache window, so a workflow observed only by polling
-    reflects the new state at most about a minute late. If both
-    channels are unavailable, the agent learns of the kill on its next
-    gate call, which makes the worst case roughly one LLM call.
-
-    A chain is a separate, opt-in construct. It is created on the
-    first gate call inside the context manager and ends on whichever
-    comes first: the context manager closing, a five-minute idle
-    window, or the configured maximum chain duration. The idle window
-    is fixed rather than configurable, so an agent doing long work
-    between calls has to send a heartbeat roughly every thirty
-    seconds or the chain lapses mid-run. Chains exist to give
-    soft-mode budget gating something to reason about — with an active
-    chain the gate can let an agent run past its budget up to an
-    overdraft cap. Nothing else depends on them, and there is no
-    background sweeper: expiry of the idle window is what reaps a
-    chain that was never closed.
-
-    A single state change fans out to several consumers — connected
-    agents, alerting, the dashboard, and policy cache invalidation —
-    so a pause takes effect consistently across enforcement and
-    reporting rather than in one of them.

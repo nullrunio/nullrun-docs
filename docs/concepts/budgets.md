@@ -1,15 +1,16 @@
+---
 title: Budgets
 maturity: stable
-description: Hard and soft budget enforcement, billing-period rollover, and the reserve / consume invariant that protects against implicit re-reservation.
+description: Hard and soft budget enforcement, billing-period rollover, and the reserve-and-consume rule that keeps a single call from being charged twice.
+---
+
 # Budgets
 
-A **budget** is the most important number on the dashboard. It's the
-maximum amount of money a workflow is allowed to spend in a billing
-period. Set it too low and your agent stops working. Set it too high
-and a runaway agent burns through real money before you notice.
+A **budget** is the maximum amount of money a workflow may spend in
+one billing period. Set it too low and your agent stops working. Set
+it too high and a runaway agent burns through real money.
 
-This page covers what the budget controls, how the dashboard shows
-it, and what happens at each boundary.
+Amounts are always in **cents**. `$50.00` is `5000`.
 
 ## Where you see it
 
@@ -24,81 +25,97 @@ Time to exhaustion         ~16 hours at current rate
 
 Three numbers:
 
-- **Spend this period** — total cents spent since the last period
-  rollover. Resets automatically.
+- **Spend this period** — cents spent since the period started. It
+  resets automatically.
 - **Budget** — the cap. Set this in workflow settings.
 - **Time to exhaustion** — at the current rate of spend, when the
-  budget will run out. Useful for "should I raise the cap?".
+  budget runs out.
 
 ## What the budget covers
 
 The budget covers **spend**, not calls. Calls are rate-limited
 separately — see [Policies](policies.md).
 
-"Spend" is calculated from token counts reported by your LLM
-provider. The dashboard knows the per-model pricing for every model
-the SDK tracks:
+"Spend" is calculated from the token counts your LLM provider reports
+and the per-model prices the gateway holds:
 
 - **Input tokens** × input rate
 - **Output tokens** × output rate
-- **Cache read** / **cache write** tokens (if your provider exposes
-  them) at their respective rates
-- **Reasoning tokens** for o1/o3-style models at the reasoning rate
+- **Cache read** and **cache write** tokens, at their own rates
+- **Reasoning tokens**, at the reasoning rate
 
-The total spend is the sum across all `@protect` calls inside the
-workflow, across the current period.
+The total is the sum across every `@protect` call in the workflow, for
+the current period.
 
 ## Periods
 
-A "period" is the window after which the spend counter resets.
-NullRun has two period sources:
+A **period** is the window after which the spend counter resets. The
+period comes from the server, not from your agent.
 
 | Plan | Period source | When it resets |
 |---|---|---|
-| **Lite** (free) | Rolling 1-month window anchored at `organizations.created_at` | One month after signup (e.g. signed up Jun 15 → resets Jul 15, Aug 15, …) |
-| **Paid** (Starter / Growth / Scale) | Your billing cycle (Polar subscription) | Set when you subscribed; on renewal |
+| **Lite** (free) | Rolling one-month window anchored at signup | One month after signup (signed up Jun 15 → resets Jul 15, Aug 15, …) |
+| **Paid** (Starter / Growth / Scale) | Your billing cycle | On renewal |
 
-The dashboard shows the period start and end dates next to the
-spend bar. When the period rolls over, the spend counter resets to
-zero and the budget applies fresh.
+The dashboard shows the period start and end dates next to the spend
+bar. When the period rolls over, the counter resets to zero and the
+budget applies fresh.
 
 ## What happens at the boundary
 
 Three scenarios, depending on the workflow's [enforcement
-mode](policies.md#budgetlimit-extra-fields):
+mode](policies.md#budgetlimit-extra-fields).
 
-### Hard mode (default)
+### Hard mode
 
 ```
 Spending → $49.95 of $50.00
 Next @protect call:        #2.00 projected
 gate decision:             block
 SDK raises:                 NullRunBudgetError (NR-B004)
-with nullrun.guard():     prints the 4-line dev report, sys.exit(1)
+with nullrun.guard():     prints the developer report, sys.exit(1)
 ```
-<figcaption>Hard mode — the projected cost of the next call exceeds the remaining budget. The gate returns `block` before the model runs.</figcaption>
 
-The agent stops cleanly at the boundary. No partial charge — the
-projected cost is reserved when the gate approves, and the actual
-cost is reported after the LLM returns. If the call is denied, no
-charge happens.
+The agent stops at the boundary. The projected cost of the call is
+reserved while the gate approves it, and the actual cost is booked
+after the LLM returns. A refused call is never charged.
 
 ### Soft mode
 
 Soft mode lets the agent run past its budget when an active chain is
 present, up to the configured overdraft cap
 (`max_overdraft_cents` or `max_overdraft_percent`, whichever is
-lower). The chain returns to standard Hard mode once the cap is
-exhausted. See [Policies → BudgetLimit extra fields](policies.md#budgetlimit-extra-fields)
-for the full configuration contract.
+lower). The chain returns to Hard mode once the cap is exhausted. See
+[Policies → BudgetLimit extra fields](policies.md#budgetlimit-extra-fields).
+
+## Reserve and consume
+
+The gate reserves the projected cost of a call, then books the actual
+cost once the call returns. Three rules hold:
+
+- The counter is **period-bound**. The period comes from the server
+  and is fixed for the call, so a reservation and the later booking
+  always land in the same period.
+- The amount is in **cents**. No floating point, no rounding drift.
+- The booking may exceed the reservation by a **fixed-cent epsilon**
+  only. The default is 1¢, and each policy can set its own
+  `consume_epsilon_cents`. A percentage epsilon is not supported.
+- A retry is safe. The reservation and the later booking are both
+  idempotent, so a retried call reuses the stored result instead of
+  charging twice.
+
+An actual cost above the reservation plus the epsilon is **rejected**:
+the commit returns HTTP **422** with the wire code
+`CONSUME_OVERBUDGET`, and the SDK raises
+`NullRunConsumeOverbudgetError` (`NR-O001`). The call is never
+silently re-reserved. The period counter still shows the real
+spend.
 
 ## How to set the budget
 
-The first time you create a workflow, no budget cap is configured.
-`max_budget_cents == 0` means **"no per-key budget configured"** —
-the gate passes through to the org-level plan cap, not "block
-everything" — so the agent runs against the org's default policy
-until you raise the per-key cap.
+A new workflow has no budget cap. A cap of `0` means **no
+per-workflow budget is configured** — the call passes through to the
+org-level plan cap. It does not mean "block everything".
 
 To set the budget:
 
@@ -126,97 +143,47 @@ Reasonable starting budgets:
 | Customer-facing AI feature | $100 (10000 cents) per period, plus an alert at 80% |
 
 The dashboard warns you when spend crosses 80% of the cap and again
-at 100%. Configure alert destinations under **Notifications** in
-the sidebar (Channels + Alert rules + Event subscriptions matrix).
+at 100%. Configure alert destinations under **Notifications** in the
+sidebar.
 
 ## What happens when you change the budget mid-period
 
-- **Raise**: the new cap takes effect immediately. The next gate
-  call uses the new cap.
-- **Lower below current spend**: the agent doesn't get retroactive
-  refunds, but every call from this point onward rejects until the
-  spend drops (which only happens at period rollover, since the
-  counter is monotonic within a period).
-
-## Why cents, not dollars
-
-The dashboard stores everything in cents to avoid floating-point
-rounding in pricing math. The `budget_cents` field in the API is
-always an integer. If you set `budget_cents: 5000`, your cap is
-exactly $50.00, no rounding errors.
-
-## Reservation and consumption
-
-The gate reserves your projected cost before the model runs and
-reconciles the actual cost after. If the LLM call returns a cost
-that meaningfully exceeds the reservation, the `/track` commit
-rejects with `CONSUME_OVERBUDGET` (HTTP **422**, `error_code = "NR-O001"`) — no implicit re-reserve, ever. The tolerance is a
-fixed cents value (`policies.consume_epsilon_cents`, default **1¢**);
-no percentage-based epsilon is supported.
+- **Raise** — the new cap applies to the next gate call.
+- **Lower below current spend** — no refund is issued. Every call
+  from that point is refused until the period rolls over, because the
+  counter does not go down inside a period.
 
 ## Approximate budget endpoint
 
-If you want to show "you've used X of Y" in a custom dashboard or
-notification without enrolling in the full NullRun dashboard, the
-gateway exposes an approximate-spend endpoint:
+To show "you have used X of Y" in a custom dashboard or a
+notification, the gateway exposes an approximate-spend endpoint:
 
 ```bash title="shell"
-curl "https://api.nullrun.io/api/v1/budget/approximate" \
-  -H "Authorization: Bearer ***"
+curl -sS "https://api.nullrun.io/api/v1/budget/approximate" \
+  -H "Authorization: Bearer ${NULLRUN_API_KEY}"
 ```
 
-The response carries `current_spend_cents_estimate`, an
-`is_approximate: true` flag, a `source` field, a `confidence` level
-(`High` / `Medium` / `Low`), and `last_updated_at`. **Use this for
-display only** — never for enforcement, rate-limit logic, or
-agent-side gating. When the source is unavailable the endpoint
-returns `503 BUDGET_DATA_UNAVAILABLE`; render that as "data
-unavailable", never as `≈ $0 spent`.
+The response carries:
+
+| Field | Meaning |
+|---|---|
+| `org_id` | The organization the key belongs to |
+| `current_spend_cents_estimate` | Estimated spend for the current period, in cents |
+| `is_approximate` | Always `true` |
+| `source` | Where the number came from: `redis_period`, `postgres_outbox`, `last_known_redis` or `ui_local_cache` |
+| `confidence` | `high`, `medium` or `low` |
+| `last_updated_at` | ISO-8601 UTC timestamp of the read |
+
+**Use this for display only.** Never for enforcement, rate-limit logic
+or agent-side gating. When no source is available the endpoint returns
+**503** with `error_code = "BUDGET_DATA_UNAVAILABLE"`. Render that as
+"data unavailable", never as `≈ $0 spent` — a missing figure and an
+empty one are different claims.
 
 ## See also
 
 - [Workflows](workflow.md) — where the budget lives
-- [Policies](policies.md) — rate limits (separate from budget) and soft-mode fields
-- [Troubleshooting](../troubleshooting.md#why-is-my-call-being-rejected-with-nullrunblockedexception)
-
-!!! info "Deep dive"
-
-    Spend is counted per organization per billing period. The period
-    start is computed once, server-side, and bound into every
-    reservation made for an execution, so the gate decision and the
-    later commit for the same call always land in the same period even
-    when a rollover happens in between. Spend within a period is
-    monotonic: it returns to zero only when the period ends.
-
-    Enforcement uses the lower of the organization ceiling and the
-    workflow budget, and the organization ceiling is always strict. In
-    soft mode an active chain may overdraw by the lower of the
-    configured cent and percentage allowances, and concurrent chains
-    share that one allowance rather than each earning their own. The
-    gate reserves the projected cost before the model runs; the actual
-    cost is reported afterwards and must fit inside the reserved amount
-    plus a fixed tolerance, one cent by default and configurable per
-    policy. A cost above that tolerance is never silently re-reserved:
-    the commit is rejected with `CONSUME_OVERBUDGET` while the period
-    counter still reflects the real spend. The tolerance is a fixed
-    number of cents rather than a percentage, so the drift a bad
-    projection can absorb does not grow with the size of the budget.
-
-    Reservation and commit are both idempotent. A retry that arrives
-    between a successful reservation and the recording of its result
-    finds the reservation already in place and is told so, rather than
-    reserving twice. A repeated commit for the same reservation either
-    replays the original outcome or repeats the same rejection. The
-    authorized amount is sealed when the gate decides, so a commit
-    cannot re-check it against a cap tightened afterwards; the new cap
-    governs the next call, not the one already in flight.
-
-    The approximate-spend endpoint resolves its answer from the
-    fast-path counter, the durable record, and the last known value, in
-    that order, and reports a confidence level so the caller can
-    qualify the number. It is advisory. When every source is
-    unavailable it returns 503 rather than zero, because a missing
-    figure and an empty one are different claims. A reservation that is
-    never committed expires after a bounded window; a commit arriving
-    after that is reported as a missing reservation, and the caller
-    must gate again to obtain a fresh one.
+- [Policies](policies.md) — rate limits and the soft-mode fields
+- [Error handling](error-handling.md) — the exception each refusal
+  raises
+- [Troubleshooting](../troubleshooting.md#the-call-is-rejected-with-nullrunblockedexception)

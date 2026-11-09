@@ -1,81 +1,79 @@
 ---
-title: Multi Agent
-description: Run multiple agents in one workflow, propagate parent_trace_id, and aggregate cost across the team.
+title: Several agents on one host
+description: Run several agents on one host. Each API key binds to one workflow, and each process holds one runtime.
+maturity: stable
 ---
 
-# Run multiple agents (multi-key / multi-process)
+# Run several agents on one host
 
-The SDK's runtime is a process-scoped singleton — transport pool,
-WebSocket subscription, and event batch buffer — created lazily on
-the first `@protect` call. The supported pattern is one runtime per
-process and one process per workflow key.
+Two rules shape every deployment:
 
-For everything beyond a single one-shot script, run **one process per
-key**. This page shows the three patterns that cover real workloads.
+1. An API key binds to one workflow.
+2. The SDK holds one runtime per process.
 
-## Pattern 1 — multiple agents on one host (one process per key)
+So N workflows on one host means N processes. This page shows the three
+patterns that cover real deployments.
 
-The simplest production deployment. Each workflow gets its own
-process, its own env var, its own log stream. Common supervisors
-include systemd, Docker Compose, and Kubernetes — pick whichever
-fits the platform. The rule is the same regardless of supervisor:
-each process gets its own `NULLRUN_API_KEY` so the dashboard's
-**Workflows** view shows separate per-workflow spend, kill/pause
-works independently, and you can restart one without affecting the
-other.
+For sub-agents that share one workflow inside one process, see
+[Multi-agent orchestration](multi-agent-orchestration.md).
 
-## Pattern 2 — fan-out inside one container (multiprocessing.Pool)
+## Pattern 1 — one process per key
 
-When you have one entrypoint but N workflows to run, use
-`multiprocessing.Pool` so each child initializes its own SDK runtime
-and its own key:
+Each workflow gets its own process, its own environment variable, and
+its own log stream. Any supervisor works: systemd, Docker Compose, or
+Kubernetes.
+
+The rule does not change with the supervisor. Give each process its own
+`NULLRUN_API_KEY`:
+
+```bash title="service.env"
+NULLRUN_API_KEY=nr_live_replace_me
+```
+
+The dashboard then shows separate spend per workflow, kill and pause
+work independently, and you can restart one without touching the
+others.
+
+## Pattern 2 — fan out inside one container
+
+Use a process pool when one entrypoint has N workflows to run. Each
+child builds its own runtime from its own key.
 
 ```python title="fanout.py"
 import multiprocessing as mp
-import nullrun
+import os
+
 from nullrun import protect
 
 
-def _agent_main(key: str, prompt: str) -> str:
-    # Each child process lazily initializes its own runtime from
-    # NULLRUN_API_KEY on the first @protect call. To force a specific
-    # key per child, set NULLRUN_API_KEY in the subprocess env.
-    import os
+def _run_one(job: tuple[str, str]) -> str:
+    key, prompt = job
+    # The runtime is created lazily on the first @protect call, so the
+    # key has to be in the environment before that happens.
     os.environ["NULLRUN_API_KEY"] = key
 
     @protect
-    def step(p: str) -> str:
-        return your_llm_call(p)
+    def step(text: str) -> str:
+        return call_model(text)
 
     return step(prompt)
 
 
 def fan_out(jobs: list[tuple[str, str]]) -> list[str]:
-    # jobs is [(key, prompt), ...] — one key per workflow.
-    with mp.Pool(processes=len(jobs)) as pool:
-        async_results = [
-            pool.apply_async(_agent_main, args=(k, p))
-            for k, p in jobs
-        ]
-        return [r.get(timeout=120) for r in async_results]
+    # "spawn" gives every child a fresh interpreter and a fresh runtime.
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(processes=len(jobs)) as pool:
+        return pool.map(_run_one, jobs)
 ```
 
-Each child gets its own copy of the SDK state, so each runtime
-initializes lazily and cleanly with no shutdown collisions. **Do
-not** share a runtime across children — that's the multi-key-in-one-
-process anti-pattern and you'll get shutdown warnings the moment the
-first child finishes.
+Use the `spawn` start method. The `fork` method copies the parent's
+runtime into the child, and the child then reports to the parent's
+workflow with the parent's key.
 
-Pick the pool start method that matches your platform (see the
-`multiprocessing` docs). The rule is the same regardless: each child
-is a fresh interpreter and initializes its own runtime on the first
-`@protect` call.
+## Pattern 3 — one subprocess per request
 
-## Pattern 3 — one entrypoint, multiple keys, hard process boundary
-
-If you have one CLI / API server that needs to handle requests for
-many workflows, route at the **process level** rather than the
-**function level**:
+Route at the process level when one CLI or API server handles requests
+for many workflows.
 
 ```python title="router.py"
 import os
@@ -83,8 +81,6 @@ import subprocess
 
 
 def run_workflow(key: str, prompt: str) -> str:
-    """Spawn a fresh subprocess for each request. Each one is its own
-    SDK singleton, so multi-key isolation is automatic."""
     result = subprocess.run(
         ["python", "agent.py", prompt],
         env={**os.environ, "NULLRUN_API_KEY": key},
@@ -96,32 +92,29 @@ def run_workflow(key: str, prompt: str) -> str:
     return result.stdout
 ```
 
-The subprocess startup cost (~150 ms for the lazy runtime init +
-WebSocket connect) is the price for clean isolation. For high-
-throughput paths, see Pattern 2 — multiprocessing keeps workers warm
-in a pool.
+Each subprocess is its own interpreter with its own runtime, so the
+isolation is automatic. The price is process startup on every request.
+For a steady stream of requests, Pattern 2 keeps workers warm.
 
-## What doesn't work
+## Why not several keys in one process
 
-Mixing multiple keys in one process leads to interleaved events on
-the wrong workflow. The supported alternative is one process per key
-(Pattern 1) or one subprocess per request (Pattern 3).
+The runtime is a process-wide singleton. A second `init()` call shuts
+the first runtime down, so one process cannot hold two keys at once.
 
-## What if I want a single dashboard view across all my processes?
+The failure mode of forcing it is interleaved events: calls land on the
+workflow of whichever key the runtime happens to hold, and the dashboard
+shows a spend that belongs to no single workflow.
 
-You don't need anything special — the dashboard already aggregates per
-workflow across all processes holding that workflow's key. As long as
-every subprocess binds to the **same** workflow (i.e. uses the same
-key), all their `/gate` and `/track` calls land on the same workflow
-record in the backend.
+## One workflow across many processes
 
-The case where this **doesn't** hold is the "many workflows, one
-process" anti-pattern above: prior workflow's events have already
-gone to the prior key's workflow.
+The dashboard already aggregates every process that holds the same key
+under one workflow record. Several workers with the same key produce
+one workflow with the combined spend.
 
 ## See also
 
+- [Multi-agent orchestration](multi-agent-orchestration.md) — sub-agents
+  inside one process
+- [Concepts → API keys](../concepts/api-keys.md) — how a key binds to a
+  workflow
 - [Configuration → env vars](../getting-started/configuration.md)
-- [Concepts → API keys](../concepts/api-keys.md) — workflow-scoping
-  and the `1:1` binding between key and workflow
-- [Concepts → Workflow context](../concepts/workflow.md)

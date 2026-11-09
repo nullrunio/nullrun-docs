@@ -1,32 +1,47 @@
 ---
-title: Ci Cd
-description: Fail-CLOSED gate integration in CI, with smoke-test scripts that verify the gate is reachable before a deploy.
+title: CI/CD integration
+description: Run a synthetic load against a pre-prod gateway in CI, and fail the build when the gate refuses.
+maturity: stable
 ---
 
 # CI / CD integration
 
-Wire NullRun into your build pipeline so policy mistakes are caught
-before they hit production. The pattern uses
-[`synthetic_sdk_load.py`](https://github.com/nullrunio/nullrun-examples)
-— a CLI tool from the official examples repo that drives the real
-SDK against the real gateway with no LLM cost.
+Wire NullRun into the build so a policy mistake is caught before it
+reaches production.
 
-## Pre-prod validation pattern
+The check drives the real SDK against a real gateway with synthetic
+token counts. No LLM provider is called, so the job costs nothing and
+spends no provider tokens.
 
-```mermaid
-flowchart LR
-    A[CI job] --> B[set NULLRUN_API_KEY to pre-prod key]
-    B --> C[synthetic_sdk_load.py<br/>--interval 0.1 --workers 20<br/>--requests 1000 --yes]
-    C --> D{policy OK?}
-    D -- yes --> E[deploy to prod]
-    D -- no --> F[fail build]
-```
+## The load tool
 
-`/gate` runs through the **same policy** your production key uses,
-just with synthetic tokens. The exit code tells your CI whether the
-policy misbehaved.
+The examples repo ships a CLI for this:
+[`synthetic_sdk_load.py`](https://github.com/nullrunio/nullrun-examples/blob/master/tools/synthetic_sdk_load.py).
 
-## GitHub Actions example
+It runs the public SDK path. Each call sends a gate request, then a
+tracking request with random token counts.
+
+| Flag | Meaning |
+|---|---|
+| `--interval` | Seconds between call launches |
+| `--duration` | Duration cap in seconds |
+| `--requests` | Request cap. `0` uses the duration cap only |
+| `--workers` | Maximum concurrent calls |
+| `--model` | Model name reported for the synthetic calls |
+| `--min-tokens`, `--max-tokens` | Range the random token counts fall in |
+| `--seed` | Seed for the random generator |
+| `--dry-run` | Schedule locally without sending anything |
+| `--yes` | Skip the confirmation prompt |
+
+Exit code:
+
+| Code | Meaning |
+|---|---|
+| `0` | Every call succeeded |
+| `1` | At least one call failed |
+| `2` | The confirmation was declined |
+
+## GitHub Actions
 
 ```yaml title=".github/workflows/pre-prod.yml"
 name: pre-prod-validation
@@ -39,116 +54,105 @@ jobs:
   nullrun-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      NULLRUN_API_URL: ${{ secrets.NULLRUN_PRE_PROD_URL }}
+      NULLRUN_API_KEY: ${{ secrets.NULLRUN_PRE_PROD_KEY }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install load tool
+      - name: Install the SDK and the load tool
         run: |
-          git clone https://github.com/nullrunio/nullrun-examples.git
-          pip install -e nullrun-examples
+          git clone --depth 1 https://github.com/nullrunio/nullrun-examples.git
+          pip install nullrun
 
-      - name: Run synthetic load
-        env:
-          NULLRUN_API_KEY: ${{ secrets.NULLRUN_PRE_PROD_KEY }}
-          NULLRUN_API_URL: ${{ secrets.NULLRUN_PRE_PROD_URL }}
+      - name: 1. Health check
+        run: curl -fs "${NULLRUN_API_URL}/health/live"
+
+      - name: 2. Capabilities probe
+        run: |
+          curl -fs "${NULLRUN_API_URL}/api/v1/capabilities" | python -c '
+          import json, sys
+          payload = json.load(sys.stdin)
+          caps = payload.get("capabilities") or {}
+          flags = (
+              "server_minted_execution_id",
+              "per_execution_reservations",
+              "heartbeat_time_based",
+          )
+          missing = [f for f in flags if not caps.get(f)]
+          assert not missing, "gateway is not ready: " + ", ".join(missing)
+          lo = payload["min_protocol_version"]
+          hi = payload["max_protocol_version"]
+          assert lo <= 4 <= hi, f"gateway accepts protocol {lo}..{hi}, the SDK sends 4"
+          '
+
+      - name: 3. Synthetic load
+        working-directory: nullrun-examples
         run: |
           set -euo pipefail
-          python -m synthetic_sdk_load \
+          python tools/synthetic_sdk_load.py \
             --interval 0.05 \
             --workers 10 \
             --requests 200 \
             --model gpt-4o-mini \
             --yes
-          echo "load passed"
 ```
 
-`synthetic_sdk_load.py` exits `1` on any exception (network error,
-budget block, etc.) and `0` on a clean run. `set -euo pipefail`
-ensures the step fails fast on any error. The exit code is your CI
-gate.
+`set -euo pipefail` makes the step fail on the first error. The exit
+code of the load tool is the CI gate.
 
-## Common failure modes
+## The checks
 
-| Failure | What it means | Fix |
+**The health check** confirms the gateway answers. It reads no
+organization data, so it needs no key.
+
+**The capabilities probe** confirms the gateway speaks the wire
+contract the SDK needs. Three flags must be true:
+`server_minted_execution_id`, `per_execution_reservations`, and
+`heartbeat_time_based`. The endpoint sits outside the protocol-gated
+routes, so it answers without the protocol header.
+
+The SDK sends `X-NULLRUN-PROTOCOL: 4`. The gateway advertises the
+range it accepts as `min_protocol_version` and `max_protocol_version`.
+
+**The synthetic load** runs the gate for real. It catches:
+
+- a budget cap that is too tight for the traffic
+- a rate limit that refuses the traffic
+- a key that is missing, revoked, or bound to another organization
+- a policy that refuses every call
+
+## What the load does not catch
+
+- **Real spend.** The token counts are random. Use a staging workflow
+  with a small cap for a cost estimate.
+- **Pricing for a model.** Check the cost view in the dashboard after
+  one real call.
+- **Kill and pause.** The synthetic load does not exercise the
+  control-plane paths. Trigger them by hand during a release
+  checklist.
+- **Your tool names.** The load tool gates a function of its own. It
+  tells you the tool policy refuses calls, not which of your tool
+  names it refuses.
+
+## The manual step
+
+An approval flow needs a human to click **Approve**. Run it by hand on
+every release candidate. See
+[Human approval](../concepts/human-approval.md).
+
+## Common failures
+
+| Symptom | Meaning | Fix |
 |---|---|---|
-| `NullRunBudgetError` on every request | Your pre-prod budget is too tight for synthetic traffic | Raise `budget_cents` on the pre-prod workflow, or use a higher-cap test key |
-| `429 NR-R001` | `max_calls_per_minute` is too low for the synthetic load | Raise the rate limit on the pre-prod workflow |
-| Connection refused / DNS error | `NULLRUN_API_URL` is wrong or the gateway is down in this environment | Verify the URL; add a `/health/live` check before the load step |
-| HMAC 401 | `NULLRUN_SECRET_KEY` is not set in CI | Add the secret to the repo / org / environment secrets store |
-
-## What this catches
-
-- **Budget too tight** — if a developer sets `budget_cents: 100` on a
-  workflow that needs `$50/day` to run, the pre-prod load surfaces
-  it before prod.
-- **Tool block too broad** — a `ToolBlock` pattern that
-  accidentally matches every tool name surfaces as `NR-T001`
-  on every call.
-- **Workflow not bound to the right key** — if the pre-prod key was
-  rotated but the workflow binding is stale, the load fails with a
-  clean 401 instead of mysteriously going through.
-- **Soft-mode misconfiguration** — if the policy says `Soft` but no
-  `max_overdraft_cents` is set, every over-budget call hits a hard
-  block. The smoke load exposes this.
-
-## What this does **not** catch
-
-- **Real LLM cost** — synthetic tokens are random, not actual spend.
-  Run `synthetic_sdk_load.py` for policy shape; use a real staging
-  workflow with a small `budget_cents` for cost projections.
-- **Per-model pricing drift** — verify your models are priced
-  correctly by checking the dashboard **Cost** tab after one real
-  call.
-- **WS push timing** — synthetic load doesn't exercise kill/pause
-  paths. Trigger them manually via the dashboard during the
-  smoke-test pass.
-
-## Pipeline integration checklist
-
-Add these checks to your CI before merging anything that touches the
-SDK, the gateway, or policy configuration:
-
-```yaml title=".github/workflows/pre-prod.yml"
-jobs:
-  nullrun-smoke:
-    steps:
-      - name: 1. Health check
-        run: |
-          curl -fs "${NULLRUN_API_URL}/health/live" \
-            || (echo "gateway down" && exit 1)
-
-      - name: 2. Synthetic load
-        env: { NULLRUN_API_KEY: ${{ secrets.NULLRUN_PRE_PROD_KEY }} }
-        run: python -m synthetic_sdk_load --interval 0.05 --workers 10 --requests 200 --yes
-
-      - name: 3. Capabilities probe
-        run: |
-          # Verify the gateway is v3-ready before promoting to prod.
-          # /api/v1/capabilities returns a nested `capabilities: {}` object
-          # (protocol v3.18+). All three flags must be true for the v3 wire
-          # contract; mirrors ServerCapabilities.is_v3_ready() in the SDK.
-          curl -fs "${NULLRUN_API_URL}/api/v1/capabilities" \
-            | python -c "import json,sys; c=json.load(sys.stdin)['capabilities']; \
-              assert c['server_minted_execution_id'] \
-                and c['per_execution_reservations'] \
-                and c['heartbeat_time_based'], \
-              'gateway not v3-ready — server_minted_execution_id, per_execution_reservations, and heartbeat_time_based must all be true'"
-
-      - name: 4. Approval pause/resume (manual)
-        # Trigger an approval-required call, click approve in the
-        # dashboard, confirm the SDK resumes without throwing.
-        run: echo "manual step — see docs/how-to/human-approval.md"
-```
-
-Step 4 is manual by design — the approval pause/resume flow requires
-a human to click Approve in the dashboard, which a CI job can't
-do. Run it on every release candidate as part of the release
-checklist.
+| The tool exits `1` and prints a configuration report | `NULLRUN_API_KEY` is missing | Add the key to the job secrets |
+| Every call raises a budget refusal | The pre-prod cap is too tight for the load | Raise the cap on the pre-prod workflow |
+| Every call raises a rate-limit refusal | The rate limit is below the load rate | Raise the rate limit on the pre-prod workflow |
+| The health check fails to connect | `NULLRUN_API_URL` is wrong | Point it at the pre-prod gateway |
+| The capabilities probe reports a missing flag | The gateway is older than the SDK expects | Upgrade the gateway before the deploy |
 
 ## See also
 
-- [`synthetic_sdk_load.py`](https://github.com/nullrunio/nullrun-examples)
-- [Troubleshooting](../troubleshooting.md) — common failure modes
-  and how to read SDK logs
+- [Troubleshooting](../troubleshooting.md) — how to read SDK logs
 - [Configuration → env vars](../getting-started/configuration.md)
-- [Reference → HTTP API → Capabilities](../reference/http-api.md#capabilities)
+- [HTTP API → Capabilities](../reference/http-api.md#capabilities)

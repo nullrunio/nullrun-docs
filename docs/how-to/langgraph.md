@@ -1,16 +1,23 @@
 ---
-title: Langgraph
-description: Auto-instrument a LangGraph agent with @protect, or wrap nodes manually when you need fine-grained control over the gate decision.
+title: LangGraph agent
+description: Gate and cost-track a LangGraph agent with @protect. No vendor extra is needed.
+maturity: stable
 ---
 
 # Protect a LangGraph agent
 
-The SDK auto-patches LangGraph on the **first `@protect` call** —
-no manual wrapper needed for the common case.
+The SDK attaches to LangGraph on its own. Instrumentation goes in when
+`init()` runs, and again on the first `@protect` call, so a graph that
+is compiled after either point is covered.
+
+No vendor extra is needed. Install LangGraph and whatever chat model
+client you use next to the SDK.
 
 ```bash title="shell"
 pip install nullrun langgraph langchain-openai
 ```
+
+## The wiring
 
 ```python title="langgraph_agent.py"
 from langchain_openai import ChatOpenAI
@@ -18,13 +25,13 @@ from langgraph.graph import END, MessagesState, StateGraph
 
 from nullrun import protect
 
-# The runtime + LangGraph Pregel hook are attached lazily on
-# the first @protect call.
 llm = ChatOpenAI(model="gpt-4o-mini")
+
 
 @protect
 def chat(state: MessagesState):
     return {"messages": [llm.invoke(state["messages"])]}
+
 
 graph = StateGraph(MessagesState)
 graph.add_node("chat", chat)
@@ -35,31 +42,52 @@ app = graph.compile()
 result = app.invoke({"messages": [{"role": "user", "content": "Hi"}]})
 ```
 
-Every LLM call inside the graph is now cost-attributed and gated by
-your workspace policy. The same auto-instrumentation path works for
-any LangChain `Runnable` and most LangGraph node types.
+Every LLM call in the graph is cost-attributed and gated. The
+`@protect` wrapper on the node is the gate boundary: the gateway
+decides before the node body runs.
 
-## Manual wrapper
+## When the automatic attachment misses the graph
 
-If you need to attach the callback manually — e.g. inside a library
-that re-compiles graphs after the runtime was created — the explicit
-form is:
+Two cases need a different wiring:
 
-```python title="langgraph_manual_wrapper.py"
-from nullrun.instrumentation.auto import patch_langgraph_compiled
+- the graph is compiled in a worker thread, or
+- LangGraph is imported after the first `@protect` call has already
+  run.
 
-patch_langgraph_compiled()  # idempotent — safe to call repeatedly
+Wrap the entry point instead of the graph. Every invocation passes
+through that function, so the gate fires once per run:
+
+```python title="langgraph_entrypoint.py"
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, MessagesState, StateGraph
+
+from nullrun import protect
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+def chat(state: MessagesState):
+    return {"messages": [llm.invoke(state["messages"])]}
+
+
+graph = StateGraph(MessagesState)
+graph.add_node("chat", chat)
+graph.add_edge("chat", END)
+graph.set_entry_point("chat")
 app = graph.compile()
+
+
+@protect
+def run_agent(prompt: str) -> str:
+    result = app.invoke({"messages": [{"role": "user", "content": prompt}]})
+    return result["messages"][-1].content
 ```
 
-`patch_langgraph_compiled` wraps every compiled app's `.invoke` and
-`.stream` methods to inject the NullRun callback into the LangChain
-`config["callbacks"]` list per call. The control-plane kill/pause
-subscription is **independent** — it starts on the first `@protect`
-call and works for every protected call in the process regardless of
-whether you used the manual patch or the auto-instrumentation path.
+This also keeps `app` a plain compiled graph, so an `isinstance` check
+against the graph class in your own code keeps working.
 
 ## See also
 
 - [Quickstart](../getting-started/quickstart.md)
+- [LLM frameworks](llm-frameworks.md) — the other supported frameworks
 - [Examples → LangGraph](https://github.com/nullrunio/nullrun-examples/blob/master/examples/langgraph_basic.py)

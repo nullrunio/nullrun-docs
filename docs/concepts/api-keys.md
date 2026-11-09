@@ -1,56 +1,47 @@
+---
 title: API keys
 maturity: stable
-description: Scopes, two-phase rotation, revocation, and the binding between an API key, its workflow, and its policy cache.
+description: Create a key, bind it to a workflow, rotate it, and revoke it — and what the HMAC secret is for.
+---
+
 # API keys
 
 An **API key** is how your code authenticates with the NullRun
-gateway. The key identifies a single workflow, gives the agent the
-permissions it needs, and (optionally) expires on a date you choose.
+gateway. The key identifies one workflow, carries the scopes the key
+may use, and optionally expires on a date you choose.
 
-## Where you see it in the dashboard
+## Where you see it
 
-API keys live under **Access → API keys** in the left sidebar. The
-counter at the top of the page (`N / <plan-cap>`) tells you how many
-keys your org has versus your plan's cap. The page shows every key
-with its name, workflow, last-used timestamp, and expiration date.
+API keys live under **Access → API keys** in the sidebar. The counter
+at the top of the page shows how many keys your organization has
+against your plan's cap.
 
-Per-plan key cap: Lite = 10, Starter = 15, Growth = 100,
-Scale = 350, Enterprise = unlimited (see
-[Billing & Plan → Per-tier caps](billing.md#per-tier-caps)). The
-cap is enforced server-side — the create handler rejects with
-`plan_limit_exceeded` once you hit it.
+| Plan | Keys |
+|---|---|
+| Lite | 10 |
+| Starter | 15 |
+| Growth | 100 |
+| Scale | 350 |
+| Enterprise | Unlimited |
 
-## The mental model
-
-Each workflow needs at least one API key to run. The key is what the
-SDK uses to identify itself when it talks to the gateway. The gateway
-uses the key to look up:
-
-- Which workflow is calling (so it can apply the right policies)
-- Which permissions the key has (`gate` / `execute` / `track` / `verify`)
-- Whether the key is still valid (not revoked, not expired)
-
-You mint keys through the dashboard, paste them into your
-application's environment, and the SDK takes care of the rest.
+The cap is enforced by the server. Creating a key past the cap is
+refused with `plan_limit_exceeded`.
 
 ## How to create a key
 
 1. **Access → API keys → New API key**.
-2. Pick a workflow to bind the key to. The dropdown lists every
-   workflow in your org. (Each key is **workflow-scoped** — one key
-   represents one agent run, not one workspace.)
-3. Pick an **Expires** window: **Never** (default), **24 hours**,
-   **7 days**, **30 days**, or **90 days**. Keys without an
-   expiration are valid until revoked.
-4. Click **Create**.
+2. Give the key a **name**. It shows up in the list and in the audit
+   log, so make it descriptive.
+3. Pick the **workflow** the key belongs to. A key belongs to exactly
+   one workflow, and the gateway uses that binding to apply the right
+   policies. The server refuses a key with no workflow.
+4. Pick an **expiration**: **Never**, **24 hours**, **7 days**,
+   **30 days**, or **90 days**. A key with no expiration works until
+   you revoke it.
+5. Click **Create**.
 
-Scopes (`gate` / `execute` / `track` / `verify`) are auto-assigned
-to every new key and are not user-customizable in the dialog — the
-gateway needs all four to do its job.
-
-The dashboard shows the new key value **once** — a string starting
-with `nr_live_...`. Copy it into your secret manager **immediately**.
-The dashboard will never show it again.
+The dashboard shows the key value **once**. Copy it into your secret
+manager immediately.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/api-keys-list-light.png"
@@ -72,172 +63,150 @@ The dashboard will never show it again.
   <figcaption class="nr-shot__caption">API keys · New key dialog</figcaption>
 </figure>
 
-## What's in the response
+## What you get back
 
-When you create a key, the dashboard shows:
+| Field | What it is |
+|---|---|
+| **Key** | The public value, starting with `nr_live_`. The SDK sends it on every request. |
+| **HMAC secret** | A second secret that signs requests. The SDK reads it from `NULLRUN_SECRET_KEY`. |
+| **Prefix** | A short non-secret fragment of the key. It identifies the key in list views and logs. |
+| **Workflow** | The workflow the key is bound to. |
+| **Scopes** | The permissions the key carries. |
 
-- **Key** — the public value (`nr_live_xxx...`). Use this in your SDK.
-- **HMAC secret key** — a second 32-byte hex string for request
-  signing. Treat it like a password; never commit it to source
-  control. The SDK stores it under `NULLRUN_SECRET_KEY`.
-- **Key prefix** — the first 12 characters, used in list views.
-- **Workflow** — the bound workflow (you picked this on creation).
-- **Scopes** — the permissions you granted.
+Both secrets are shown exactly once. After you close the dialog they
+are gone. If you lose them, rotate the key.
 
-The dashboard shows the full key and secret **exactly once**. After
-you close the modal, the values are gone forever. If you lose them,
-you must rotate the key (see below).
+## Using the key in the SDK
 
-## How the SDK uses the key
-
-The SDK needs two values from you:
+The SDK reads two environment variables:
 
 ```bash title="env"
 export NULLRUN_API_KEY=nr_live_xxx...
 export NULLRUN_SECRET_KEY=...
 ```
 
-The `api_key` is the public value the SDK sends on every request.
-The `hmac_secret` is used for HMAC-SHA256 request signing — the
-gateway verifies every request came from a holder of the secret.
+```python
+import nullrun
 
-In production deployments, HMAC is required. Without it, every SDK
-request returns 401.
+nullrun.init()  # reads NULLRUN_API_KEY from the environment
 
-The runtime is created lazily on the first `@protect` call from
-`NULLRUN_API_KEY`. Set `NULLRUN_API_KEY` (and `NULLRUN_SECRET_KEY`
-for HMAC) in the environment before the first protected call runs:
-
-```bash title="env"
-export NULLRUN_API_KEY=nr_live_xxx...
-python my_agent.py
+@nullrun.protect
+def my_agent(prompt):
+    return call_llm(prompt)
 ```
 
-The HMAC secret is read from `NULLRUN_SECRET_KEY` in the
-environment. It is set once per process.
+`NULLRUN_API_URL` overrides the gateway URL if you point the SDK at
+your own deployment.
+
+The API key identifies the caller. The HMAC secret proves the request
+came from the holder of that secret: the SDK signs the request and the
+gateway verifies the signature. Set the secret whenever the key has
+one.
+
+The runtime is created lazily on the first `@protect` call. Set the
+environment variables, then start your agent.
 
 ## Scopes
 
-Each key has a list of permissions — what it can do. Only the four
-values below are accepted; any other value is rejected at the API
-key creation step.
+A scope says what a key may do. Every new key gets the full set.
 
 | Scope | What it allows |
 |---|---|
-| `gate` | Call `/api/v1/gate` (the policy decision endpoint). Required for any `@protect`-wrapped call. |
-| `execute` | Call `/api/v1/execute` (the post-approval re-check after a `require_approval` decision). |
-| `track` | Call `/api/v1/track` (the spend tracking endpoint). Required for any LLM call. |
-| `verify` | Call `/api/v1/auth/verify` (the auth handshake on first use). Almost always needed. |
-| `*` | Wildcard — all of the above. The default if you don't specify. |
+| `gate` | Ask the gateway for a policy decision on a protected call |
+| `execute` | Re-check a call after an approval was granted |
+| `track` | Report the token counts and cost of a completed call |
+| `verify` | Complete the authentication handshake on first use |
+| `*` | All of the above |
 
-For most agents, the defaults work. A telemetry-only ingestor needs
-just `track`. A read-only CI checker needs just `verify`.
+Most agents need all four. A telemetry-only ingestor needs `track`.
+A read-only checker needs `verify`.
 
-## How to rotate a key
+## Rotating a key
 
-Rotating creates a new key and invalidates the old one. In-flight
-calls finish normally.
+Rotation issues a **new key value**. The new key keeps the old key's
+name, scopes, workflow binding and HMAC secret, so it does the same
+job — only the value changes.
 
-## How to revoke a key
+The old key keeps working for a grace window. Deploy the new value
+first, confirm the agent still runs, then revoke the old key. Nothing
+breaks in between.
 
-Revoking means deleting the key. Useful when:
+```bash title="shell"
+curl -X POST "https://api.nullrun.io/api/v1/orgs/$ORG_ID/api-keys/$KEY_ID/rotate" \
+  -H "Authorization: Bearer $NULLRUN_ADMIN_TOKEN"
+```
 
-- The key was leaked publicly
-- The agent is decommissioned
-- The workflow is being deleted
+The response carries the new key value. It is shown once.
 
-Use `POST /api/v1/orgs/{org_id}/api-keys/{key_id}/rotate` first to
-generate a replacement, then `DELETE` the old one.
+## Revoking a key
 
-The key stops working immediately — no grace period.
+Revoking stops the key. The next request with that key is refused
+with `401 API_KEY_REVOKED`. There is no grace period.
+
+Revoke a key when:
+
+- the key leaked
+- the agent behind it is decommissioned
+- the workflow it belongs to is going away
+
+```bash title="shell"
+curl -X DELETE "https://api.nullrun.io/api/v1/orgs/$ORG_ID/api-keys/$KEY_ID" \
+  -H "Authorization: Bearer $NULLRUN_ADMIN_TOKEN"
+```
+
+Revoking is an audit event. The audit log records who revoked the key
+and when.
 
 ## Listing and searching
 
-The **API keys** page lists every key in your org. You can search
-by name (substring match), filter by workflow, or filter by status
-(active / revoked).
+The **API keys** page lists every key in your organization. You can
+search by name, filter by workflow and filter by status.
 
 Each row shows:
 
-- **Name** — what you set when creating
-- **Workflow** — the bound workflow
-- **Prefix** — first 12 characters of the key (`nr_live_abc...`)
-- **Last used** — when the SDK last made a request with this key
-- **Expires** — when the key stops working (or "Never")
-- **Status** — active / revoked
+- **Name**
+- **Workflow**
+- **Prefix**
+- **Last used** — when the key last made a request
+- **Expires** — the expiry date, or "Never"
+- **Status** — active or revoked
 
-Click a row to see full details. The full key value is never shown
-again — only the prefix.
+The full key value is never shown again. Only the prefix.
 
 ## Common questions
 
 ### "How many keys do I need?"
 
-One per workflow, minimum. For production:
+One per workflow at minimum. For production, one key per environment
+and one key per service. That way you can revoke staging without
+touching production, and rotate one instance without restarting the
+others.
 
-- **One key per environment** — separate keys for production,
-  staging, dev. Makes it easy to revoke staging without affecting
-  production.
-- **One key per service** — if your agent runs in three
-  containers, give each its own key. Makes it easy to rotate one
-  without restarting the others.
+### "Can one key serve two workflows?"
 
-Do not disable the gate in production — you'll lose enforcement.
+No. A key is bound to one workflow when it is created. If the same
+agent logic runs against two workflows, create two keys and pick
+between them.
 
-### "Can I share a key between two workflows?"
+### "What happens when a key expires?"
 
-No. Each key is bound to exactly one workflow at creation time.
-If you need the same agent logic against two workflows (for example,
-A/B testing), create two keys and switch between them based on your
-A/B routing.
-
-### "What happens when my key expires?"
-
-The key stops working at the expiration timestamp. Calls return
-`401 api_key_expired`. Rotate the key (which generates a new secret
-but keeps the same key value) or create a new key entirely.
+Requests with that key stop working. The error is `401
+API_KEY_EXPIRED`. Rotate to get a new value, or create a new key.
 
 ### "Can I see who used a key?"
 
-The **Last used** column shows the most recent activity. The audit
-log shows every individual call. The audit log records the
-key prefix, not the full key — so you can correlate usage without
-exposing the secret.
+The **Last used** column gives you the most recent activity. The
+audit log gives you every call, keyed by the key's prefix rather than
+its full value.
+
+### "Should I ever disable the gate?"
+
+No. Without a protected call there is no decision, so nothing is
+enforced and nothing is recorded.
 
 ## See also
 
 - [Workflows](workflow.md) — what the key is bound to
+- [Configuration](../getting-started/configuration.md) — the
+  environment variables
 - [Troubleshooting](../troubleshooting.md) — "why am I getting 401?"
-- [Configuration](../getting-started/configuration.md) — env vars
-  for keys
-
-!!! info "Deep dive"
-
-    A key is two independent secrets minted together at creation: the
-    raw key that the SDK sends on every request, and a separate signing
-    secret used for HMAC request signing. The two are generated
-    independently and neither is derived from the other. A signature
-    covers the timestamp, the key, and a hash of the request body, and
-    the gateway compares it in constant time. Because the timestamp is
-    part of the signed material, replay protection is an age check
-    against a sliding freshness window rather than stored nonces.
-
-    Both secrets are shown exactly once. Losing the raw key forces a
-    rotation; losing the signing secret forces regeneration even when
-    the raw key is intact. Signing secrets are multi-version: several
-    versions remain valid at the same time, so an SDK still signing
-    with the previous secret keeps working while everything else has
-    already moved to the new one. Rotation has no downtime window.
-
-    Revocation is two-phase. The key first enters a rotating state,
-    requests already in flight are allowed to finish, and only then
-    does the key become terminal, so a long-running check cannot lose
-    its reservation partway through. If in-flight accounting is
-    unavailable, the request is rejected rather than admitted: the
-    drain guarantee cannot be made, so the call fails closed.
-
-    Key identifiers are minted server-side and bound to the owning
-    organization; caller-supplied identifiers are rejected. A key is
-    bound to exactly one workflow at creation, and the full set of
-    scopes is assigned automatically rather than chosen. Last-used
-    timestamps are refreshed on every authenticated request.

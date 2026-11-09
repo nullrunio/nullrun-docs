@@ -1,120 +1,92 @@
 ---
 title: Install
-description: Install the NullRun Python SDK with pip, create an API key in the dashboard, and verify the gate is reachable from your environment.
+description: Install the NullRun Python SDK, create an API key, and see what gets instrumented automatically.
+maturity: stable
 ---
 
 # Install
 
-## Python SDK
+## Install the SDK
 
 ```bash title="shell"
 pip install nullrun
 ```
 
-Verify:
+The package needs Python 3.10 or newer. It depends on `httpx` and nothing else.
 
 ```bash title="shell"
 python -c "from nullrun import protect; print('ok')"
 ```
 
-> **First `@protect` call builds the runtime.** Initialization is
-> lazy, process-wide, and triggered by the first `@protect` call —
-> see the mental-model diagram in [Quickstart](quickstart.md).
+## Create an API key
 
-> **No local mode.** If `NULLRUN_API_KEY` is missing when the first
-> `@protect` call hits the runtime, the SDK raises
-> `NullRunConfigError` (NR-C001) at the gate. Every gate decision
-> is server-side — a silent local fallback would bypass the backend
-> gate.
+Sign in at [nullrun.io](https://nullrun.io). Open **Access → API keys** and click **New API key**. The dialog asks for a name, a workflow, and an expiration.
 
-## API key
-
-Sign in at [nullrun.io](https://nullrun.io), open **API keys**, and create a key. Each key is minted with a public
-identifier (`nr_live_...`) plus a server-side HMAC secret. The SDK
-transparently obtains the HMAC secret via:
-```http
-POST /api/v1/auth/verify
-```
-
-on first use, so you only need to export the key as an environment
-variable:
+The key is enough. The SDK signs its requests with the key and fetches the matching signing secret from `POST /api/v1/auth/verify` on first use. Without a key the SDK raises `NullRunAuthenticationError` with the code `NR-C001`.
 
 ```bash title="shell"
 export NULLRUN_API_KEY=nr_live_...
 ```
 
-The SDK reads `NULLRUN_API_KEY` on the first `@protect` call. The HMAC
-secret is **not** a constructor argument — it is read from
-`NULLRUN_SECRET_KEY` or returned by `/api/v1/auth/verify`.
+Set `NULLRUN_SECRET_KEY` yourself only if your secret manager already holds the signing secret.
 
-> **Explicit `init()`.** The first `@protect` call creates the
-> runtime lazily from `NULLRUN_API_KEY`. Call `init()` directly when
-> you want fail-fast on a missing key before the first gate call
-> (CI / smoke tests), or to bind an API key from a non-env source.
-> CLI scripts that want a clean `sys.exit(1)` on missing config can
-> pass `init(fail_on_exit=True)`. See
-> [Reference → init](../reference/sdk-api.md#init)
-> for the contract.
+## What gets instrumented
 
-For env-var setup (`NULLRUN_API_KEY`, `NULLRUN_SECRET_KEY`, and other
-runtime flags), see [Configuration](configuration.md).
+Instrumentation attaches when the runtime starts. It patches the HTTP client and every framework it finds in `sys.modules`.
 
-## Auto-instrumentation
-
-The SDK's auto-instrumentation runs **lazily on the first protected
-execution path**, not at import time or in any pre-`@protect` hook.
-The lazy trigger creates the runtime, reads `NULLRUN_API_KEY`, installs
-the HTTP instrumentation, and attaches every framework / transport
-hook it can detect in `sys.modules` in a single process-wide
-idempotent step.
-
-| Detected | Coverage |
+| Package | What the SDK attaches |
 | --- | --- |
-| `openai` ≥ 1.0 | HTTP transport hook (httpx) |
-| `openai-agents` | Agent framework hook (`Runner.run` / `run_streamed`) |
-| `anthropic` | HTTP transport hook (httpx) |
-| `langgraph` | Graph runtime hook (`Pregel.invoke` / `stream` / `ainvoke` / `astream`) |
-| `langchain` | Callback manager hook (`BaseCallbackManager`) |
-| `llama-index` | LlamaIndex tool/agent hook |
-| `crewai` | CrewAI EventBus bridge (1.15+) |
-| `autogen` | AutoGen agent runtime hook |
-| `mistralai`, `google-genai`, `cohere`, `boto3` (bedrock) | per-vendor URL-keyed extractors |
+| `httpx` | Token counting for every provider built on it |
+| `requests` | Token counting through `Session.send` |
+| `langchain-core` | Callback manager and chat model hooks |
+| `openai-agents` | `Runner.run` and `Runner.run_sync` |
+| `langgraph` | `Pregel.invoke`, `stream`, `ainvoke`, `astream` |
+| `llama-index` | LLM chat-end and function-call events |
+| `crewai` | `Crew.kickoff` and `kickoff_async` |
+| `autogen` | `BaseChatAgent.on_messages` and the OpenAI chat client |
 
-The Gemini vendor extra is `google-genai` (the actively maintained
-package, ≥ 1.0); the older `google.generativeai` package is **not**
-supported.
+Provider traffic is recognised by host, not by package:
 
-In every case the call is cost-tracked automatically — `@protect` is
-not required for tracking. `@protect` is the **gate** layer (budget
-pre-flight + kill/pause + sensitive-tool decision).
+| Host | Provider |
+| --- | --- |
+| `api.openai.com` | OpenAI |
+| `openai.azure.com` | Azure OpenAI |
+| `api.anthropic.com` | Anthropic |
+| `generativelanguage.googleapis.com` | Gemini |
+| `api.cohere.ai` | Cohere |
+| `api.mistral.ai` | Mistral |
+| `bedrock-runtime.amazonaws.com` | Bedrock |
 
-### Zero-activity diagnostic
+NullRun never imports a vendor package. Install the vendor package you already use.
 
-If `@protect` fires 50+ times without the runtime observing a single
-`track_llm` event (i.e. your code path never reaches an LLM call, or
-auto-instrumentation never attached), the SDK logs **one WARNING**
-naming the three most likely root causes — no spam, warn-once.
+## Frameworks
 
-## Optional extras
-
-The plain `pip install nullrun` package covers every LLM provider
-(OpenAI, Anthropic, Mistral, Gemini, Cohere, Bedrock) via URL-keyed
-httpx extractors — those vendor SDKs are **never imported** by
-NullRun. Framework hooks for LangGraph / CrewAI / OpenAI Agents /
-LangChain / LlamaIndex / AutoGen auto-attach at runtime when the
-framework package is installed in the same environment as `nullrun`;
-no install extra is needed.
-
-| Extra | Installs | When you need it |
-| --- | --- | --- |
-| `nullrun[opentelemetry]` | `opentelemetry-api`, `opentelemetry-sdk` | OTel span export |
-| `nullrun[dev]` | `pytest`, `pytest-asyncio`, `respx`, `mypy`, `ruff`, `coverage` | Local development and CI |
-
-To pair NullRun with a framework hook, install the framework
-alongside `nullrun`:
+Install the framework next to the SDK. No extra is needed for any of them.
 
 ```bash title="shell"
 pip install nullrun langgraph langchain-openai
 pip install nullrun crewai
 pip install nullrun openai-agents
 ```
+
+## Optional extras
+
+| Extra | Installs | When you need it |
+| --- | --- | --- |
+| `nullrun[websocket]` | `websockets` | Real-time workflow state push. Without it the SDK polls the gateway for state changes, and a kill or pause takes longer to reach the agent. |
+| `nullrun[opentelemetry]` | `opentelemetry-api`, `opentelemetry-sdk` | Exporting spans to an OpenTelemetry collector. |
+| `nullrun[dev]` | `pytest`, `pytest-asyncio`, `respx`, `mypy`, `ruff`, `coverage`, `httpx` | Running the SDK test suite locally. |
+
+```bash title="shell"
+pip install "nullrun[websocket]"
+```
+
+## If the dashboard stays empty
+
+The SDK logs one warning when `@protect` has run 50 times and the SDK has seen no LLM call. The gate is enforced, but no cost is booked. The usual causes are a raw `httpx` client outside the instrumented surface, a custom transport, or a framework that is not on the list above.
+
+## Next
+
+- [Quickstart → your first gated call](quickstart.md)
+- [Configuration → every setting](configuration.md)
+- [Reference → init](../reference/sdk-api.md#init)

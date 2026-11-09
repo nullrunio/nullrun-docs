@@ -68,9 +68,9 @@ Note that `.gitignore` excludes `infra/`, so these three generator scripts are *
 
 ### The no-internals rule
 
-`build-llms-full.py` enforces that internal implementation details never reach reader-facing docs, by **failing and naming the offending page** — not by substituting tokens away. Rewriting them would let the corpus silently drift from the Markdown it claims to mirror. `FORBIDDEN_WORDS` covers internal storage tables (`audit_events`, `overdraft_used`, `organization_api_keys`), internal service names (`breaker-core`, `gate-core`, `prod-guard`), and internal class names (`ApproximateBudget`, `AlertListMeta`).
+`infra/scripts/build-llms-full.py` enforces that internal implementation details never reach reader-facing docs, by **failing and naming the offending page** — not by substituting tokens away. Rewriting them would let the corpus silently drift from the Markdown it claims to mirror. `FORBIDDEN_WORDS` covers internal storage tables (`audit_events`, `overdraft_used`, `organization_api_keys`), internal service names (`breaker-core`, `gate-core`, `prod-guard`), and internal class names (`ApproximateBudget`, `AlertListMeta`).
 
-The list holds only unambiguous names. `approval_rules` and `secret_key` are deliberately **absent** — both are documented public API fields, so flagging them would fail on correct prose. The check is whole-word, so `approved` or a Redis URL in a user config doesn't trip it. `compliance/data-handling.md` is waived for the storage-table half, since that page names the fields it stores on purpose.
+The list holds only unambiguous names. `approval_rules` and `secret_key` are deliberately **absent** — both are documented public API fields, so flagging them would fail on correct prose. The check is whole-word, so `approved` or a Redis URL in a user config doesn't trip it. `docs/compliance/data-handling.md` is waived for the storage-table half, since that page names the fields it stores on purpose.
 
 If the build fails on a token that is genuinely reader-facing, add it to `FORBIDDEN_WORDS`' neighbours in the comments — don't delete the page's prose.
 

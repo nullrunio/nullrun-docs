@@ -1,134 +1,76 @@
 ---
-title: Fastapi
-description: Bind a FastAPI request to a NullRun workflow, propagate trace context, and map gate errors to the right HTTP status code.
+title: FastAPI
+description: Map NullRun gate refusals to HTTP status codes with the FastAPI integration.
+maturity: stable
 ---
 
 # Use with FastAPI
 
-Install FastAPI alongside `nullrun`:
+Install FastAPI next to the SDK.
 
 ```bash title="shell"
 pip install nullrun fastapi uvicorn
 ```
 
-`nullrun.integrations.fastapi.install(app)` is a one-line setup that
-turns every NullRun exception in your agent API into a clean JSON
-response. Kill signals, budget caps, transport outages, and tool
-blocks all render as proper HTTP responses with end-user-safe text
-in the body.
+`nullrun.integrations.fastapi.install(app)` registers the NullRun
+exception handlers and the kill middleware on your app. Every refusal
+the gate raises becomes a JSON response with an HTTP status.
 
 ```python title="fastapi_app.py"
-from fastapi import FastAPI
 import nullrun
+from fastapi import FastAPI
 from nullrun.integrations.fastapi import install
 
-nullrun.init(api_key="nr_live_...")
+nullrun.init(api_key="nr_live_replace_me")
+
 app = FastAPI()
 install(app)
+
+
+def run_agent(message: str) -> str:
+    """Your agent call goes here."""
+    return message
+
 
 @app.post("/chat")
 @nullrun.protect
 def chat(message: str) -> dict:
-    return {"reply": agent.run(message)}
+    return {"reply": run_agent(message)}
 ```
 
 ## What `install()` registers
 
-`install(app)` wires the SDK exceptions to FastAPI's handler
-chain: every `NullRunError` subclass — including `WorkflowKilledInterrupt`
-/ `NullRunWorkflowKilledError` — is routed to the appropriate
-`app.add_exception_handler` based on its category.
+| Registration | Handles | HTTP |
+|---|---|---|
+| Exception handler for `NullRunDecision` | Budget, tool block, rate limit, pause, chain errors | Per `error_code` |
+| Exception handler for `NullRunInfrastructureError` | Transport, backend, auth, config errors | `503` |
+| ASGI middleware `NullRunMiddleware` | `WorkflowKilledInterrupt` | `503` |
 
-| Exception | Mechanism | HTTP | Body |
-| --- | --- | --- | --- |
-| `NullRunError` (budget, tool block, rate limit, soft block, etc.) | `app.add_exception_handler` | per `error_code` | `user_message`, `category: "decision"`, `retryable` |
-| Infrastructure errors (transport, 5xx, auth, config) | `app.add_exception_handler` | `503` | `user_message`, `category: "infrastructure"`, `retryable` |
-| `WorkflowKilledInterrupt` (alias `NullRunWorkflowKilledError`) | `NullRunMiddleware` (ASGI) | `503` | `user_message`, `category: "killed"` |
+The kill middleware sits outside the exception handler chain. A kill
+that fires after the response has started cannot be rewritten, so the
+middleware re-raises it and the connection drops.
 
-`Retry-After` is set on the response whenever the exception carries a
-`retry_after` (gateway 429) or `resume_after` (workflow pause)
-attribute.
+## Status mapping for decisions
 
-## HTTP status mapping
+The integration reads `error_code` on the exception and picks a
+status.
 
-The status codes below come from `_DECISION_STATUS` and
-`_DEFAULT_DECISION_STATUS = 429` / `_DEFAULT_INFRASTRUCTURE_STATUS = 503`
-in `nullrun.integrations.fastapi`. SDK exception classes (`exceptions.py`)
-carry an `error_code` attribute; the integration maps it to HTTP at
-install time.
+| `error_code` | HTTP | Meaning |
+|---|---|---|
+| `NR-B004` | `429` | Budget exhausted |
+| `NR-L001` | `429` | Loop detected |
+| `NR-R001` | `429` | Rate limit hit |
+| `NR-T001` | `403` | Tool blocked |
+| `NR-X001` | `403` | Generic block |
+| `NR-W003` | `503` | Workflow paused |
+| Any other decision code | `429` | Default |
 
-| `error_code` | Category | HTTP | Notes |
-| --- | --- | --- | --- |
-| `NR-B004` | decision | `429` | `retryable: false`. Covers all budget-exhausted outcomes. |
-| `NR-R001` | infrastructure | `503` | `Retry-After` from `.retry_after`. Rate-limit window hit. |
-| `NR-R002` | infrastructure | `503` | `retryable: true` — rate-limit aggregate unavailable (fail-CLOSED). |
-| `NR-T001` | decision | `403` | The action itself is forbidden |
-| `NR-W004` | decision | `429` | Workflow soft-deleted or killed. |
-| `NR-W003` | decision | `503` | Workflow paused — override default to signal server-driven resume |
-| `NR-CH001` | decision | `429` | Chain context invalid. |
-| `NR-X001` | decision | `403` | Generic block (catch-all decision) |
+Every infrastructure error maps to `503`.
 
-`WorkflowKilledInterrupt` always maps to `503` (caught by the ASGI
-middleware, not the exception-handler chain — kill can fire from
-control-plane WebSocket pushes and background tasks that aren't part
-of the active request lifecycle). See
-[Reference → Errors](../reference/errors.md) for the full catalog.
+The response carries a `Retry-After` header when the exception has a
+`retry_after` value (rate limit) or a `resume_after` value (pause).
 
-## Custom exception mapping
-
-If you want to override `install()`'s defaults for a single endpoint
-(rare), wrap the agent call and map the exception yourself:
-
-```python title="custom_mapping.py"
-from fastapi import HTTPException
-from nullrun import WorkflowKilledInterrupt, format_user_message
-from nullrun.breaker.exceptions import (
-    NullRunDecision,
-    NullRunInfrastructureError,
-    WorkflowPausedException,
-)
-
-@app.post("/chat")
-@nullrun.protect
-def chat(message: str) -> dict:
-    try:
-        return {"reply": agent.run(message)}
-    except WorkflowPausedException as exc:
-        # Not a NullRunDecision status — it carries .resume_after
-        # rather than .status_code.
-        raise HTTPException(
-            status_code=503,
-            detail={"message": format_user_message(exc),
-                    "code": exc.error_code},
-            headers={"Retry-After": str(int(exc.resume_after or 0))},
-        )
-    except NullRunDecision as exc:
-        # Expected policy outcome — pass it to the client as-is.
-        # .status_code is absent on some decision classes, hence
-        # the getattr fallback.
-        raise HTTPException(
-            status_code=getattr(exc, "status_code", None) or 403,
-            detail={
-                "message": format_user_message(exc),
-                "code": exc.error_code,
-                "retryable": exc.retryable,
-            },
-        )
-    except NullRunInfrastructureError as exc:
-        # System failure — log to Sentry, return generic 503
-        sentry_sdk.capture_exception(exc)
-        raise HTTPException(
-            status_code=getattr(exc, "status_code", None) or 503,
-            detail={"message": format_user_message(exc), "code": exc.error_code},
-        )
-```
-
-`WorkflowKilledInterrupt` is caught by the `NullRunError` handler
-chain and surfaced as a `503` with `category: "killed"`. Catch it
-explicitly in your endpoint if you need to checkpoint before the
-response is returned.
-
-## Response body shape
+## Response body
 
 ```json
 {
@@ -139,36 +81,116 @@ response is returned.
 }
 ```
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `error_code` | `string` | Stable machine-readable identifier |
-| `user_message` | `string` | End-user-safe text. Safe to render verbatim in a UI |
-| `category` | `"decision"` \| `"infrastructure"` \| `"killed"` | Coarse classification for client-side branching |
-| `retryable` | `bool` | Mirrors the SDK exception's `.retryable` |
+| Field | Type | Meaning |
+|---|---|---|
+| `error_code` | string | Stable machine-readable code |
+| `user_message` | string | End-user-safe text. Safe to render in a UI |
+| `category` | `decision`, `infrastructure`, `killed` | Coarse class for client branching |
+| `retryable` | bool | Mirrors the exception's own flag |
 
-## Per-deployment wording overrides
+The kill response has no `retryable` field.
 
-To brand the wording for a single deployment, call
-`nullrun.set_user_message(...)` once at the top of your entry point:
+## Mapping one endpoint yourself
+
+Use your own handler when an endpoint needs different wording or a
+different status.
+
+```python title="custom_mapping.py"
+from fastapi import HTTPException
+from nullrun import (
+    NullRunDecision,
+    NullRunInfrastructureError,
+    WorkflowPausedException,
+    format_user_message,
+)
+
+
+def run_agent(message: str) -> str:
+    """Your agent call goes here."""
+    return message
+
+
+@app.post("/chat")
+@nullrun.protect
+def chat(message: str) -> dict:
+    try:
+        return {"reply": run_agent(message)}
+    except WorkflowPausedException as exc:
+        # .status_code is absent here. .resume_after carries the wait.
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": format_user_message(exc),
+                "code": exc.error_code,
+            },
+            headers={"Retry-After": str(int(exc.resume_after or 0))},
+        )
+    except NullRunDecision as exc:
+        # .status_code is absent on some decision classes, so read it
+        # defensively.
+        raise HTTPException(
+            status_code=getattr(exc, "status_code", None) or 403,
+            detail={
+                "message": format_user_message(exc),
+                "code": exc.error_code,
+                "retryable": exc.retryable,
+            },
+        )
+    except NullRunInfrastructureError as exc:
+        raise HTTPException(
+            status_code=getattr(exc, "status_code", None) or 503,
+            detail={"message": format_user_message(exc), "code": exc.error_code},
+        )
+```
+
+Two classes carry no `status_code` attribute: `WorkflowPausedException`
+and `WorkflowKilledInterrupt`. Read the attribute with `getattr` and
+supply your own fallback.
+
+## Per-deployment wording
+
+Brand the message for one error code with `set_user_message`:
 
 ```python
+import nullrun
+
 nullrun.set_user_message(
     "NR-B004",
-    "You've used all your support credits. Upgrade to keep chatting.",
+    "This workflow is out of budget. Raise the cap in the dashboard.",
 )
 ```
 
-## Limitations
+## Two things to know
 
-- `app.add_exception_handler` is last-wins — if you already register
-  a `NullRunError` handler, `install()` overwrites it. Re-order
-  your `install()` call to last if you need custom precedence.
-- Kill middleware is process-global state. The kill middleware
-  binding is stored at module level; if you serve multiple FastAPI
-  apps from one process with different kill policies, the last
-  `install()` call wins. Per-app middleware
-  (`app.add_middleware(NullRunMiddleware, ...)`) is the supported
-  escape hatch.
+**Handler precedence follows the class hierarchy.** Starlette looks up
+a handler by walking the exception's class hierarchy. A handler you
+register for `NullRunError` therefore loses to the handlers
+`install()` registers for `NullRunDecision` and
+`NullRunInfrastructureError`. Register your own handler for one of
+those two classes if you want to take it over.
+
+**The kill is an `Exception`.** `WorkflowKilledInterrupt` derives from
+`NullRunError`, so a blanket `except Exception:` in your agent code
+swallows an operator kill. Catch `WorkflowKilledInterrupt` first and
+re-raise.
+
+```python title="kill_handling.py"
+from nullrun import WorkflowKilledInterrupt
+
+
+def run_agent(message: str) -> str:
+    """Your agent call goes here."""
+    return message
+
+
+@app.post("/chat")
+@nullrun.protect
+def chat(message: str) -> dict:
+    try:
+        return {"reply": run_agent(message)}
+    except WorkflowKilledInterrupt:
+        raise
+```
 
 ## See also
 

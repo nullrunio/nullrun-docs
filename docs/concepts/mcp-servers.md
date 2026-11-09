@@ -1,227 +1,124 @@
 ---
-title: MCP servers (Action sources)
+title: MCP servers
 maturity: stable
-description: What an Action Source is, how the dashboard tells verified servers apart from observed ones, and how to act on drift or stale catalogs.
+description: MCP servers as a source of tools — how their tools are named, how the operator decides which ones run, and how the SDK gates a call.
 ---
 
-# MCP servers (Action sources)
+# MCP servers
 
-The **MCP servers** page in the dashboard is the operator's view of
-the Model Context Protocol servers your agents actually call. Each
-row in the page is one **action source** — the gateway's canonical
-name for "one MCP server (or built-in provider) that the SDK has
-talked to". The page lives under **Governance → Action Sources** in the
-sidebar.
+An **MCP server** is a source of tools for your agent. The agent discovers the server's tools, and each call is evaluated by the gate like any other tool call.
 
-This page covers:
+## Tool names
 
-- What an Action Source is and where it comes from.
-- How the dashboard splits **verification** (operator-registered,
-  probe-driven) from **observation** (SDK-driven, last 30 days).
-- What **drift** means, the four states that qualify, and the one
-  state that looks like drift but isn't.
-- How to **enroll** a discovered source and how to **write an
-  approval rule** straight from a catalog action.
+An MCP tool has a canonical name that carries the server it came from:
 
-For the canonical tool-name format (`mcp://server/tool`) used in
-policies and approvals, see [Tool policies](tool-policies.md). For
-how tool patterns and approval rules differ, see
-[Human approval](human-approval.md).
+```
+mcp://{server}/{tool}
+```
 
-## What an Action Source is
+| Example | Server | Tool |
+|---|---|---|
+| `mcp://github/create_issue` | `github` | `create_issue` |
+| `mcp://filesystem/read_file` | `filesystem` | `read_file` |
 
-An Action Source is one entry in the unified table the dashboard
-renders for "every MCP-style server we know about". A row appears
-either because:
+The server name is the first segment. The rest is the tool name, and it may contain slashes.
 
-- **You registered it** with a probe URL (`Add action source`),
-  and the scheduler polled it and got a tool catalog back.
-- **The SDK called it** in the last 30 days. The observation
-  helper fires on every `/check` call and adds the source
-  automatically.
+These names work everywhere a tool name works. A [tool policy](tool-policies.md) pattern can match them, and an [approval rule](human-approval.md) can require review for one. See [Tool policies](tool-policies.md#what-a-tool-name-looks-like) for the full name format.
 
-A row from the first path has a `verification` block; a row from
-the second path has only an `observation` block and sits in the
-"Discovered but not registered" panel below the main list with an
-explicit **Enroll** CTA.
+## Deciding which tools run
 
-## Page layout
+The **MCP servers** page in the dashboard lists the servers your agents call and the tools they expose. Each tool carries one decision:
 
-The page header reads **Action sources** and shows the count of
-distinct sources in the observation window:
-
-- **N action sources in the last 30 days**, or
-- **No MCP action sources yet** when the org is brand new.
-
-The right-side action button is **Add action source** — clicking it
-opens a dialog where you paste the MCP probe URL and (optionally)
-a label. The scheduler polls new sources every 60 seconds until
-the first successful probe lands.
-
-<figure class="nr-shot">
-  <img class="nr-shot__light" src="../../assets/images/screenshots/action-sources-light.png"
-       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right."
-       loading="lazy" decoding="async">
-  <img class="nr-shot__dark" src="../../assets/images/screenshots/action-sources-dark.png"
-       alt="Action sources page — header count, four-tile metric strip, search box, and status chips; Add action source button in the top right."
-       loading="lazy" decoding="async">
-  <figcaption class="nr-shot__caption">MCP servers · Add action source</figcaption>
-</figure>
-
-### Metric strip
-
-Four cards above the list give the operator a glance at the
-state of the org's tool surface:
-
-| Card | What it counts |
+| Decision | What it means |
 |---|---|
-| **Action sources** | Total registered or observed in the window. |
-| **Verified** | Sources whose last probe returned a catalog matching observation. Sub-label shows `N unverified — verify now` (a deep link to `?filter=unverified`) or `all sources verified`. |
-| **Tool calls** | Total SDK-driven calls across every source in the last 30 days. |
-| **Drift** | Real drift only — see below. Sub-label distinguishes `N verification pending — not drift` from `Tools match the upstream catalog`. |
+| **allow** | The tool runs. |
+| **ask** | The tool does not run until an operator approves it. |
+| **block** | The tool never runs. |
 
-While the page is loading, every card shows `—` rather than `0` —
-the dashboard never confuses "I don't know yet" with "the answer is
-zero".
+A tool with no decision does not run. The operator has to choose.
 
-### Filter bar
+The gate also compares the tool's current definition with the definition that was approved. A changed definition is refused even when the decision is **allow**, and a tool the server has dropped is refused too.
 
-Two controls above the list:
+## Refusals
 
-- **Search source or action** — substring match against the
-  source URL or any catalog action name.
-- **Status chips** — `All` / `Unverified` / `Stale` / `Drift`. Deep
-  links via `?filter=<id>` so e.g. the dashboard's "verify now"
-  affordance drops the operator on the right view.
+The gate refuses an MCP call with one of these codes:
 
-## What each row contains
+| Wire code | SDK class | Meaning |
+|---|---|---|
+| `MCP_TOOL_BLOCKED` | `NullRunToolBlockedError` | The operator set the decision to block. |
+| `MCP_TOOL_REMOVED` | `NullRunToolBlockedError` | The server no longer offers the tool. |
+| `MCP_TOOL_APPROVAL_REQUIRED` | `NullRunMcpApprovalRequiredError` | The decision is ask and no operator has approved the call. |
+| `MCP_TOOL_DECISION_REQUIRED` | `NullRunMcpApprovalRequiredError` | The operator has not chosen a decision for this tool. |
+| `MCP_DEFINITION_DRIFTED` | `NullRunApprovalToolDigestMismatchError` | The tool's definition changed after the operator approved it. |
+| `MCP_REGISTRY_UNAVAILABLE` | `NullRunBackendError` | The registry could not be read. The call is refused and can be retried. |
 
-Each row is a hairline-divided tile with three blocks side by side
-or stacked:
+Three MCP-specific codes exist in the SDK:
 
-### Verification block
+| SDK code | SDK class | Meaning |
+|---|---|---|
+| `NR-MCP01` | `NullRunMcpDestructiveBlockedError` | A destructive tool was blocked. |
+| `NR-MCP02` | `NullRunMcpReadonlyBypassBlockedError` | A read-only bypass was blocked. |
+| `NR-MCP03` | `NullRunMcpApprovalRequiredError` | The call needs an operator approval. |
 
-The left block answers "did the probe succeed?":
+`NR-MCP01` and `NR-MCP02` belong to the MCP umbrella policies. The gate evaluates the per-tool decision instead, and the gate does not read the umbrella policies. The two codes stay reserved so an SDK can tell the refusal families apart.
 
-- **Verified** — the last probe returned a catalog and it matches
-  observation. Sub-line shows `Last verified <timestamp> ·
-  re-polls every <interval>`.
-- **Stale** — the last probe succeeded but is older than the
-  re-poll interval. The next scheduled probe will refresh.
-- **Failed** — the last probe errored. The first 200 chars of the
-  error body are shown inline (errors are usually JSON Schema
-  validation payloads, multi-line HTML, or stack traces); a
-  `Show full body` toggle reveals the rest.
-- **Never polled** — source was just added; first poll is pending.
-- **No probe URL registered** — the source exists only because
-  the SDK called it. An inline **Enroll** CTA opens the same
-  dialog used by `Add action source`.
+`NR-MCP03` is what the SDK raises when the gate refuses with `MCP_TOOL_APPROVAL_REQUIRED` or `MCP_TOOL_DECISION_REQUIRED`.
 
-### Observation block
+## Calling an MCP tool from the SDK
 
-The middle block answers "did the SDK actually use this?":
+`MCPAdapter` is the helper that gates MCP calls. It wraps a connected MCP client, discovers the server's tools, and routes every call through the gate before the client runs.
 
-- **N distinct actions called** plus **M total calls in the last
-  30 days** when the SDK is active.
-- "The SDK hasn't called any action from this source yet" when
-  the source is registered but unused.
+```python
+import nullrun
+from nullrun.toolbox.mcp import MCPAdapter
 
-### Catalog drilldown
+nullrun.init(api_key="nr_live_...")
 
-A `<details>` toggle below the row, labelled `Actions known (N)`,
-expands the catalog. Every row in the catalog shows:
+# Your own MCP client — the adapter does not open the connection.
+client = your_mcp_client_library.connect(url="https://your-mcp-server")
 
-- The action name (`mcp://server/tool`).
-- An **Origin** badge: `Probe` (came from a successful probe),
-  `Observed` (came from an SDK call), or `Probe + observed` (both).
-- A **Create approval rule** deep link to
-  `/control-center/policies/approval-rules?prefill_source=…&prefill_action=…`
-  so the operator can write a typed-predicate rule for one
-  specific action without typing the path.
+adapter = MCPAdapter(server_name="github", mcp_client=client)
 
-## Drift — and what isn't drift
+result = adapter.call_tool(
+    "create_issue",
+    {"repo": "acme/api", "title": "Crash on checkout"},
+)
+```
 
-The Drift card counts **real drift only**. There are three states
-that qualify as drift:
+What the adapter does on every call:
 
-1. **`unannounced` mismatch** — the SDK called actions the last
-   probe never listed. Either the upstream catalog moved or
-   someone added tools without re-probing. Write approval rules
-   for any destructive verb before they are used.
-2. **`disappeared` mismatch with prior SDK activity** — the
-   probe succeeded at least once AND the SDK has called this
-   source before, but the calls have stopped in the last 30
-   days. Usually means an upstream server upgrade. Review to
-   confirm it isn't the agent silently failing over to a
-   different server.
-3. **`schema_drift === true`** — an action's input schema (keys
-   and types of its argument bag) changed within the window. Pin
-   the new schema before allowing the action.
+- Checks the call against the gate. A blocked call raises `NullRunBlockedException` and the MCP client is not invoked.
+- Reads the server's tool list and forwards the tool's annotations to the gate. The `readOnlyHint`, `destructiveHint`, and `openWorldHint` hints become the gate's read-only, destructive, and open-world flags.
+- Derives the action digest from the tool name and the exact argument bag it forwards, so an operator approval binds to that payload.
 
-A **`disappeared` source with no prior SDK activity** is NOT
-drift — it is verification-pending. The probe never landed and
-the SDK never called anything, so we have no baseline to compare
-against. The Drift card surfaces these as `N verification pending
-— not drift`; the `Unverified` filter is the right view to work
-through them.
+Two constructor options matter:
 
-A row that meets any of the three drift criteria renders a
-red-bordered **Drift callout** above the catalog drilldown, with
-a per-cause title and one-sentence body explaining what changed
-and what to do.
+| Option | Effect |
+|---|---|
+| `cache_seconds` | How long the tool list is cached. Must be `0` or at least `30`. `0` re-reads the tool list on every call. |
+| `runtime` | The runtime to gate through. Pass one to use a specific runtime; leave it unset to use the global one. |
 
-## Discovered but not registered
+When the tool list cannot be read, the adapter tells the gate that the annotations are unknown. It never presents a stale hint as the server's current answer.
 
-Below the main list, sources the SDK called but you have not
-enrolled show up in a separate panel with the heading **Discovered
-but not registered**. Each row has an **Enroll** button that opens
-the add-source dialog pre-filled with the URL the SDK last used.
-Enrolling moves the source into the main list and starts the
-probe scheduler on it.
+## Approving an MCP call
 
-## Where to read next
+When the gate needs an approval, the call raises `NullRunMcpApprovalRequiredError`. Its `error_code` is `NR-MCP03`, and the refusal is retryable: the same call succeeds once the operator decides.
 
-- [Tool policies](tool-policies.md) — the `mcp://server/tool`
-  canonical-name format and the `ToolBlock` matching rules.
-- [Human approval](human-approval.md) — how to write a typed
-  approval rule for one action (the deep link in the catalog
-  drilldown lands here).
-- [Sensitive tools](sensitive-tools.md) — recommended starter
-  patterns for destructive actions.
+```python
+from nullrun import NullRunMcpApprovalRequiredError
 
-!!! info "Deep dive"
+try:
+    adapter.call_tool("create_issue", {"repo": "acme/api"})
+except NullRunMcpApprovalRequiredError as exc:
+    # Wait for the operator's decision, then call again.
+    approval_id = exc.details.get("approval_id")
+    ...
+```
 
-    Each row on the page is one action source with two independent
-    halves: a verification half for a source the operator registered
-    with a probe URL, and an observation half for what the SDK has
-    actually called in the last 30 days. The two halves are always
-    evaluated separately, so a source can be verified and unused, or
-    observed and never successfully probed.
+The wire contract for the approval is in [Human approval](human-approval.md).
 
-    Probing is a synchronous JSON-RPC exchange over the MCP
-    Streamable HTTP transport: an initialize request followed by a
-    tool listing, with a 10-second wall-clock budget. A sweep runs
-    every 60 seconds and re-probes any source whose own interval has
-    elapsed. The interval stored per source governs that source's
-    cadence; the sweep interval governs only how often sources are
-    considered. Only `http://` and `https://` probe URLs are
-    accepted. When upstream is slow the probe gives up rather than
-    blocking, so a slow server surfaces as a probe timeout instead
-    of a stalled request. Observation recording is fire-and-forget
-    and adds no latency to a gate call.
+## See also
 
-    Drift is computed from hashes. The schema hash covers the shape
-    of an action's argument bag — keys sorted, with type tags but
-    not values — so an argument typed as an integer and the same
-    argument typed as a string are different schemas, while two
-    argument bags that differ only in key order collapse to the same
-    digest. The description hash is a literal hash of the text, so
-    whitespace matters and a trailing space counts as drift. That
-    asymmetry is deliberate: a value that flips while the shape holds
-    is not a contract change, but a key that appears or disappears
-    is.
-
-    The 30-day observation window is fixed, and the drift check
-    reads every source belonging to the organization rather than one
-    page of them, so a large tenant pays proportionally more sweep
-    work while its own footprint stays bounded.
+- [Tool policies](tool-policies.md) — the tool-name format and matching rules
+- [Human approval](human-approval.md) — writing an approval rule for one tool
+- [Sensitive tools](sensitive-tools.md) — starter patterns for destructive tools

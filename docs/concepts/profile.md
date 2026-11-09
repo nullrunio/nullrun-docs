@@ -1,161 +1,94 @@
 ---
 title: Profile settings
 maturity: stable
-description: Personal info, two-factor auth, sessions, and the delete-account flow — the per-user surface, distinct from the per-org Organization page.
+description: Your own account — name and email, password and two-factor authentication, active sessions, and how to delete the account.
 ---
 
 # Profile settings
 
-The **Profile settings** page is the per-user surface: personal
-info, two-factor auth, password, sessions, and the
-delete-account flow. It lives at `/control-center/profile` in the
-sidebar (no plan gate).
+The **Profile settings** page is about you: the person signed in. It lives under **Profile** in the sidebar and is on every plan.
 
-This page is **not** the org-level **Organization** page — that
-one edits org identity, slug, billing email, and DPA acceptance.
-Profile is the *person* who is currently signed in.
+This is not the [Organization](organization.md) page. The organization page edits the workspace. This page edits your account.
 
-## Profile hero
+## Your details
 
-The hero card shows:
+| Field | What it does |
+|---|---|
+| **Display name** | How you appear in the dashboard and in audit rows. |
+| **Email** | The address you sign in with and where notifications reach you. |
+| **Avatar** | Your initials on a colour tile, or the avatar from your identity provider when you signed in with one. |
 
-- **Avatar** — initials on a colour tile (chosen server-side via
-  `avatar_color`), OR the OAuth avatar (populated for GitHub /
-  Google users, null for email-registered users). The OAuth
-  image takes precedence over the initials fallback when both
-  exist.
-- **Display name + email** + **Member since** timestamp.
+Changing the email asks for a confirmation — a password or a two-factor code — and sends a verification message to the new address. The address is not live until you click the link in it. A **Resend verification email** button appears while the address is unverified.
 
-## Personal info
+## Password
 
-A two-column form with:
+The password section appears when your account has a password. Signing up with an identity provider instead gives you a **Set password** action.
 
-- **Display name** — editable; saves on submit.
-- **Email** — editable, but the change triggers a confirmation
-  re-auth (password or 2FA) and a verification email to the new
-  address. Until the operator clicks the verification link, the
-  email chip reads `Verification pending`.
-- **Resend verification email** — visible when the email is
-  unverified. Disabled for 60 seconds after each click.
+Changing a password asks for the current one. Every session ends, so every device has to sign in again.
 
-A **Saved** indicator next to the Save button acknowledges the
-last write without taking up screen space.
+## Two-factor authentication
 
-## Security
+Two-factor authentication adds a one-time code from an authenticator app to every sign-in.
 
-A two-column security section covers:
+| State | What you can do |
+|---|---|
+| **Not configured** | **Enable 2FA** shows a secret and a QR code. The first code confirms the enrolment. |
+| **Enabled** | **Disable 2FA**, **Regenerate backup codes**, and **Regenerate secret**. Each asks for the current password and a fresh code. |
 
-- **Password** — visible when the user has a password (email-
-  registered users). OAuth-only users (no `has_password` flag)
-  see a one-line explainer + a **Set password** button that
-  links to the password-set flow.
+Enabling it asks for the current password before it issues a secret. Backup codes are shown once, at the point the first code confirms the enrolment. Only the number of codes left and the time of the last use stay visible.
 
-  The password change form requires the **current** password and
-  validates the **new** password server-side. The dialog does not
-  unmount on success — the user can change another field without
-  re-entering the password.
-
-- **Two-factor auth (TOTP)** — three states:
-  - **Not configured** — `Enable 2FA` opens a modal that
-    generates a TOTP secret, renders a QR code, and asks for the
-    first 6-digit code to confirm. The current password is
-    required (`requireCurrentPassword`) before the secret is
-    shown.
-  - **Enabled** — `Disable 2FA` and `Regenerate backup codes`
-    (and `Regenerate secret`, depending on the build). Both
-    require the current password and a fresh TOTP code.
-  - **Pending recovery** — for users who lost their device;
-    the `Regenerate` flow can also be used to rotate secrets.
-
-  The 2FA status object (`{ enabled: boolean, backup_codes_remaining: number, last_used_at: string | null }`) drives the chip
-  in the section header.
+If you lose the device, the recovery flow lets you disable two-factor authentication without it.
 
 ## Sessions
 
-The **Session section** is a read-only card showing the
-information security needs to know:
+The session section shows:
 
-- **Last login** timestamp and IP.
-- **Active session count** (the current browser + every other
-  logged-in device the user has).
-- **Sign out of all other devices** — single click, immediately
-  invalidates every other session but keeps the current browser
-  signed in. The action is logged in the audit log under
-  `action = session.terminate_all`.
-- **Log out** — single click, signs out the current browser only.
+- The last sign-in time and address.
+- The number of active sessions.
 
-## Display preferences
+Two actions:
 
-The Display preferences section is reserved for per-user view
-options. Backend billing is always USD-cents; every cost surface
-carries a `USD` suffix to make that explicit.
+| Action | Effect |
+|---|---|
+| **Sign out of all other devices** | Ends every session except the one you are using. |
+| **Log out** | Ends the session in this browser. |
 
-## Danger zone
+Signing out of the other devices is recorded in the audit log.
 
-The **Delete account** button at the bottom of the page opens a
-modal that:
+## Deleting your account
 
-- Requires typing the user's display name verbatim
-  (`Type "Anatolii" to confirm`).
-- Requires entering the current TOTP code **if 2FA is enabled**
-  (otherwise just the password).
-- Calls `DELETE /api/v1/me`, which tombstones the user, removes
-  every session, and invalidates every API key the user
-  personally minted. Org-level data (workflows, policies, audit
-  rows) is untouched — that is the **Organization → Delete
-  organization** flow, not this one.
-- Signs the operator out and redirects to `nullrun.io`.
+At the bottom of the page, the **Danger zone** deletes your account. The endpoint is `DELETE /api/v1/auth/account`.
 
-There is no undo. Audit rows authored by the deleted user
-remain in the org's audit log (`decided_by` UUID preserved) so a
-post-delete forensic query still works within the retention
-window.
+The request asks for:
 
-## Where to read next
+| Field | When it is needed |
+|---|---|
+| **Confirmation** | Your display name, typed exactly. Your email address is accepted as a fallback. |
+| **Current password** | When your account has a password. |
+| **Two-factor code** | When two-factor authentication is on. |
+| **Ownership decision** | For every organization you own that has other members. |
 
-- [Organization](organization.md) — the org-level identity page
-  (different from this per-user page).
-- [Audit log](error-handling.md#audit-trail) — every profile
-  change (password / 2FA / email / sessions) leaves a row.
+An ownership decision has two shapes:
 
-!!! info "Deep dive"
+| Decision | What happens |
+|---|---|
+| Transfer | The organization moves to another member. |
+| Delete and notify | The organization closes and its members are told. Their sessions end. |
 
-    This surface acts on the person identified by the current
-    session, and a change of credential, address, or device list
-    applies to that person alone and never reaches organization
-    records. Every such mutation is written to the audit log
-    through the same typed path, so a profile change is as
-    visible there as a governance change.
+Leaving a decision out is refused with `OWNERSHIP_DECISION_REQUIRED`, and the response lists the organizations with their members so you can decide in place.
 
-    Two-factor enrolment requires the current password before a
-    secret is issued, and the account stays in a pending state
-    until a first code confirms it. Recovery codes are shown once
-    at that point and are not retrievable afterwards; only their
-    remaining count and the time of last use stay visible. A
-    challenge issued partway through a sign-in is honoured by the
-    next request, so an interrupted login does not force the user
-    to start over.
+What deletion does:
 
-    Account deletion requires the display name typed verbatim,
-    plus the current TOTP code when two-factor is on or the
-    password when it is not. For every organization the user
-    owns alongside others, an explicit decision is required:
-    transfer ownership to a named member, or delete the
-    organization and notify its members. Omitting one is
-    rejected, with the member roster supplied so the decision can
-    be made in place. Each owned organization is decided and acted
-    on in a single pass, so there is no window in which a transfer
-    succeeds and the deletion does not. If any session revocation
-    in the cascade fails, the whole operation aborts and nothing
-    is deleted, since the alternative leaves live sessions
-    pointing at an owner who no longer exists.
+- Removes your account. You cannot sign in again.
+- Ends every session you hold.
+- Writes one audit row per organization you were a member of.
 
-    Deletion tombstones the account, ends every session it holds,
-    and invalidates the API keys the user minted personally;
-    organization data is untouched. A tombstoned account cannot
-    sign in again. Audit rows the user authored remain in the
-    organization's log with the actor identifier intact, so
-    forensic questions stay answerable for the retention window.
-    Two-factor secrets are encrypted at rest, and rotating the
-    encryption key requires an operator runbook because it
-    invalidates both enrolled secrets and signed webhooks.
+Organization data is untouched. Closing an organization is a separate action on the [Organization](organization.md) page.
+
+If a session cannot be ended, the whole operation stops and nothing is deleted. A half-finished deletion would leave live sessions pointing at an account that no longer exists.
+
+## See also
+
+- [Organization](organization.md) — the workspace, its members, and closing it
+- [Team](team.md) — other people in the organization
+- [Audit log](error-handling.md#audit-trail) — every profile change leaves a row

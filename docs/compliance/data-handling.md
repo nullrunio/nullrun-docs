@@ -1,504 +1,468 @@
 ---
 title: Data handling & vendor review
 maturity: stable
-description: What data NULLRUN transmits, stores, where it is hosted, who can access it, and how it is deleted — for vendor security and compliance reviews.
+description: What data NULLRUN transmits, stores, where it is hosted, who can access it, and how it is deleted — written for vendor security and compliance reviews.
 ---
 
 # Data handling & vendor review
 
-A consolidated response to the standard vendor-risk questionnaire, written
-for an employee assessing NULLRUN as a vendor. Every value below reflects
-the deployed product; rows marked **Not attested** are honest gaps — the
+A consolidated answer to the standard vendor-risk questionnaire, for
+an employee assessing NULLRUN as a vendor. Every value reflects the
+deployed product. Rows marked **Not attested** are honest gaps: the
 implementation does not document them.
 
-This page is the load-bearing companion to the
-[Compliance overview](index.md). That page gives the short version;
-this one answers the vendor-risk questionnaire in full — *what NULLRUN
-does with the data it sees*.
+This page is the detailed companion to the
+[Compliance overview](index.md). That page gives the short version.
 
 **Reading conventions.** `[V]` = verified · `[D]` = derived or inferred
 · `[N]` = not attested.
 
-## At-a-glance
+## At a glance
 
-| Question | Answer | Evidence |
+| Question | Answer | Section |
 |---|---|---|
-| What does the SDK send? | Tool name, cost estimate, optional typed `business_impact`, optional `action_digest` (SHA-256 of canonical payload). | [§1 Data transmitted](#1-data-transmitted) |
-| What does the backend store in Postgres? | Org / user / key / workflow / policy / approval / cost / audit rows. `audit_events` is **immutable** (4-layer defence). | [§2 Data stored](#2-data-stored-postgres) |
-| What does the backend store in Redis? | Period cost counters, execution bindings, rate-limit buckets, session indexes, chain state. **No PII.** | [§3 Data stored](#3-data-stored-redis) |
-| Where is it hosted? | DigitalOcean (US with EU regions). Self-hosted Postgres + Redis in Docker on a single VPS. | [§4 Hosting](#4-hosting-placement) |
-| Who can access production data? | Owners / Admins / Operators / Viewers (4-level RBAC). SSH to prod only via allowlisted `vps` wrapper. | [§5 Access controls](#5-access-controls) |
-| How is it encrypted? | TLS 1.2/1.3 edge, pgcrypto column-level for Slack OAuth tokens, HMAC-SHA256 for request signing, audit-export sidecar signing. | [§6 Encryption](#6-encryption) |
-| Which third parties see data? | DigitalOcean, Brevo (DE), Polar (SE), Slack, GitHub, Google. Listed at `/api/v1/subprocessors`. | [§7 Sub-processors](#7-sub-processors) |
-| How is data deleted? | Soft-delete with 60-day grace, then a hard purge of tenant data; two-phase revoke for API keys. | [§8 Deletion](#8-deletion) |
-| Where physically is data? | Region selectable at signup (EU or US). Single-region deployment. | [§9 Residency](#9-data-residency-sovereignty) |
-| What's the compliance posture? | DPA available at `/api/v1/orgs/{org}/dpa`. No SOC 2 / ISO 27001 / HIPAA attestation is available. | [§10 Compliance](#10-compliance-posture) |
+| What does the SDK send? | Tool name, cost estimate, optional typed business impact, optional action digest, and the argument bag. | [Data transmitted](#1-data-transmitted) |
+| What does the backend store in Postgres? | Organization, user, key, workflow, policy, approval, cost, and audit rows. The audit table is immutable. | [Data stored](#2-data-stored) |
+| What does the backend store in Redis? | Budget counters, execution bindings, rate-limit buckets, session and chain state. No PII. | [Data stored](#2-data-stored) |
+| Where is it hosted? | DigitalOcean, with EU regions available. Self-hosted Postgres and Redis on one VPS. | [Hosting](#3-hosting) |
+| Who can access production data? | Four role levels. Production shell access through an allowlisted wrapper. | [Access controls](#4-access-controls) |
+| How is it encrypted? | TLS at the edge, column-level encryption for Slack OAuth tokens, HMAC-SHA256 for request signing and audit exports. | [Encryption](#5-encryption) |
+| Which third parties see data? | DigitalOcean, Brevo (DE), Polar (SE), Slack, GitHub, Google. | [Sub-processors](#6-sub-processors) |
+| How is data deleted? | Soft-delete with a 60-day grace, then a purge of tenant data. API key revocation is two-phase. | [Deletion](#7-deletion) |
+| Where physically is data? | Region selectable at signup. Single-region deployment. | [Residency](#8-data-residency) |
+| What is the compliance posture? | A data processing agreement is available at the org endpoint. No SOC 2, ISO 27001, or HIPAA attestation exists. | [Posture](#9-compliance-posture) |
 
 ## 1. Data transmitted
 
-### 1.1 SDK → backend `/api/v1/gate`
+### 1.1 SDK to gateway
 
-Wire schema:
+The gate request carries:
 
 | Field | Source | Notes |
 |---|---|---|
-| `execution_id` | SDK-supplied | Server **mints a UUIDv7** and echoes it back. Client-supplied IDs are not honoured for ownership. |
-| `trace_id`, `tool`, `mode`, `operation_id` | SDK-supplied | Standard envelope. |
-| `business_impact {Money{direction, amount_minor, currency}}` | SDK-supplied | Optional; only required for typed approval rules. |
-| `action_digest` | SDK-supplied | SHA-256 hex of canonicalised payload. Verified again at `/execute` time. |
-| `tool_params` | SDK-supplied | Raw `kwargs` under `input_data.kwargs`; backend reads by `param_name` in ToolParameters approval rules. |
-| `workflow_id`, `parent_execution_id` | SDK-supplied | Body `workflow_id` MUST match the authenticated key's `workflow_id`, else `400 WORKFLOW_ID_BODY_MISMATCH`. |
+| `execution_id` | SDK-supplied | The gateway **mints a UUIDv7** and echoes it back. A client-supplied id is not honoured for ownership. |
+| `trace_id`, `tool`, `mode`, `operation_id` | SDK-supplied | The request envelope. |
+| `tool_arguments` | SDK-supplied | The call's argument bag. A `tool_params` field is accepted as an alternative name. A typed approval rule reads a named argument from it. |
+| `business_impact` | SDK-supplied | Optional. Required only for typed approval rules. |
+| `action_digest` | SDK-supplied | SHA-256 hex of the canonicalised payload. Verified again at execute time. |
+| `workflow_id` | SDK-supplied | Must match the workflow bound to the authenticated key, or the request is refused with `WORKFLOW_ID_BODY_MISMATCH`. |
 
-**Org-mismatch guard (IDOR):** the body `organization_id` must match the
-authenticated context. A mismatch returns an `OrgMismatch` block.
+**Organization mismatch guard.** The organization in the body must
+match the authenticated context. A mismatch is refused.
 
-**No email / no actor name** is sent by the SDK.
+**No email address and no actor name** is sent by the SDK.
 
-### 1.2 SDK → backend `/api/v1/track`
+### 1.2 SDK to gateway, cost tracking
 
-`TrackRequestRaw` carries `event_id`,
-`workflow_id` (required), `tokens`, `cost_cents` (accepted int/float/string
-but **not trusted for enforcement** — the server overwrites it via a
-5%-delta rule: client-supplied `execution_id` and `cost_cents` are never
-trusted), `tool_name`, `is_retry`, `operation_name`, `client_created_at`,
-`input_tokens`, `output_tokens`, `agent_id`, `environment`, `agent_type`,
-`reservation_id`, `reserved_cost_cents`, `provider`, `model`, `execution_id`,
-`type_` (`llm_call`/`tool_call`/`span_start`/`span_end`), `trace_id`,
-`span_id`, `parent_trace_id`, `metadata`, `parent_span_id`, `depth`,
-`fn_name`, `error`, `idempotency_key`, `latency_ms`, `cost_source`,
-`attempt_index`, `cache_read_tokens`, `cache_write_tokens`,
-`reasoning_tokens`, `tool_names[]`, `finish_reason`.
+The cost-tracking request carries the event id, the workflow id, token
+counts, the tool or model name, the provider, the model, trace and span
+correlation ids, agent and organization ids, latency, retry flag, the
+reserved amount, the provider-reported amount, a cost source label, and
+free-form metadata.
 
-### 1.3 Backend → SDK gate response
+The cost figure the client sends is **not trusted for enforcement**.
+The gateway recomputes it.
 
-The gate response carries `decision`, `decision_source`,
-`explanation`, `approval_id`,
-`approval_timeout_seconds`, server-minted `execution_id`,
-`action_digest` echo, `policy_hash` (reserved), `idempotent_replayed: bool`.
+### 1.3 Gateway to SDK
 
-**PII in gate responses:** decision/explanation text + approval IDs only.
-No email, no org name, no actor identifier echoed. `[V]`
+The gate response carries the decision, its source, an explanation, an
+approval id when a human is required, the approval timeout, the
+server-minted `execution_id`, and an echo of the action digest.
 
-### 1.4 Backend ↔ upstream LLM provider
+**PII in gate responses:** decision text, the explanation, and
+approval ids. No email address, no organization name, no actor
+identifier. `[V]`
 
-- Provider types cover OpenAI / Anthropic / Google / Azure.
-- **The proxy route is not wired into the live router** — NULLRUN does
-  not proxy LLM calls. The SDK talks to providers directly with the
-  customer's own API keys. `[D]`
-- **Credential invariant:** the SDK never sees raw provider API keys;
-  credentials are resolved server-side.
+### 1.4 Gateway to the LLM provider
 
-### 1.5 WebSocket control plane
+- Provider types cover OpenAI, Anthropic, Google, and Azure.
+- **NULLRUN does not proxy model calls.** The SDK talks to providers
+  directly, using the customer's own API keys. `[D]`
+- **Credential invariant:** the SDK never holds a raw provider API key.
 
-- `WS_HMAC_MAX_AGE_SECONDS = 300` — replay window.
-- HMAC-SHA256 over canonical JSON (sorted keys, no whitespace), keyed
-  by per-API-key secret.
-- The wire is signed; the receiver verifies the decoded signed payload
-  — never the full wire bytes. `[V]`
+### 1.5 Control plane
+
+- The WebSocket is signed with HMAC-SHA256 over canonical JSON, keyed
+  by a per-API-key secret, with a 300-second replay window.
+- The receiver verifies the decoded signed payload, not the raw wire
+  bytes. `[V]`
 
 ### 1.6 Webhooks received
 
 | Webhook | Verification |
 |---|---|
-| **Polar** (billing) | HMAC-SHA256 verified BEFORE any processing. Accepts Standard Webhooks headers (`webhook-id`, `webhook-timestamp`, `webhook-signature: v1,<base64>`) and the `polar-signature: t=…,v1=…` fallback. The sandbox environment bypasses verification; production does not. |
-| **Slack events** | Signing-secret validation; bot tokens stored via pgcrypto encryption. |
+| **Polar** (billing) | HMAC-SHA256 verified before any processing. Both Standard Webhooks headers and the `polar-signature` form are accepted. |
+| **Slack events** | Signing-secret validation. Bot tokens are stored encrypted. |
 
 ### 1.7 Email
 
-- **Sub-processor:** Brevo (Sendinblue GmbH, **DE**). SMTP via
-  `BREVO_SMTP_HOST` / `BREVO_SMTP_LOGIN` / `BREVO_SMTP_PASSWORD`. `[V]`
-- **Email types:** invitation, invite-declined, 2FA recovery, password
-  reset, verification, data-export-ready notification.
-- **PII redaction in logs:** email addresses render as a 12-char
-  SHA-256 prefix, never plaintext. `[V]`
+- **Sub-processor:** Brevo (Sendinblue GmbH, **DE**).
+- **Email types:** invitation, invitation declined, two-factor
+  recovery, password reset, verification, and data-export-ready
+  notice.
+- **PII redaction in logs:** an email address renders as a short
+  SHA-256 prefix, never as plaintext. `[V]`
 
-## 2. Data stored — Postgres
+## 2. Data stored
+
+### 2.1 Postgres
 
 | Table | Stored | Mutable? | Encryption at rest | Retention |
 |---|---|---|---|---|
-| `audit_events` | `id`, `organization_id`, `actor_id`, `action`, `event_type`, `decision`, `policy_id`, `policy_version`, `policy_hash`, `matched_rule`, `reason_code`, `execution_id`, `action_digest`, `tool_name`, `tool_version`, `tool_digest`, `metadata`, `content_hash`, `previous_hash`, `created_at` | **IMMUTABLE** | DB-level | Persistent until org purge (60-day grace) |
-| `execution_records` | Per-execution outcome rows; joined on `execution_id` | Mutable | DB-level | Per `plan.history_days` (Lite=3, Scale=90) |
-| `cost_events` | `cost_cents`, `cost_millicents`, `tokens`, `provider_reported_cost_cents`, `authoritative_cost_cents`, `cost_integrity` (provided/computed/estimated/provisional/reconciled), tool/model, trace/span/correlation IDs, agent/org IDs, `received_at`. Partitioned by month. | Mutable | DB-level | Env-driven `COST_EVENTS_RETENTION_DAYS`; defaults to per-plan `history_days` |
-| `approvals` | Approval decisions, `decided_by_kind` (user / system_expiry / unknown) | Mutable (pending→approved/denied/expired/revoked) | DB-level | Pending GC'd by 5-s sweep worker |
-| `organizations` | `id`, `name`, `slug`, `contact_email`, `plan`, `deleted_at`, `audit_purge_after` | Mutable; soft-delete via `deleted_at` with 60-day grace | DB-level | Hard-deleted by retention worker after grace |
-| `users` | `id`, `email`, `display_name`, `password_hash` (Argon2), `role`, `default_organization_id`, `tombstoned_at`, `onboarding_completed_at` | Mutable; tombstone via `tombstoned_at` | DB-level | Persistent until org cascade |
-| `organization_api_keys` | `id`, `name`, `key_prefix`, `key_suffix`, `key_hash` (SHA-256), `secret_key` (**HMAC plaintext — required for hot path**), `status` (active/rotating/revoked), `version`, `last_used_at`, `expires_at`, `scopes` | Mutable | DB-level | Persistent until org cascade |
-| `sessions` | Bearer token store; session_token, user_id, org_id, expires_at | Mutable (revoke = DEL) | DB-level | 7-day TTL (Redis + PG) |
-| `policies` | `id`, `scope` (Org/Workflow), `policy_type`, `enforcement_mode`, `budget_cents`, `max_overdraft_cents` | Mutable (soft-delete) | DB-level | Per `plan.history_days` |
-| `audit_export_secrets` | Per-org HMAC secret for audit export signing | Mutable | DB-level | Persistent until org cascade |
-| `workflows` | Workflow metadata, `state` (Normal/Flagged/Tripped/Paused/Killed), `budget_cents`, `archived_at`, `deleted_at` | Mutable | DB-level | Persistent |
+| `audit_events` | Organization, actor, action, event type, decision, policy id, policy version, policy hash, matched rule, reason code, `execution_id`, `action_digest`, tool name and version, metadata, content hash, previous hash, timestamp | **Immutable** | Database level | Until the organization purge, after a 60-day grace |
+| `execution_records` | One row per execution, joined on `execution_id` | Mutable | Database level | The plan's history window |
+| `cost_events` | Cost in cents and millicents, token counts, provider-reported and authoritative cost, an integrity label, tool and model, correlation ids, agent and organization ids, receipt timestamp. Partitioned by month. | Mutable | Database level | The plan's history window |
+| `approvals` | The decision, and who made it — a person, a system expiry, or an unknown source | Mutable: pending becomes approved, denied, expired, or revoked | Database level | Pending rows are collected by a sweep worker |
+| `organizations` | Id, name, slug, contact email, plan, deletion timestamp, purge date | Mutable, soft delete | Database level | Hard-deleted by the retention worker after the grace |
+| `users` | Id, email, display name, password hash (Argon2), role, default organization, tombstone timestamp | Mutable | Database level | Until the organization cascade |
+| `organization_api_keys` | Id, name, key prefix and suffix, key hash (SHA-256), the HMAC signing secret, status, version, last use, expiry, scopes | Mutable | Database level | Until the organization cascade |
+| `sessions` | Bearer token store: token, user id, organization id, expiry | Mutable; a revocation is a delete | Database level | 7-day lifetime |
+| `policies` | Id, scope, policy type, enforcement mode, budget amount, overdraft cap | Mutable, soft delete | Database level | The plan's history window |
+| `approval_rules` | The typed predicates that ask for a human, mirroring the policy quota | Mutable | Database level | The plan's history window |
+| `audit_export_secrets` | The per-organization signing secret for audit exports | Mutable | Database level | Until the organization cascade |
+| `workflows` | Metadata, state (normal, flagged, tripped, paused, killed), budget amount, archive and deletion timestamps | Mutable | Database level | Persistent |
 
-### Audit-events immutability — 4-layer defence-in-depth
+### 2.2 Immutability of the audit table
 
-This is the SOC2 control surface:
+Four independent controls protect the audit table:
 
-1. Row-level `BEFORE UPDATE / DELETE` triggers raise an error
-   unconditionally.
-2. A DDL event trigger blocks `ALTER / CREATE / DROP` on the audit
-   event and audit export tables.
-3. `DELETE` and `TRUNCATE` are revoked on the audit export table from
-   the application role.
-4. `ENABLE ALWAYS TRIGGER` hardening closes the
-   `session_replication_role = 'replica'` bypass — an audit-event
-   immutability bypass found during internal penetration testing.
+1. Row-level triggers refuse an update and a delete.
+2. A schema-level event trigger refuses schema changes to the audit
+   and audit-export tables.
+3. Delete and truncate are revoked from the application role on the
+   audit-export tables.
+4. The triggers are armed so that a session-level replication-role
+   change cannot disable them.
 
-### Column-level encryption
+### 2.3 Column-level encryption
 
-Column-level encryption uses pgcrypto AES. It is applied to **Slack
-OAuth bot tokens**. Threat model: stolen disk image OR
-read-only DB dump yields ciphertext; plaintext requires DB +
-`APP_ENCRYPTION_KEY`.
+Column-level encryption uses pgcrypto AES. It is applied to the Slack
+OAuth bot tokens. The threat model: a stolen disk image or a
+read-only dump yields ciphertext, and the plaintext needs both the
+database and the encryption key.
 
-## 3. Data stored — Redis
+### 2.4 Redis
 
-| Key pattern | Purpose | PII | TTL |
-| --- | --- | --- | --- |
-| `bp:{ts}:cost_cents` | Period-bound budget counter (cents). **Authoritative for enforcement.** | No (integer only) | `period_end_ts - now()`, capped `PERIOD_BUDGET = 35d` |
-| `bp:{ts}:executions` | Period-bound execution rate counter | No | Same TTL |
-| `execution:{execution_id}` | Hash binding (org_id, api_key_id). Anti-replay for `/track`, `/heartbeat` | No | `EXECUTION_BINDING = 24h` |
-| `rate_limit:{org_id}:{minute}` | Per-org rate-limit counter | No | `RATE_LIMIT = 120s` |
-| `rate_limit:gate:{key_id}:{minute}` | Per-API-key rate-limit counter on `/gate` | No | 120s |
-| `rl:tokens:{api_key_id}`, `rl:refill:{api_key_id}` | Token-bucket rate-limit state | No | 2× window |
-| `circuit_state:{org_id}:{wf_id}` | Workflow circuit-breaker state | No | `CIRCUIT_STATE = 3600s` |
-| `approval_request:{request_id}` | Approval pending metadata | No | `APPROVAL_REQUEST = 300s` |
-| `budget:reserved:{org_id}:{execution_id}` | Per-execution reservation | No | `authorization_deadline + 30s` (floor 60s, ceiling 24h) |
-| `pending_2fa:{token_key}` + `pending_2fa_user:{user_id}` | 2FA challenge (Redis-resident) | user_id only |
-| `recovery_2fa:{token}` + `recovery_2fa_user:{user_id}` | OAuth 2FA-disable recovery token | user_id only | `RECOVERY_2FA = 24h` |
-| `in_flight:{org_id}:{api_key_id}` | In-flight counter for two-phase revoke drain | No |
-| `chain:{org_id}:{chain_id}` | Chain state-machine hash | No | `CHAIN_IDLE = 300s` |
-| `audit_hash:{organization_id}` | Last event's `content_hash` for chain fast-path | No | No TTL (cleanup-on-delete) |
-| `session:{token}` | Session token → user lookup | user_id | 7d (`SESSION_MAX_AGE_SECS`) |
+Redis holds short-lived operational state. Grouped by purpose:
 
-**No PII** is stored in any of the above keys. Token keys, user indexes,
-and approval metadata carry only opaque IDs (UUIDs).
+| Purpose | Contents | PII |
+|---|---|---|
+| Budget | The period cost counter, the reserved amount per execution | No |
+| Execution binding | The organization and API key an `execution_id` belongs to | No |
+| Rate limiting | Per-organization and per-key counters | No |
+| Session and token | Session lookups, two-factor challenge and recovery tokens | User id only |
+| Chain state | The chain state machine for a chain of workflows | No |
+| Audit chain fast path | The last event's content hash per organization | No |
+| Circuit state | The workflow circuit-breaker state | No |
 
-## 4. Hosting & placement
+No personal data is stored in any of them. The keys hold opaque
+identifiers.
 
-| Layer | Provider / location |
+## 3. Hosting
+
+| Layer | Provider or location |
 |---|---|
-| **Cloud** | DigitalOcean LLC (US with EU regions). A single VPS hosts the whole deployment |
-| **Postgres** | Self-hosted Docker container on the VPS, with a dedicated application role and the pgcrypto extension |
-| **Redis** | Self-hosted Docker container on the same VPS, with AOF + RDB backup |
-| **Object storage** | S3-compatible (`BACKUP_S3_BUCKET` env-gated). Compatible with DO Spaces via `S3_ENDPOINT` override. Audit export + backup upload |
-| **Container orchestration** | Docker Compose on a single VPS. Blue-green deploys for budget/auth paths; rolling deploys for everything else |
-| **CDN / edge** | None. nginx on the VPS terminates TLS and reverse-proxies. Direct origin exposure |
-| **DNS** | nginx virtual hosts: `nullrun.io`, `www.nullrun.io`, `api.nullrun.io`. DNS provider not documented |
+| **Cloud** | DigitalOcean LLC, US with EU regions. One VPS hosts the whole deployment. |
+| **Postgres** | Self-hosted container on the VPS, with a dedicated application role and the pgcrypto extension. |
+| **Redis** | Self-hosted container on the same VPS, with AOF and RDB backups. |
+| **Object storage** | S3-compatible, for audit exports and backups. Compatible with DigitalOcean Spaces. |
+| **Orchestration** | Docker Compose on one VPS. Blue-green deploys on the budget, billing, and gate paths; rolling deploys elsewhere. |
+| **Edge** | No CDN. nginx on the VPS terminates TLS and reverse-proxies. The origin is directly reachable. |
+| **DNS** | nginx virtual hosts for the marketing site and the API host. |
 
 ### Container hardening
 
-Per the production container configuration:
-
-- `read_only: true` root FS
-- `cap_drop: [ALL]`
-- `no-new-privileges: true`
-- `tmpfs /tmp` (noexec / nosuid / nodev, 100M)
+- Read-only root filesystem.
+- All Linux capabilities dropped.
+- No privilege escalation.
+- A tmpfs for temporary files, mounted noexec, nosuid, and nodev.
 
 ### TLS
 
-- `ssl_protocols TLSv1.2 TLSv1.3;` (no SSLv3 / TLS 1.0 / 1.1)
-- Mozilla "intermediate" cipher list
-- HSTS preload candidate, `Strict-Transport-Security: max-age=31536000; includeSubDomains`
-- Certbot-managed Let's Encrypt at `/etc/letsencrypt/live/nullrun.io/`
-- `[V]`
+- TLS 1.2 and 1.3 only.
+- A Mozilla "intermediate" cipher list.
+- HSTS with a one-year max age and subdomain inclusion.
+- Certificates managed by Certbot. `[V]`
 
-## 5. Access controls
+## 4. Access controls
 
-### 5.1 RBAC
-
-4-level hierarchy:
+### 4.1 Roles
 
 | Role | Level | Used for |
 |---|---|---|
-| Viewer | 0 | Read-only dashboard |
-| Operator | 1 | Operator-tier mutations (kill / pause workflows, decide approvals). **Runtime-tier only** — does not exist in storage |
-| Admin | 2 | Org management, member management |
-| Owner | 3 | Org deletion, billing changes, ownership transfer |
+| Viewer | 0 | Read-only dashboard. |
+| Operator | 1 | Operator-tier mutations: kill and pause workflows, decide approvals. This level exists only at runtime. |
+| Admin | 2 | Organization and member management. |
+| Owner | 3 | Organization deletion, billing changes, ownership transfer. |
 
-**Storage-layer role** is parallel but not isomorphic:
-`Viewer / Member / Admin / Owner`.
+The storage layer has a parallel hierarchy: viewer, member, admin,
+owner.
 
-**Machine API keys** carry no user role. RBAC-protected mutations
-require a user-bound key.
+**Machine API keys carry no user role.** A mutation that the role
+model protects needs a user-bound key.
 
-**Platform admin** additionally requires TOTP enabled + Owner role;
-fail-CLOSED on TOTP-lookup error.
+**Platform admin** additionally needs two-factor enabled and the owner
+role. A lookup failure refuses the request.
 
-### 5.2 Auth methods
+### 4.2 Authentication
 
 | Method | Wire |
 |---|---|
-| Session cookies (browser) | `__Host-nullrun_session` (prod) / `nullrun_session` (dev). The `__Host-` prefix requires Secure + Path=/ + no Domain. HttpOnly, SameSite=Lax, 7-day TTL. Fails CLOSED to prod (not dev) by default |
-| API keys (machine) | `nr_live_*` prefix; HMAC-SHA256 over `timestamp + ":" + api_key + ":" + body_hash`. Key rotation is versioned and fanned out to every instance. Constant-time comparison |
-| OAuth (identity) | GitHub + Google OAuth 2.0 redirect |
-| SSO | SAML / OIDC single sign-on |
+| Session cookie (browser) | A host-prefixed cookie in production, HttpOnly, SameSite=Lax, 7-day lifetime. It fails closed to production rather than to development. |
+| API key (machine) | A prefixed key; the request body is signed with HMAC-SHA256 over the timestamp, the key, and a hash of the body. Rotation is versioned and fans out to every instance. The comparison is constant-time. |
+| OAuth (identity) | GitHub and Google. |
+| SSO | SAML and OIDC single sign-on. |
 
-### 5.3 2FA
+### 4.3 Two-factor
 
-- **TOTP RFC 4226:** 6 digits, 30s period, 160-bit secret, 10 recovery
-  codes on enable. Setup/verify/disable/recovery-codes endpoints under
-  `/api/v1/auth/2fa/*`.
-- **Platform admin endpoints** require TOTP-enabled user.
-- **Recovery tokens** for OAuth users disabling 2FA: 24h TTL, held in
-  Redis, single-use.
-- `[V]`
+- TOTP with six digits, a 30-second period, and ten recovery codes on
+  enable.
+- Platform-admin endpoints need a two-factor-enabled user.
+- Recovery tokens for OAuth users disabling two-factor are
+  single-use, hold a user id, and expire after 24 hours. `[V]`
 
-### 5.4 API key scopes
+### 4.4 API key scopes
 
-- `SCOPE_ADMIN` is required for non-Owner admins on `/admin/*` paths.
-- Workflow binding: API keys carry `workflow_id`; the body
-  `workflow_id` MUST match the authenticated key's workflow, else
-  `400 WORKFLOW_ID_BODY_MISMATCH`.
-- Status: `active` / `rotating` / `revoked`.
+- An admin scope is required for non-owner admins on admin paths.
+- A key carries its workflow id. A body `workflow_id` that does not
+  match the key is refused with `WORKFLOW_ID_BODY_MISMATCH`.
+- Status: active, rotating, or revoked.
 
-### 5.5 Audit log access
+### 4.5 Audit log access
 
-- **Plan-gated:** `plan.features.audit_log` controls read access; Lite
-  plan has `audit_log: false` (no customer access).
-- **RLS:** a per-org SELECT policy on the audit log. Every raw
-  database reader must set the current-organization context.
-- **Plan tier retention:** `plan.history_days` controls
-  customer-visible history retention; `-1` = unlimited.
+- **Plan-gated.** A plan feature flag controls read access. Plans
+  without the flag give the customer no access.
+- **Database policy.** A per-organization row policy exists on the
+  audit table, and a raw reader must set the current-organization
+  context. The deployed application role is a superuser with row-level
+  security bypassed, so the policy does not bind there. Tenant scoping
+  in production comes from the queries, not from the policy.
+- **Retention.** The plan's history window controls customer-visible
+  history. A value of -1 means unlimited.
 
-### 5.6 Operator access to production
+### 4.6 Operator access to production
 
-- SSH only via the allowlisted `vps` wrapper. Allowlisted
-  subcommands: `redis-cli`, `psql`, `journalctl -u <unit>`.
-- **Blocked:** `printenv`, `docker inspect`, raw `cat` of `.env.prod`,
-  mutating docker subcommands.
-- Production creds sourced from GH Secret `ENVPROD_FILE`, atomic render
-  by CI.
+- Shell access goes through an allowlisted wrapper that permits a
+  small set of read-only commands.
+- Blocked: environment dumps, container inspection, reading the
+  production environment file, and every mutating container command.
+- Production credentials come from a CI secret and are rendered
+  atomically.
 
-## 6. Encryption
+## 5. Encryption
 
 | Layer | Mechanism | Attestation |
 |---|---|---|
-| **In transit — server edge** | TLS 1.2 / 1.3, Mozilla intermediate ciphers, HSTS preload candidate | `[V]` |
-| **In transit — WebSocket** | HMAC-SHA256 over canonical JSON, replay window 300 s | `[V]` |
-| **At rest — Postgres (column)** | pgcrypto AES, hex-encoded. Applied to Slack OAuth bot tokens. Threat model: stolen DB dump + missing `APP_ENCRYPTION_KEY` = ciphertext | `[V]` |
-| **At rest — Postgres (disk)** | **Not attested**; relies on DigitalOcean droplet disk encryption | `[N]` |
-| **At rest — Redis** | **Not attested**; bind-mounted AOF/RDB volumes rely on host disk encryption | `[N]` |
-| **At rest — S3 / object storage** | S3-compatible object storage, gated on `BACKUP_S3_BUCKET`. Bucket-side encryption (SSE-S3 / SSE-KMS) configuration is **not exposed** | `[D]` |
-| **KMS / key management** | `APP_ENCRYPTION_KEY` env var drives pgcrypto AES. No AWS KMS / GCP KMS / HashiCorp Vault integration. Rotation requires a manual runbook (breaks 2FA and Slack) | `[D]` |
-| **HMAC for request signing** | `NULLRUN_GATEWAY_SIGNING_KEY` (≥32 bytes, never auto-generated), used for HMAC-SHA256 of gate/execute/track bodies | `[V]` |
-| **API keys at rest** | `key_hash` SHA-256 stored; `secret_key` plaintext stored (HMAC hot-path requirement). Key prefix / suffix surfaced for UI display | `[V]` |
-| **Cookie security flags** | `__Host-` prefix, Secure, HttpOnly (session), SameSite=Lax, Path=/, 7-day Max-Age. CSRF cookie NOT HttpOnly (SPA reads it). Production = fail-CLOSED default | `[V]` |
-| **Audit export signing** | Per-export HMAC-SHA256 sidecar via `NULLRUN_AUDIT_EXPORT_SECRET` (or per-org secret). Fail-CLOSED in prod (no dev fallback) | `[V]` |
+| **In transit, server edge** | TLS 1.2 and 1.3, Mozilla intermediate ciphers, HSTS | `[V]` |
+| **In transit, WebSocket** | HMAC-SHA256 over canonical JSON, 300-second replay window | `[V]` |
+| **At rest, Postgres columns** | pgcrypto AES, hex-encoded, on the Slack OAuth bot tokens | `[V]` |
+| **At rest, Postgres disk** | **Not attested**; relies on the provider's disk encryption | `[N]` |
+| **At rest, Redis** | **Not attested**; the backup volumes rely on host disk encryption | `[N]` |
+| **At rest, object storage** | S3-compatible storage. Bucket-side encryption settings are **not exposed** | `[D]` |
+| **Key management** | One environment-held key drives the column encryption. No managed key service is integrated. Rotation needs a manual runbook, and it breaks two-factor and Slack until every copy is replaced | `[D]` |
+| **Request signing** | HMAC-SHA256 over gate, execute, and track bodies. The signing key is at least 32 bytes and is never generated automatically | `[V]` |
+| **API keys at rest** | The key itself is stored as a SHA-256 hash. The signing secret is stored in plaintext because the hot path needs it. A prefix and suffix are kept for display | `[V]` |
+| **Cookies** | Host prefix, Secure, HttpOnly for the session, SameSite=Lax, Path=/, 7-day lifetime. The CSRF cookie is readable by the single-page app by design | `[V]` |
+| **Audit exports** | A per-organization HMAC-SHA256 sidecar signature. There is no development fallback | `[V]` |
 
-## 7. Sub-processors
+## 6. Sub-processors
 
-The canonical list is versioned and served from the public endpoint
-`GET /api/v1/subprocessors` (ETag-cached).
+The canonical list is served from a public endpoint and cached with an
+entity tag.
 
 | Sub-processor | Role | Country | Transfer mechanism | Opt-in |
 |---|---|---|---|---|
-| **DigitalOcean LLC** | Hosting (PG, Redis, app servers) | US (EU regions) | EU SCCs (Module 2/3) for US-region; EU residency available | No |
-| **Brevo (Sendinblue GmbH)** | Transactional email | DE (Germany) | Adequacy decision (EU) | No |
-| **Polar.sh (Polar Software Sweden AB)** | Payment, subscriptions, tax (merchant of record) | SE (Sweden) | Adequacy decision (EU) | No |
-| **Slack Technologies, LLC** | Alert delivery (OAuth) | US | EU SCCs (Module 3) | Yes |
-| **GitHub Inc.** | OAuth identity provider | US | EU SCCs (Module 3) | Yes |
-| **Google LLC** | OAuth identity provider | US | EU SCCs (Module 3) | Yes |
+| **DigitalOcean LLC** | Hosting: Postgres, Redis, application servers | US, with EU regions | EU standard contractual clauses for the US region | No |
+| **Brevo (Sendinblue GmbH)** | Transactional email | DE | EU adequacy decision | No |
+| **Polar.sh (Polar Software Sweden AB)** | Payment, subscription, tax, merchant of record | SE | EU adequacy decision | No |
+| **Slack Technologies, LLC** | Alert delivery and OAuth | US | EU standard contractual clauses | Yes |
+| **GitHub Inc.** | OAuth identity provider | US | EU standard contractual clauses | Yes |
+| **Google LLC** | OAuth identity provider | US | EU standard contractual clauses | Yes |
 
-**LLM providers:** NULLRUN does not proxy calls to OpenAI /
-Anthropic / Google / Azure. The SDK talks to providers directly with its
-own keys.
+**Model providers.** NULLRUN does not proxy calls to OpenAI,
+Anthropic, Google, or Azure. The SDK talks to providers directly with
+the customer's own keys.
 
-**Analytics / observability vendors:** Self-hosted stack — Prometheus,
-Grafana, alertmanager, vector, and Loki. No Datadog / Sentry / Segment /
-Mixpanel / Amplitude.
+**Analytics and observability.** Self-hosted: Prometheus, Grafana,
+Alertmanager, Vector, and Loki. No third-party analytics vendor.
 
-**Backup storage:** S3-compatible (`BACKUP_S3_BUCKET` env-gated); config
-tar encrypted with GPG before upload.
+**Backup storage.** S3-compatible, with the configuration archive
+encrypted before upload.
 
-## 8. Deletion
+## 7. Deletion
 
-### 8.1 Organization deletion
+### 7.1 Organization deletion
 
-**Soft-delete path**:
+**Soft-delete.** The organization row is marked deleted and a purge
+date is set 60 days out. Audit rows stay for the grace period because
+the audit chain must stay intact. An owner can restore the
+organization, which clears both markers. A delete request that would
+leave audit history behind is refused with a `409` that names the
+grace period and its length. Child records — keys, policies,
+workflows, invitations — are updated in the same transaction.
 
-- The organization row is marked deleted, and a purge date is set 60
-  days out.
-- Audit rows **intentionally retained** during grace for SOC2 immutability.
-- Owner can restore via `/restore` endpoint, which clears both.
-- Handler returns `409 AUDIT_HISTORY_RETAINED` with `grace_period_days: 60`
-  when audit history exists.
-- Child records (API keys, policies, workflows, invites) are updated in
-  the same transaction.
+**Hard purge.** The purge runs after the purge date. It scrubs the
+audit log, the decision history, the cost events, and the billing
+events, then deletes the organization row. The update and delete
+triggers on the audit table are disabled inside that transaction and
+re-armed afterwards, so they cannot be bypassed by a session-level
+setting.
 
-**Hard purge path:**
+### 7.2 User account deletion
 
-- Runs hourly after `audit_purge_after`.
-- Scrubs the audit log, decision history, cost events, and billing
-  events.
-- Deletes the organization row.
-
-**Audit immutability bypass:** within the same transaction the update and
-delete triggers on the audit event table are disabled, the rows are
-deleted, and the triggers are then re-armed with `ENABLE ALWAYS TRIGGER`
-so they cannot be bypassed again by a session-level setting.
-
-### 8.2 User account deletion
-
-`DELETE /api/v1/auth/account`. Three cases:
+Three cases:
 
 | Case | Behaviour |
 |---|---|
-| Sole-owner sole-member org | Auto soft-deleted (no decision required) |
-| Co-member org, decision = `delete_and_notify` | Soft-delete + fail-CLOSED revoke of all co-member sessions |
-| Co-member org, decision = `transfer { to_user_id }` | Promote new owner, no delete |
+| The only owner of the only member's organization | The organization is soft-deleted. No decision is required. |
+| Co-member organization, the user chooses delete and notify | Soft delete, and every co-member session is revoked. A revocation failure refuses the request. |
+| Co-member organization, the user chooses transfer | A new owner is promoted and nothing is deleted. |
 
-Wire-additive: an `ownership_decisions` map keyed by user id.
-Fail-CLOSED if Redis hiccups on session revoke (503). `[V]`
+The request carries an ownership-decisions map keyed by user id. A
+session-revocation failure refuses the request. `[V]`
 
-### 8.3 API key revocation — two-phase with in-flight drain
+### 7.3 API key revocation
 
-1. **Phase 1:** the key transitions to `rotating` and every instance is
-   notified; a deny list short-circuits warm-cache hits.
-2. **Phase 2:** a drain supervisor polls the
-   `in_flight:{org_id}:{api_key_id}` counter until it reaches 0 or the
-   timeout expires.
-3. **Phase 3:** status → `revoked`. The counter does not return
-   (preserved for audit / reconciliation).
+Three phases:
 
-TTL of the deny list = 2× the auth-cache TTL = 600 s.
+1. The key moves to rotating, every instance is notified, and a deny
+   list short-circuits warm-cache hits.
+2. A drain supervisor waits for the in-flight counter to reach zero,
+   or for the timeout to expire.
+3. The key becomes revoked. The counter is preserved for audit and
+   reconciliation.
 
-### 8.4 GDPR / right-to-erasure
+The deny list lives for twice the authentication cache lifetime.
+
+### 7.4 GDPR
 
 | Right | Implementation |
 |---|---|
-| **Art. 15 — right of access** | `POST /api/v1/auth/data-export`, a per-user export job. 7-day download TTL, 100k-record cap per section |
-| **Art. 17 — right to erasure** | The tenant purge scrubs tenant-scoped data; triggered automatically 60 days after org soft-delete. No manual kickoff path is documented for self-serve |
-| **Audit retention on erasure** | Audit rows are physically deleted when the org is purged (after the 60-day grace). Before the purge they are retained even on soft-delete (intentional — SOC 2) |
-| **Drift guard** | An automated check prevents payloads from accumulating PII (e.g., email) that would later need GDPR erasure to scrub |
+| **Access** | A per-user export job. The download expires after 7 days, and each section is capped at 100 000 records. |
+| **Erasure** | The tenant purge scrubs tenant-scoped data, and runs automatically 60 days after the soft delete. There is no self-serve kickoff path. |
+| **Audit retention on erasure** | Audit rows are physically deleted when the organization is purged. They are retained through the grace period on purpose. |
+| **Drift guard** | An automated check keeps personal data from accumulating in payloads where it would later need to be scrubbed. |
 
-## 9. Data residency & sovereignty
+## 8. Data residency
 
-- **Physical storage:** DigitalOcean droplets. Region selectable at
-  signup: customers who pick EU get EU-resident Postgres / Redis.
-- **Cross-region replication:** **Not attested**. Single-region
-  deployment posture.
+- **Physical storage:** DigitalOcean. The region is selectable at
+  signup, and a customer who picks EU gets EU-resident Postgres and
+  Redis.
+- **Cross-region replication:** **Not attested**. The deployment is
+  single-region.
 - **Cross-border transfers:**
-  - US sub-processors (DO US regions, Slack, GitHub, Google) →
-    **EU SCCs (Decision 2021/914) Module 2/3**.
-  - EU sub-processors (Brevo DE, Polar SE, DO EU) → adequacy decision
-    (no SCC needed).
-- **In-product region enforcement:** customers who select EU residency
-  at signup have data physically in EU. Wire transfers: EU SCCs for US
-  endpoints; otherwise data never leaves EU. `[D]`
-- **Customer-side region selection:** the DPA states that EU residency
-  is available and is the default for customers who select the EU
-  region; the signup-time selection mechanism is not exposed. `[D]`
+  - US sub-processors — DigitalOcean US, Slack, GitHub, Google — use
+    EU standard contractual clauses, modules 2 and 3.
+  - EU sub-processors — Brevo in DE, Polar in SE, DigitalOcean EU —
+    rely on the EU adequacy decision.
+- **Region enforcement:** the region chosen at signup decides where the
+  data physically sits. The signup mechanism is not exposed on the
+  wire. `[D]`
 
-## 10. Compliance posture
+## 9. Compliance posture
 
 | Item | Status | Attestation |
 |---|---|---|
-| **DPA** | Available. `GET /api/v1/orgs/{org}/dpa` returns the accepted version + history; `POST /api/v1/orgs/{org}/dpa/accept` is idempotent on `(org_id, dpa_version)`. Acceptance is recorded as a `compliance.dpa.accepted` audit row. | `[V]` |
-| **DPA text version** | Versioned. The accepted version is returned by the endpoint; the sub-processor list carries its own pinned version. | `[V]` |
-| **Sub-processor endpoint** | `GET /api/v1/subprocessors` (public, ETag-cached) | `[V]` |
-| **GDPR Art. 15** | Per-user export implemented | `[V]` |
-| **GDPR Art. 17** | Right-to-erasure via the tenant purge (60-day grace) | `[V]` |
-| **SOC 2** | The audit-log immutability guarantee is the SOC 2 control surface. **No SOC 2 Type II report is available.** | `[D]` |
+| **Data processing agreement** | Available. The org endpoint returns the accepted version and its history. Acceptance is idempotent per version and is recorded as an audit row. | `[V]` |
+| **Sub-processor list** | Served from a public endpoint, cached with an entity tag. | `[V]` |
+| **GDPR access** | Per-user export implemented. | `[V]` |
+| **GDPR erasure** | Right to erasure through the tenant purge, after a 60-day grace. | `[V]` |
+| **SOC 2** | The audit-table immutability guarantee is the control surface. **No SOC 2 Type II report is available.** | `[D]` |
 | **ISO 27001** | **Not claimed** | `[N]` |
 | **HIPAA** | **Not claimed** | `[N]` |
 | **CCPA** | **Not claimed** | `[N]` |
-| **Privacy policy URL** | Reachable from the `/dpa` and `/privacy` pages | `[N]` |
-| **Audit export** | HMAC-signed JSONL / S3 download, produced by a background worker | `[V]` |
+| **Audit export** | HMAC-signed JSONL or an object-storage download, produced by a background worker. | `[V]` |
 
-## 11. Breach & incident response
+## 10. Breach and incident response
 
 | Item | Status | Attestation |
 |---|---|---|
-| **Alerting surface** | Self-hosted **Prometheus alertmanager** + Slack (per-channel via OAuth). Alert rules cover track error rate >1% for 2m, P95 >200ms for 5m, P99 >500ms for 3m, out-of-order events, and similar. PagerDuty is not supported. | `[V]` |
-| **Alert channels** | `Webhook` and `Slack`. Email, PagerDuty, and Discord channels are not supported. | `[V]` |
-| **Runbooks** | 30+ topic-specific runbooks (track-error-rate, audit-drain-stuck, outbox-dlq, period-rollover-decision, envprod-leak, billing-drift, etc.) | `[V]` |
+| **Alerting surface** | A self-hosted Prometheus Alertmanager plus Slack, with per-channel OAuth. Rules cover the cost-tracking error rate, latency percentiles, out-of-order events, and similar. PagerDuty is not supported. | `[V]` |
+| **Alert channels** | Webhook and Slack. Email, PagerDuty, and Discord are not supported. | `[V]` |
+| **Runbooks** | Topic-specific runbooks exist for the cost-tracking error rate, a stuck audit drain, a stuck outbox, a period rollover, a credential leak, and billing drift. | `[V]` |
 | **Status page** | **Not referenced** | `[N]` |
 | **Breach-notification SLA** | **Not documented** | `[N]` |
 | **On-call rotation** | **Not documented** | `[N]` |
 
-## 12. Penetration testing
+## 11. Penetration testing
 
 | Item | Status |
 |---|---|
-| **Internal pentest** | A comprehensive pentest profile plan exists, executed in phases against a local Docker stack |
-| **Findings materialised in code** | `ENABLE ALWAYS TRIGGER` hardening closed an audit-event immutability bypass via `session_replication_role='replica'` |
+| **Internal pentest** | A phased pentest profile exists, executed against a local Docker stack. |
+| **Findings fixed in code** | Trigger hardening closed an audit-table immutability bypass that a session-level replication-role change could have opened. |
 | **External pentest report** | **Not available** |
 | **Bug bounty program** | **Not advertised** |
 
-## 13. Other load-bearing controls
+## 12. Other load-bearing controls
 
-- **HMAC required for all gate calls.** `NULLRUN_HMAC_REQUIRED=true`
-  enforced in production. Missing / invalid → reject before enforcement.
-- **Protocol header required.** `X-NULLRUN-PROTOCOL` on every gate
-  request; `/health` returns min/max (min=2, max=4, current=4).
-- **Fail-CLOSED on enforcement paths.** Budget path (Redis down → 402
-  `REDIS_UNAVAILABLE`).
-- **IDOR guards.** Body org mismatch, `workflow_id` body-vs-key
-  mismatch, parent-execution cross-org rejection.
-- **CSRF double-submit** for browser POSTs; `Authorization: Bearer`
-  bypasses for API path. SHA-256-then-constant-time comparison.
-- **PII redaction** for log lines.
-- **Secret scanning pre-commit.** trufflehog (~700 provider sigs) +
-  gitleaks (NullRun-specific key shapes). 500 KB max file size.
+- **Signed gate calls.** Signature verification is mandatory in
+  production. A missing or invalid signature is refused before
+  enforcement runs.
+- **Protocol header required.** Every gate request carries a protocol
+  version header. The service publishes the minimum and maximum it
+  accepts.
+- **Fail-closed on enforcement paths.** When the budget store is
+  unreachable the gate answers `402` with
+  `BUDGET_REDIS_UNAVAILABLE`. It never answers "allow" without a
+  budget answer.
+- **Cross-tenant guards.** Body organization mismatch, workflow-id
+  mismatch between the body and the key, and a parent execution from
+  another organization are each refused.
+- **CSRF double-submit** on browser POSTs, with a bearer-token
+  exemption for API paths. The comparison hashes first and compares in
+  constant time.
+- **PII redaction** in log lines.
+- **Secret scanning before commit.** Two scanners, one general and one
+  for NULLRUN key shapes, plus a file-size limit.
 
 ## Honest gaps
 
-These items are either not documented or rely on third-party evidence.
-They are the questions a vendor reviewer should follow up on:
+These are the questions a vendor reviewer should follow up on.
 
 ### Not attested `[N]`
 
-1. **SOC 2 / ISO 27001 / HIPAA / CCPA formal attestations.** No
-   certificates or reports are available. The "SOC 2 immutability"
-   wording refers to a self-imposed control, not third-party
-   certification.
-2. **External penetration test report.** Only an internal pentest plan
-   and journal exist.
+1. **Formal attestations.** No SOC 2, ISO 27001, HIPAA, or CCPA
+   certificate or report exists. The immutability wording describes a
+   self-imposed control, not a third-party certification.
+2. **External penetration test report.** Only an internal plan and
+   journal exist.
 3. **Bug bounty program.** Not advertised.
-4. **Status page.** No reference to `status.nullrun.io` or similar.
-5. **Public breach-notification SLA / DPA SLA.** Not documented.
-6. **Postgres tablespace / disk-level encryption at rest.** pgcrypto
-   column-level encryption is used for Slack OAuth bot tokens;
-   full-disk / tablespace encryption is not explicitly attested (relies
-   on DigitalOcean droplet disk).
-7. **Redis disk encryption.** AOF/RDB volumes are bind-mounted; no
-   explicit encryption-at-rest on Redis noted.
-8. **S3 / object-storage encryption settings.** S3-compatible object
-   storage is implemented; bucket-side encryption configuration
-   (SSE-S3 / SSE-KMS) is not exposed.
-9. **Customer-side region selection mechanism.** The DPA wording ("EU
-   residency available (default for customers who select the EU
-   region)") references a signup-time choice; the wire path that
-   records the customer's region preference is not exposed.
-10. **DPA and privacy pages.** The public `/dpa` and `/privacy` pages
-    were not part of this review.
-11. **Cross-region replication / DR posture.** Single-region (one VPS)
-    is the deployed topology. No documented failover.
-12. **Privacy policy URL.** Not published on this site.
+4. **Status page.** No public status host is referenced.
+5. **Breach-notification SLA.** Not documented.
+6. **Disk-level encryption at rest.** Column-level encryption covers
+   the Slack OAuth bot tokens. Full-disk or tablespace encryption
+   relies on the provider's disk encryption.
+7. **Redis disk encryption.** The backup volumes are bind-mounted
+   with no documented encryption at rest.
+8. **Object-storage encryption settings.** Bucket-side encryption
+   configuration is not exposed.
+9. **Customer-side region selection.** The agreement refers to a
+   signup-time choice, and the wire path that records it is not
+   exposed.
+10. **Cross-region replication and disaster recovery.** The deployed
+    topology is one region on one VPS. No failover is documented.
+11. **Privacy policy page.** Not published on the site.
 
 ### Derived, not directly attested `[D]`
 
-13. **Wire shapes for `/api/v1/proxy`.** The proxy request and response
-    types are present and complete, but no live route registration was
-    located.
-14. **`api.nullrun.io` TLS minimum version on the SDK client side.**
-    TLS 1.2/1.3 is enforced at the nginx edge; whether the SDK pins a
-    minimum TLS version was not audited.
-15. **KMS / key management.** `APP_ENCRYPTION_KEY` is an env var; no
-    AWS KMS / GCP KMS / HashiCorp Vault integration. Key rotation
-    requires a manual runbook.
-16. **Operator access logs / session recording.** The production SSH
-    access path is documented (`vps` wrapper); there is no evidence of
-    operator-action audit logging on the database tier itself, beyond
-    the audit rows the product writes.
-17. **API key scopes beyond admin.** `SCOPE_ADMIN` is the only named
-    scope. Granular scopes per workspace / operation were not
-    enumerated.
+12. **Managed key service.** The encryption key is an environment
+    value with no managed key service behind it, and rotation needs a
+    manual runbook.
+13. **Operator action logging.** The production shell path is
+    allowlisted, and the product writes its own audit rows. There is
+    no separate record of operator actions at the database tier.
+14. **Granular API key scopes.** An admin scope is the only named
+    scope. Per-workspace or per-operation scopes are not enumerated.
+15. **Client-side TLS minimum.** TLS 1.2 and 1.3 are enforced at the
+    nginx edge. Whether the SDK pins a minimum version was not
+    audited.
 
 ## See also
 
 - [Compliance overview](index.md)
-- [Performance & limits](../operations/performance.md) — latency,
-  failure-mode behaviour, timeouts
-- [API keys](../concepts/api-keys.md) — HMAC, rotation, drain
-- [Organization](../concepts/organization.md) — delete-org flow
-- [Profile settings](../concepts/profile.md) — account delete flow
+- [Performance & limits](../operations/performance.md) — timeouts and
+  the fail-closed posture
+- [API keys](../concepts/api-keys.md) — signing, rotation, revocation
+- [Organization](../concepts/organization.md) — the delete-organization
+  flow
+- [Profile settings](../concepts/profile.md) — the delete-account flow
