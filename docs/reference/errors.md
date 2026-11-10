@@ -32,7 +32,9 @@ For the three-layer error model — structured exceptions → `on_error` hook �
 
 ## Generic API errors
 
-A generic API error answers with a slug, a message, and a legacy code.
+A generic API error answers with three fields: an `error` slug, a
+human-readable `message`, and a `code` in SCREAMING_SNAKE_CASE. Read
+the slug first — it is the stable one.
 
 | `error` slug | HTTP | `code` | When |
 |---|---|---|---|

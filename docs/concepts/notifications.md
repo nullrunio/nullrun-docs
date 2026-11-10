@@ -27,8 +27,9 @@ Two channel types exist.
 | **Webhook** | A generic HTTPS endpoint that receives a JSON POST. |
 
 The two types do not post the same payload. The Slack App connection is
-set up separately, and the **Add channel** dialog does not offer it. A
-Slack incoming webhook URL is saved as a **Webhook** channel.
+set up separately, and the **Add channel** dialog lists it as
+**Slack App (Coming soon)** and does not let you pick it. A Slack incoming
+webhook URL is saved as a **Webhook** channel.
 
 The API accepts `slack` and `webhook` only. A third type is refused.
 
@@ -38,7 +39,8 @@ Click **Add channel** in the **Alert channels** section header and pick the type
 
 | Field | Meaning |
 |---|---|
-| **Name** | The label on the channel card and in alert messages. |
+| **Channel name** | The label on the channel card and in alert messages. |
+| **Type** | Where the signal goes. Only **Webhook** can be picked. |
 | **Webhook URL** | The HTTPS endpoint that receives the payload. |
 | **Signing secret** | Optional. The key the receiver verifies the payload with. |
 | **Test mode** | Suppress real alerts to this channel. |

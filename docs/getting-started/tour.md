@@ -33,8 +33,8 @@ Open [nullrun.io/onboarding](https://nullrun.io/onboarding). The wizard walks th
 To use the key the wizard made, you can skip this step. To create another one:
 
 1. In the sidebar, under **Access**, click **API keys**.
-2. Click **New API key** in the top right.
-3. In the dialog, pick the **Workflow** the key belongs to and name the key `tour-agent`. Pick an expiration: **Never**, **24 hours**, **7 days**, **30 days**, or **90 days**.
+2. Click **New key** in the top right.
+3. In the dialog, pick the **Workflow** the key belongs to and name the key `tour-agent`. Pick an expiry: **Never**, **24 hours**, **7 days**, **30 days**, or **90 days**.
 4. Click **Create** and copy the `nr_live_…` identifier.
 
 <figure class="nr-shot">

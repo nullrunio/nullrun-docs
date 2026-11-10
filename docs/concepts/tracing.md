@@ -19,9 +19,9 @@ The **Executions** page lists the executions your organization ran.
 Each row shows the execution id, the action, the agent, the workflow,
 the model, the tool, the token count, the result, the cost and the
 time. The four counters above the table count gate decisions —
-**Allow**, **Block**, **Pending** and **Denied**. A blocked call has no
-row, because it produced no execution. The **CSV** button downloads the
-rows on the screen as a CSV file.
+**Allow**, **Block**, **Pending** and **Denied**. A blocked call has a
+row: the gateway records a decision for every protected call. The
+**CSV** button downloads the rows on the screen as a CSV file.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/executions-light.png"
@@ -58,7 +58,8 @@ The waterfall is the trace. Each row is one span:
 - A **status** — ok or error
 - The **policy verdict** for that call, when the gate recorded one
 - The **span id**, in the row tooltip. The audit log carries no span
-  column, so you reach an audit row through the execution id.
+  column, and the control center does not filter audit rows by
+  execution id.
 
 Nested calls sit under their parent, so a supervisor that calls
 sub-agents renders as one tree rather than several. Click a row to
@@ -109,8 +110,9 @@ is attached to the span that was active when it happened.
 | `span_id` | One protected call |
 | `parent_span_id` | The span this one sits under |
 
-Open a run by its `trace_id` in the trace URL. The audit log filters by
-execution id, not by trace id.
+Open a run by its `trace_id` in the trace URL. The audit log carries no
+trace id. The audit API accepts an `execution_id` query parameter, but
+the control center's filter bar does not offer it.
 
 ## What is not stored
 

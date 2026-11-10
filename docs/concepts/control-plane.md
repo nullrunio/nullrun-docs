@@ -26,21 +26,30 @@ and try again.
 ## How the signal reaches the SDK
 
 The SDK opens a WebSocket to
-`wss://api.nullrun.io/ws/control/{organization_id}` on its first
-protected call. The upgrade request carries the same API key the SDK
-uses for every other request, in the `X-API-Key` and `Authorization`
-headers. It carries no body, so it carries no request signature. The
-server signs every frame it sends. When the SDK holds the signing
-secret, it verifies the signature before it reads anything out of the
-frame, and refuses a frame that arrives unsigned. A key without a
-secret cannot verify, and the frame is read as it arrives.
+`wss://api.nullrun.io/ws/control/{organization_id}` when the runtime
+starts, right after it authenticates. `nullrun.init()` creates the
+runtime, so the channel is open before the first protected call. The
+upgrade request carries the same API key the SDK uses for every other
+request, in the `X-API-Key` and `Authorization` headers. It carries no
+body, so it carries no request signature.
+
+The server signs a frame only when the key holds a signing secret. When
+the SDK holds that secret, it verifies the signature before it reads
+anything out of the frame, and refuses a frame that arrives unsigned. A
+key without a secret cannot verify, so the frame is read as it arrives.
+The server counts every unsigned frame it sends.
 
 The SDK keeps a copy of the control-plane state for each workflow it
 tracks:
 
-- With the WebSocket connected, the server pushes every state change.
+- With the WebSocket connected, the server pushes every state change
+  into that copy.
 - Without a pushed state, the SDK reads the workflow state over HTTP
   from `GET /api/v1/status/{workflow_id}`.
+
+A push updates the copy. It does not interrupt the call that is
+running. The refusal is raised on the next protected call, when the SDK
+reads the copy.
 
 Set `NULLRUN_TRANSPORT=http` to run the HTTP poll instead of the
 WebSocket. The poll runs once per second and suits environments where
@@ -59,8 +68,8 @@ Two exceptions cover the whole control plane:
 | `WorkflowKilledInterrupt` | `NR-W002` | The operator killed the workflow. `NullRunWorkflowKilledError` is a typed subclass with the same code. |
 
 `WorkflowPausedException` carries `resume_after`: the number of
-seconds the pause lasts. It is `None` when the pause carries no
-duration.
+seconds the pause lasts. An operator pause carries no duration, so
+`resume_after` is `None` on that path.
 
 ### Sync and async behave differently
 
@@ -77,7 +86,7 @@ the async wrapper leaves it alone.
 
 ```python
 import nullrun
-from nullrun import WorkflowKilledInterrupt, WorkflowPausedException
+from nullrun import NullRunBlockedException
 
 nullrun.init(api_key="nr_live_...")
 
@@ -90,6 +99,32 @@ def my_agent_step(prompt):
 
 try:
     my_agent_step("do something")
+except NullRunBlockedException as exc:
+    if exc.error_code == "NR-W002":
+        # The operator killed the workflow. Checkpoint, then re-raise.
+        raise
+    if exc.error_code == "NR-W003":
+        # The operator paused the workflow. Save state and wait.
+        raise
+```
+
+An async protected function raises the raw exceptions instead:
+
+```python
+import nullrun
+from nullrun import WorkflowKilledInterrupt, WorkflowPausedException
+
+nullrun.init(api_key="nr_live_...")
+
+
+@nullrun.protect
+async def my_agent_step(prompt):
+    # ... agent logic ...
+    return result
+
+
+try:
+    await my_agent_step("do something")
 except WorkflowKilledInterrupt:
     # The operator killed the workflow. Checkpoint, then re-raise.
     raise

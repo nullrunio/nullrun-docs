@@ -18,10 +18,10 @@ Each pending row carries:
 
 | Field | What it tells you |
 |---|---|
-| **Tool and arguments** | The exact tool the agent wants to call and the arguments it wants to pass. |
-| **Why it needs approval** | The rule that matched, in plain language. |
+| **Tool call** | The exact tool the agent wants to call, with its arguments under **Params**. |
+| **Policy** | The rule that matched. |
 | **Risk** | `LOW`, `MEDIUM`, or `HIGH`. |
-| **Time left** | How long the operator has to decide. |
+| **Time left** | A countdown to the expiry, drawn as a shrinking bar. |
 | **Workflow** | The workflow that raised the request. |
 
 The pending feed refreshes every 30 seconds, and the badge next to **Approvals** in the sidebar carries the pending count.

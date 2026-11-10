@@ -135,8 +135,8 @@ Open [nullrun.io/onboarding](https://nullrun.io/onboarding). The wizard walks th
 To use the key the wizard made, you can skip this step. To create another one:
 
 1. In the sidebar, under **Access**, click **API keys**.
-2. Click **New API key** in the top right.
-3. In the dialog, pick the **Workflow** the key belongs to and name the key `tour-agent`. Pick an expiration: **Never**, **24 hours**, **7 days**, **30 days**, or **90 days**.
+2. Click **New key** in the top right.
+3. In the dialog, pick the **Workflow** the key belongs to and name the key `tour-agent`. Pick an expiry: **Never**, **24 hours**, **7 days**, **30 days**, or **90 days**.
 4. Click **Create** and copy the `nr_live_…` identifier.
 
 <figure class="nr-shot">
@@ -292,7 +292,7 @@ python -c "from nullrun import protect; print('ok')"
 
 ## Create an API key
 
-Sign in at [nullrun.io](https://nullrun.io). Open **Access → API keys** and click **New API key**. The dialog asks for a name, a workflow, and an expiration.
+Sign in at [nullrun.io](https://nullrun.io). Open **Access → API keys** and click **New key**. The dialog asks for a name, a workflow, and when the key expires.
 
 The key is enough. The SDK signs its requests with the key and fetches the matching signing secret from `POST /api/v1/auth/verify` on first use. Without a key the SDK raises `NullRunAuthenticationError` with the code `NR-C001`.
 
@@ -1365,8 +1365,10 @@ and who revoked it.
 
 ## Listing keys
 
-The **API keys** page lists every key in your organization. You can
-filter by workflow and by last-used status.
+The **API keys** page lists every key in your organization. A **Status**
+filter narrows the list: All, Active (used in the last 30 days),
+Unused (30 days or more), Never used. The workflow is a column, and the
+table can be sorted by it.
 
 Each row shows:
 
@@ -1866,7 +1868,7 @@ Open a workflow for its detail page. The page has six tabs:
 
 You land on the new workflow's detail page. From there:
 
-- **Mint an API key** under the **API keys** tab. The value
+- **Generate key** under the **API keys** tab. The value
   (`nr_live_...`) is shown **once**.
 - **Point your SDK at it** by exporting `NULLRUN_API_KEY`. The
   workflow binding happens server-side.
@@ -1902,8 +1904,9 @@ A workflow has three states you control from the control center or the API:
 | Paused | Protected calls are refused with `WorkflowPausedException` (`NR-W003`) |
 | Killed | Protected calls are refused with the kill signal (`NR-W002`) |
 
-Pause and Kill reach a running agent over a WebSocket push, so the
-agent does not have to wait for its next call to learn. See
+Pause and Kill reach a running agent over a WebSocket push. The push
+updates a local copy of the workflow state; the agent raises the
+refusal on its next protected call. See
 [Control plane](control-plane.md) for the full contract.
 
 Killed is terminal. There is no way back to Active from Killed.
@@ -1960,14 +1963,15 @@ process and raises `ValueError` on a malformed value, so a typo or a
 predictable identifier fails locally instead of silently registering a
 new chain on the server. Generate one with `uuid.uuid4()`.
 
-`op` is the chain operation for the first call inside the block:
+`op` is the chain operation. The SDK sends it on every protected call
+inside the block.
 
 | `op` | What it does |
 |---|---|
-| `start` | Open the chain |
-| `continue` | Continue an existing chain |
-| `end` | Close the chain in the same call as the gate decision |
-| `auto` | Register the chain if it is not known, otherwise continue it |
+| `start` | Open the chain. An existing chain is continued. |
+| `continue` | Extend the chain's life. A chain that is gone is re-created, with a warning. |
+| `end` | Close the chain. A chain that is gone is a no-op. |
+| `auto` | Register the chain if it is not known, otherwise continue it. The SDK sends no operation for it. |
 
 The default is `start`.
 
@@ -1975,9 +1979,12 @@ The default is `start`.
 
 A chain closes on the **first** of:
 
-- `op="end"`
+- a call that carries `op="end"`
 - five minutes without a protected call
 - one hour of chain lifetime
+
+Leaving the block does not close the chain. Call
+`get_runtime().chain_end(chain_id)` to close it explicitly.
 
 For a long stream, send a heartbeat roughly every 30 seconds. See
 [Heartbeat](../how-to/streaming.md#chain-heartbeat).
@@ -2023,9 +2030,9 @@ The **Executions** page lists the executions your organization ran.
 Each row shows the execution id, the action, the agent, the workflow,
 the model, the tool, the token count, the result, the cost and the
 time. The four counters above the table count gate decisions —
-**Allow**, **Block**, **Pending** and **Denied**. A blocked call has no
-row, because it produced no execution. The **CSV** button downloads the
-rows on the screen as a CSV file.
+**Allow**, **Block**, **Pending** and **Denied**. A blocked call has a
+row: the gateway records a decision for every protected call. The
+**CSV** button downloads the rows on the screen as a CSV file.
 
 <figure class="nr-shot">
   <img class="nr-shot__light" src="../../assets/images/screenshots/executions-light.png"
@@ -2062,7 +2069,8 @@ The waterfall is the trace. Each row is one span:
 - A **status** — ok or error
 - The **policy verdict** for that call, when the gate recorded one
 - The **span id**, in the row tooltip. The audit log carries no span
-  column, so you reach an audit row through the execution id.
+  column, and the control center does not filter audit rows by
+  execution id.
 
 Nested calls sit under their parent, so a supervisor that calls
 sub-agents renders as one tree rather than several. Click a row to
@@ -2113,8 +2121,9 @@ is attached to the span that was active when it happened.
 | `span_id` | One protected call |
 | `parent_span_id` | The span this one sits under |
 
-Open a run by its `trace_id` in the trace URL. The audit log filters by
-execution id, not by trace id.
+Open a run by its `trace_id` in the trace URL. The audit log carries no
+trace id. The audit API accepts an `execution_id` query parameter, but
+the control center's filter bar does not offer it.
 
 ## What is not stored
 
@@ -2514,21 +2523,30 @@ and try again.
 ## How the signal reaches the SDK
 
 The SDK opens a WebSocket to
-`wss://api.nullrun.io/ws/control/{organization_id}` on its first
-protected call. The upgrade request carries the same API key the SDK
-uses for every other request, in the `X-API-Key` and `Authorization`
-headers. It carries no body, so it carries no request signature. The
-server signs every frame it sends. When the SDK holds the signing
-secret, it verifies the signature before it reads anything out of the
-frame, and refuses a frame that arrives unsigned. A key without a
-secret cannot verify, and the frame is read as it arrives.
+`wss://api.nullrun.io/ws/control/{organization_id}` when the runtime
+starts, right after it authenticates. `nullrun.init()` creates the
+runtime, so the channel is open before the first protected call. The
+upgrade request carries the same API key the SDK uses for every other
+request, in the `X-API-Key` and `Authorization` headers. It carries no
+body, so it carries no request signature.
+
+The server signs a frame only when the key holds a signing secret. When
+the SDK holds that secret, it verifies the signature before it reads
+anything out of the frame, and refuses a frame that arrives unsigned. A
+key without a secret cannot verify, so the frame is read as it arrives.
+The server counts every unsigned frame it sends.
 
 The SDK keeps a copy of the control-plane state for each workflow it
 tracks:
 
-- With the WebSocket connected, the server pushes every state change.
+- With the WebSocket connected, the server pushes every state change
+  into that copy.
 - Without a pushed state, the SDK reads the workflow state over HTTP
   from `GET /api/v1/status/{workflow_id}`.
+
+A push updates the copy. It does not interrupt the call that is
+running. The refusal is raised on the next protected call, when the SDK
+reads the copy.
 
 Set `NULLRUN_TRANSPORT=http` to run the HTTP poll instead of the
 WebSocket. The poll runs once per second and suits environments where
@@ -2547,8 +2565,8 @@ Two exceptions cover the whole control plane:
 | `WorkflowKilledInterrupt` | `NR-W002` | The operator killed the workflow. `NullRunWorkflowKilledError` is a typed subclass with the same code. |
 
 `WorkflowPausedException` carries `resume_after`: the number of
-seconds the pause lasts. It is `None` when the pause carries no
-duration.
+seconds the pause lasts. An operator pause carries no duration, so
+`resume_after` is `None` on that path.
 
 ### Sync and async behave differently
 
@@ -2565,7 +2583,7 @@ the async wrapper leaves it alone.
 
 ```python
 import nullrun
-from nullrun import WorkflowKilledInterrupt, WorkflowPausedException
+from nullrun import NullRunBlockedException
 
 nullrun.init(api_key="nr_live_...")
 
@@ -2578,6 +2596,32 @@ def my_agent_step(prompt):
 
 try:
     my_agent_step("do something")
+except NullRunBlockedException as exc:
+    if exc.error_code == "NR-W002":
+        # The operator killed the workflow. Checkpoint, then re-raise.
+        raise
+    if exc.error_code == "NR-W003":
+        # The operator paused the workflow. Save state and wait.
+        raise
+```
+
+An async protected function raises the raw exceptions instead:
+
+```python
+import nullrun
+from nullrun import WorkflowKilledInterrupt, WorkflowPausedException
+
+nullrun.init(api_key="nr_live_...")
+
+
+@nullrun.protect
+async def my_agent_step(prompt):
+    # ... agent logic ...
+    return result
+
+
+try:
+    await my_agent_step("do something")
 except WorkflowKilledInterrupt:
     # The operator killed the workflow. Checkpoint, then re-raise.
     raise
@@ -2830,10 +2874,10 @@ Each pending row carries:
 
 | Field | What it tells you |
 |---|---|
-| **Tool and arguments** | The exact tool the agent wants to call and the arguments it wants to pass. |
-| **Why it needs approval** | The rule that matched, in plain language. |
+| **Tool call** | The exact tool the agent wants to call, with its arguments under **Params**. |
+| **Policy** | The rule that matched. |
 | **Risk** | `LOW`, `MEDIUM`, or `HIGH`. |
-| **Time left** | How long the operator has to decide. |
+| **Time left** | A countdown to the expiry, drawn as a shrinking bar. |
 | **Workflow** | The workflow that raised the request. |
 
 The pending feed refreshes every 30 seconds, and the badge next to **Approvals** in the sidebar carries the pending count.
@@ -2935,8 +2979,9 @@ Two channel types exist.
 | **Webhook** | A generic HTTPS endpoint that receives a JSON POST. |
 
 The two types do not post the same payload. The Slack App connection is
-set up separately, and the **Add channel** dialog does not offer it. A
-Slack incoming webhook URL is saved as a **Webhook** channel.
+set up separately, and the **Add channel** dialog lists it as
+**Slack App (Coming soon)** and does not let you pick it. A Slack incoming
+webhook URL is saved as a **Webhook** channel.
 
 The API accepts `slack` and `webhook` only. A third type is refused.
 
@@ -2946,7 +2991,8 @@ Click **Add channel** in the **Alert channels** section header and pick the type
 
 | Field | Meaning |
 |---|---|
-| **Name** | The label on the channel card and in alert messages. |
+| **Channel name** | The label on the channel card and in alert messages. |
+| **Type** | Where the signal goes. Only **Webhook** can be picked. |
 | **Webhook URL** | The HTTPS endpoint that receives the payload. |
 | **Signing secret** | Optional. The key the receiver verifies the payload with. |
 | **Test mode** | Suppress real alerts to this channel. |
@@ -3110,9 +3156,9 @@ Running spend raises alerts at three fixed points:
 | 95% of the threshold | Warning |
 | 100% of the threshold | Critical |
 
-The threshold comes from your plan's limits. It is not the cap of a
-`BudgetLimit` policy, so a policy cap and the alert ladder can fire at
-different times.
+The threshold is a number read from your plan's limits, compared against the
+organization's spend in cents. It is not the cap of a `BudgetLimit` policy,
+so a policy cap and the alert ladder can fire at different times.
 
 ### Events
 
@@ -3149,57 +3195,54 @@ The alert rules use their own paths. See [Notifications → API](notifications.m
 
 The **Team** page lists everyone in the organization, every invite that has not been accepted yet, and what each person is allowed to do.
 
-The team feature is on Starter and above. On Lite the sidebar link is
-hidden and the page shows an upgrade prompt.
+The team feature is on Starter and above. On Lite the sidebar entry carries a lock, and the page shows an upgrade prompt.
 
 ## Roles
 
-There are four roles. They are ranked: every role can do what the roles below it can do.
+A member holds one of four roles. They are ranked: every role can do what the roles below it can do.
 
 | Role | Can do |
 |---|---|
-| **Viewer** | Read the control center: workflows, executions, traces, the audit log, and API keys. Export the audit log is not included — that needs Operator. |
-| **Operator** | Everything a Viewer can do, plus pause and kill workflows, decide approvals, simulate a policy, and export the audit log. |
-| **Admin** | Everything an Operator can do, plus create and edit workflows, policies, API keys and approval rules, edit the organization, manage MCP servers, and invite and remove members. |
+| **Viewer** | Read the control center: workflows, executions, traces, the audit log, and API keys. |
+| **Member** | Read the control center. Cannot change the organization. |
+| **Admin** | Everything a Member can do, plus create and edit workflows, policies, API keys and approval rules, edit the organization, manage MCP servers, and invite and remove members. |
 | **Owner** | Everything an Admin can do, plus change a member's role, manage billing and SSO, and delete the organization. |
 
 An organization always has at least one owner. The last owner cannot be demoted or removed.
 
-Role-based access control arrives on Growth. On Starter an admin has no
-effective authority — the owner carries it alone.
+Admin authority needs the RBAC plan feature, and that arrives on Growth. On Starter an admin has no effective authority — the owner carries it alone.
 
 ## Inviting someone
 
 1. Open **Team** in the sidebar.
 2. Enter the person's email address.
 3. Pick the role they should have.
-4. Send the invite.
+4. Click **Send invite**.
 
-The invite arrives by email and points at `https://nullrun.io/invite?token=<token>`. The link works for 7 days and stays the same until the invite is accepted or revoked.
+The invite arrives by email and points at `https://nullrun.io/invite?token=<token>`. The link works for 7 days.
 
-An invite that grants **Admin** needs an **Owner** to send it. An Admin can invite a Viewer or a Member. The server checks the sender's role when the invite is sent and again when it is accepted.
+An invite can grant **Viewer**, **Member**, or **Admin**. Ownership moves through a transfer, never through an invite. An invite that grants **Admin** needs an **Owner** to send it. The server checks the sender's role when the invite is sent and again when it is accepted.
 
 An invite is refused when:
 
-- The address is already a member of the organization.
 - An invite to that address is still pending.
-- The seat quota is full.
+- The seat quota is full. The refusal carries the seat count and the plan allowance.
 
 One person can send 10 invites an hour. Past that the server refuses with a retry delay.
 
 ## Pending invites
 
-Invites that have not been accepted are listed under the members. Each row shows the address, the role, the invite link, and whether the last delivery attempt succeeded. You can resend the invite or revoke it.
+Invites that have not been accepted are listed under the members. Each row shows the address, the role, the time left before expiry, and the email delivery status. You can copy the invite link, resend the invite, or revoke it.
+
+A resend issues a new link and starts the 7-day window again. The old link stops working.
 
 A revoked invite stops working immediately.
 
 ## Seat quota
 
-The header shows how many seats the organization uses against the plan's allowance. The number on screen adds the pending invites to the members, so an outstanding invite shows its cost before it is accepted.
+The header shows how many members the organization has and how many seats the plan allows. A separate banner appears when the seats run out, and it counts the pending invites against the members, so an outstanding invite shows its cost before it is accepted.
 
 The server counts members only. It refuses a new invite when the members already fill the plan's allowance, and it refuses an invite at accept time when accepting it would fill the allowance. The two counts can disagree, so a pending invite is a reservation, not a guarantee.
-
-When the quota is full, the invite button is disabled and the page links to **Billing & Plan** to buy more seats.
 
 ## Removing a member
 
@@ -3213,15 +3256,13 @@ Only an owner can change a member's role. Changing your own role is not possible
 
 ## Audit trail
 
-On Growth and above, every invite, resend, revoke, role change, and removal is recorded in the audit log with the actor and the timestamp. Filter by the team action to reconstruct who did what.
-
-The audit log is a plan feature. Lite and Starter have none.
+Team changes leave no audit row. The audit log holds gate decisions and the changes to policies and workflows. It has no team filter.
 
 ## See also
 
 - [Organization](organization.md) — the organization's name, contact email, and DPA acceptance
 - [Billing & Plan](billing.md) — where seats are bought
-- [Audit log](error-handling.md#audit-trail) — every team change leaves a row
+- [Audit log](error-handling.md#audit-trail) — what the control center records
 
 ---
 
@@ -3437,13 +3478,21 @@ needs the plan's RBAC feature.
 The change lands in one request. The server takes the new name and the new
 contact email and applies them.
 
-## Data Processing Agreement
+## Data Processing Addendum
 
-The **DPA / Compliance** section shows whether the organization has accepted the current Data Processing Agreement.
+The **Compliance** section shows whether the organization has accepted the current Data Processing Addendum. It names the current version and links to it with **Read v{version}**.
 
-The latest acceptance reads as a version and a date, for example `accepted v2026-06-25 on 2026-08-15`. An organization that has never accepted reads `not yet accepted`, and the section shows an **Accept DPA** button.
+| State | What the section shows |
+|---|---|
+| The current version is accepted | A green **Accepted** badge with the acceptance date. |
+| Nothing is accepted | A button **Accept v{version}**. |
+| An older version is accepted | A notice that a new version is available, and a button **Re-accept v{version}**. |
 
-Every earlier acceptance stays visible underneath, with the version, the date, and how it was accepted:
+Accepting the same version twice is harmless. The record keeps the date of the first acceptance, and its method label shows the latest acceptance.
+
+### Acceptance history
+
+**Acceptance history (N)** lists one row per accepted version, newest first. Each row carries the version, the date, and how it was accepted, written as `via {method}`.
 
 | Method | Meaning |
 |---|---|
@@ -3453,22 +3502,20 @@ Every earlier acceptance stays visible underneath, with the version, the date, a
 | `sdk_api` | Accepted through the API. |
 | `oauth_onboarding` | Accepted in the onboarding flow. |
 
-The first four are the canonical methods. A fifth value is stored as it
-arrives, so a row can name a surface the product does not produce.
-
-Accepting the same version twice is harmless. The organization keeps its first acceptance.
+The first four are the canonical methods. A fifth value is stored as it arrives, so a row can name a surface the product does not produce.
 
 ## Closing the organization
 
-At the bottom of the page, the **Danger zone** closes the organization. The
-server accepts the request from the owner only. A request from anyone else
-is refused.
+At the bottom of the page, a **Delete** button opens a **Delete organization**
+dialog. The server accepts the request from the owner only. A request from
+anyone else is refused.
 
 To close an organization that still has other members, transfer ownership to
 one of them first. The request is refused with `ORG_HAS_MEMBERS` and the
 member count.
 
-The confirmation asks you to type the organization name.
+The dialog asks you to type the organization name. The **Delete organization**
+button stays disabled until the name matches.
 
 What closing the organization does:
 
@@ -3519,7 +3566,7 @@ This is not the [Organization](organization.md) page. The organization page edit
 | Field | What it does |
 |---|---|
 | **Full name** | How you appear in the control center and in audit rows. |
-| **Email** | The address you sign in with and where notifications reach you. |
+| **Email address** | The address you sign in with and where notifications reach you. |
 | **Avatar** | Your initials on a colour tile, or the avatar from your identity provider when you signed in with one. |
 
 The email address cannot be changed. The field is locked, and the server
@@ -3529,7 +3576,7 @@ address is unverified, but only on an account that has a password.
 
 ## Password
 
-The password section appears when your account has a password. Signing up with an identity provider instead gives you a **Set password** action.
+The password section appears when your account has a password. Signing up with an identity provider instead gives you a **Set** action on the **Password** row.
 
 Changing a password asks for the current one. Every other session ends, so
 every other device has to sign in again. The browser you changed it in
@@ -3542,7 +3589,7 @@ Two-factor authentication adds a one-time code from an authenticator app to ever
 | State | What you can do |
 |---|---|
 | **Not configured** | **Enable** starts the enrolment. The server issues a secret and a QR code, and the first code from the authenticator confirms it. |
-| **Enabled** | **Manage** opens the disable dialog. It asks for the current password. A **Generate new codes** link appears when three or fewer recovery codes are left. It also asks for the current password. |
+| **Enabled** | **Manage** opens the disable dialog. It asks for the current password. When three or fewer recovery codes are left, a **Regenerate codes** action appears under **Regenerate Recovery Codes**. It asks for the current password. |
 
 Enabling it asks for no password. The server issues the secret to the
 signed-in session, and the first code confirms the enrolment. Recovery
@@ -3564,23 +3611,23 @@ from another device.
 
 ## Deleting your account
 
-At the bottom of the page, the **Danger zone** deletes your account. The endpoint is `DELETE /api/v1/auth/account`.
+At the bottom of the page, **Delete account** deletes your account. The endpoint is `DELETE /api/v1/auth/account`.
 
 The request asks for:
 
 | Field | When it is needed |
 |---|---|
-| **Confirmation** | Your full name, typed exactly. |
+| **Your name** | Your full name, typed exactly. |
 | **Current password** | When your account has a password. |
-| **Two-factor code** | When two-factor authentication is on. |
+| **2FA code** | When two-factor authentication is on. |
 | **Ownership decision** | For every organization you own that has other members. |
 
 An ownership decision has two shapes:
 
 | Decision | What happens |
 |---|---|
-| Transfer | The organization moves to another member. |
-| Delete and notify | The organization closes and its members are told. Their sessions end. |
+| **Transfer ownership** | The organization moves to another member. |
+| **Delete org and notify members** | The organization closes and its members are told. Their sessions end. |
 
 Leaving a decision out is refused with `OWNERSHIP_DECISION_REQUIRED`, and the response lists the organizations with their members so you can decide in place.
 
@@ -6298,7 +6345,9 @@ For the three-layer error model — structured exceptions → `on_error` hook �
 
 ## Generic API errors
 
-A generic API error answers with a slug, a message, and a legacy code.
+A generic API error answers with three fields: an `error` slug, a
+human-readable `message`, and a `code` in SCREAMING_SNAKE_CASE. Read
+the slug first — it is the stable one.
 
 | `error` slug | HTTP | `code` | When |
 |---|---|---|---|
@@ -7679,9 +7728,9 @@ These are the questions a vendor reviewer should follow up on.
 # Troubleshooting
 
 Format: symptom → cause → fix. If your case is not here, see the
-[Errors reference](reference/errors.md), or send a report from the
-control center's **Help → Send feedback** form with the `workflow_id` and
-the failing decision id.
+[Errors reference](reference/errors.md), or open a ticket from the
+control center's **Support → Contact support** page with the
+`workflow_id` and the failing decision id.
 
 !!! info "The endpoints that enforce"
     The server answers `410 Gone` on `POST /api/v1/check`, so a client

@@ -7,9 +7,9 @@ description: Symptom, cause, and fix for the failures a NullRun integration hits
 # Troubleshooting
 
 Format: symptom → cause → fix. If your case is not here, see the
-[Errors reference](reference/errors.md), or send a report from the
-control center's **Help → Send feedback** form with the `workflow_id` and
-the failing decision id.
+[Errors reference](reference/errors.md), or open a ticket from the
+control center's **Support → Contact support** page with the
+`workflow_id` and the failing decision id.
 
 !!! info "The endpoints that enforce"
     The server answers `410 Gone` on `POST /api/v1/check`, so a client

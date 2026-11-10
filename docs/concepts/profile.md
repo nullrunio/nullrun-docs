@@ -16,7 +16,7 @@ This is not the [Organization](organization.md) page. The organization page edit
 | Field | What it does |
 |---|---|
 | **Full name** | How you appear in the control center and in audit rows. |
-| **Email** | The address you sign in with and where notifications reach you. |
+| **Email address** | The address you sign in with and where notifications reach you. |
 | **Avatar** | Your initials on a colour tile, or the avatar from your identity provider when you signed in with one. |
 
 The email address cannot be changed. The field is locked, and the server
@@ -26,7 +26,7 @@ address is unverified, but only on an account that has a password.
 
 ## Password
 
-The password section appears when your account has a password. Signing up with an identity provider instead gives you a **Set password** action.
+The password section appears when your account has a password. Signing up with an identity provider instead gives you a **Set** action on the **Password** row.
 
 Changing a password asks for the current one. Every other session ends, so
 every other device has to sign in again. The browser you changed it in
@@ -39,7 +39,7 @@ Two-factor authentication adds a one-time code from an authenticator app to ever
 | State | What you can do |
 |---|---|
 | **Not configured** | **Enable** starts the enrolment. The server issues a secret and a QR code, and the first code from the authenticator confirms it. |
-| **Enabled** | **Manage** opens the disable dialog. It asks for the current password. A **Generate new codes** link appears when three or fewer recovery codes are left. It also asks for the current password. |
+| **Enabled** | **Manage** opens the disable dialog. It asks for the current password. When three or fewer recovery codes are left, a **Regenerate codes** action appears under **Regenerate Recovery Codes**. It asks for the current password. |
 
 Enabling it asks for no password. The server issues the secret to the
 signed-in session, and the first code confirms the enrolment. Recovery
@@ -61,23 +61,23 @@ from another device.
 
 ## Deleting your account
 
-At the bottom of the page, the **Danger zone** deletes your account. The endpoint is `DELETE /api/v1/auth/account`.
+At the bottom of the page, **Delete account** deletes your account. The endpoint is `DELETE /api/v1/auth/account`.
 
 The request asks for:
 
 | Field | When it is needed |
 |---|---|
-| **Confirmation** | Your full name, typed exactly. |
+| **Your name** | Your full name, typed exactly. |
 | **Current password** | When your account has a password. |
-| **Two-factor code** | When two-factor authentication is on. |
+| **2FA code** | When two-factor authentication is on. |
 | **Ownership decision** | For every organization you own that has other members. |
 
 An ownership decision has two shapes:
 
 | Decision | What happens |
 |---|---|
-| Transfer | The organization moves to another member. |
-| Delete and notify | The organization closes and its members are told. Their sessions end. |
+| **Transfer ownership** | The organization moves to another member. |
+| **Delete org and notify members** | The organization closes and its members are told. Their sessions end. |
 
 Leaving a decision out is refused with `OWNERSHIP_DECISION_REQUIRED`, and the response lists the organizations with their members so you can decide in place.
 

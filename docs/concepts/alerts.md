@@ -89,9 +89,9 @@ Running spend raises alerts at three fixed points:
 | 95% of the threshold | Warning |
 | 100% of the threshold | Critical |
 
-The threshold comes from your plan's limits. It is not the cap of a
-`BudgetLimit` policy, so a policy cap and the alert ladder can fire at
-different times.
+The threshold is a number read from your plan's limits, compared against the
+organization's spend in cents. It is not the cap of a `BudgetLimit` policy,
+so a policy cap and the alert ladder can fire at different times.
 
 ### Events
 

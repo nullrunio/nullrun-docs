@@ -174,8 +174,10 @@ and who revoked it.
 
 ## Listing keys
 
-The **API keys** page lists every key in your organization. You can
-filter by workflow and by last-used status.
+The **API keys** page lists every key in your organization. A **Status**
+filter narrows the list: All, Active (used in the last 30 days),
+Unused (30 days or more), Never used. The workflow is a column, and the
+table can be sorted by it.
 
 Each row shows:
 

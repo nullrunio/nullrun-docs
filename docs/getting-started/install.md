@@ -20,7 +20,7 @@ python -c "from nullrun import protect; print('ok')"
 
 ## Create an API key
 
-Sign in at [nullrun.io](https://nullrun.io). Open **Access → API keys** and click **New API key**. The dialog asks for a name, a workflow, and an expiration.
+Sign in at [nullrun.io](https://nullrun.io). Open **Access → API keys** and click **New key**. The dialog asks for a name, a workflow, and when the key expires.
 
 The key is enough. The SDK signs its requests with the key and fetches the matching signing secret from `POST /api/v1/auth/verify` on first use. Without a key the SDK raises `NullRunAuthenticationError` with the code `NR-C001`.
 

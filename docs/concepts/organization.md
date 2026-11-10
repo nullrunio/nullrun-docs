@@ -25,13 +25,21 @@ needs the plan's RBAC feature.
 The change lands in one request. The server takes the new name and the new
 contact email and applies them.
 
-## Data Processing Agreement
+## Data Processing Addendum
 
-The **DPA / Compliance** section shows whether the organization has accepted the current Data Processing Agreement.
+The **Compliance** section shows whether the organization has accepted the current Data Processing Addendum. It names the current version and links to it with **Read v{version}**.
 
-The latest acceptance reads as a version and a date, for example `accepted v2026-06-25 on 2026-08-15`. An organization that has never accepted reads `not yet accepted`, and the section shows an **Accept DPA** button.
+| State | What the section shows |
+|---|---|
+| The current version is accepted | A green **Accepted** badge with the acceptance date. |
+| Nothing is accepted | A button **Accept v{version}**. |
+| An older version is accepted | A notice that a new version is available, and a button **Re-accept v{version}**. |
 
-Every earlier acceptance stays visible underneath, with the version, the date, and how it was accepted:
+Accepting the same version twice is harmless. The record keeps the date of the first acceptance, and its method label shows the latest acceptance.
+
+### Acceptance history
+
+**Acceptance history (N)** lists one row per accepted version, newest first. Each row carries the version, the date, and how it was accepted, written as `via {method}`.
 
 | Method | Meaning |
 |---|---|
@@ -41,22 +49,20 @@ Every earlier acceptance stays visible underneath, with the version, the date, a
 | `sdk_api` | Accepted through the API. |
 | `oauth_onboarding` | Accepted in the onboarding flow. |
 
-The first four are the canonical methods. A fifth value is stored as it
-arrives, so a row can name a surface the product does not produce.
-
-Accepting the same version twice is harmless. The organization keeps its first acceptance.
+The first four are the canonical methods. A fifth value is stored as it arrives, so a row can name a surface the product does not produce.
 
 ## Closing the organization
 
-At the bottom of the page, the **Danger zone** closes the organization. The
-server accepts the request from the owner only. A request from anyone else
-is refused.
+At the bottom of the page, a **Delete** button opens a **Delete organization**
+dialog. The server accepts the request from the owner only. A request from
+anyone else is refused.
 
 To close an organization that still has other members, transfer ownership to
 one of them first. The request is refused with `ORG_HAS_MEMBERS` and the
 member count.
 
-The confirmation asks you to type the organization name.
+The dialog asks you to type the organization name. The **Delete organization**
+button stays disabled until the name matches.
 
 What closing the organization does:
 

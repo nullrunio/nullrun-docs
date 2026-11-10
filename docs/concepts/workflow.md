@@ -49,7 +49,7 @@ Open a workflow for its detail page. The page has six tabs:
 
 You land on the new workflow's detail page. From there:
 
-- **Mint an API key** under the **API keys** tab. The value
+- **Generate key** under the **API keys** tab. The value
   (`nr_live_...`) is shown **once**.
 - **Point your SDK at it** by exporting `NULLRUN_API_KEY`. The
   workflow binding happens server-side.
@@ -85,8 +85,9 @@ A workflow has three states you control from the control center or the API:
 | Paused | Protected calls are refused with `WorkflowPausedException` (`NR-W003`) |
 | Killed | Protected calls are refused with the kill signal (`NR-W002`) |
 
-Pause and Kill reach a running agent over a WebSocket push, so the
-agent does not have to wait for its next call to learn. See
+Pause and Kill reach a running agent over a WebSocket push. The push
+updates a local copy of the workflow state; the agent raises the
+refusal on its next protected call. See
 [Control plane](control-plane.md) for the full contract.
 
 Killed is terminal. There is no way back to Active from Killed.
@@ -143,14 +144,15 @@ process and raises `ValueError` on a malformed value, so a typo or a
 predictable identifier fails locally instead of silently registering a
 new chain on the server. Generate one with `uuid.uuid4()`.
 
-`op` is the chain operation for the first call inside the block:
+`op` is the chain operation. The SDK sends it on every protected call
+inside the block.
 
 | `op` | What it does |
 |---|---|
-| `start` | Open the chain |
-| `continue` | Continue an existing chain |
-| `end` | Close the chain in the same call as the gate decision |
-| `auto` | Register the chain if it is not known, otherwise continue it |
+| `start` | Open the chain. An existing chain is continued. |
+| `continue` | Extend the chain's life. A chain that is gone is re-created, with a warning. |
+| `end` | Close the chain. A chain that is gone is a no-op. |
+| `auto` | Register the chain if it is not known, otherwise continue it. The SDK sends no operation for it. |
 
 The default is `start`.
 
@@ -158,9 +160,12 @@ The default is `start`.
 
 A chain closes on the **first** of:
 
-- `op="end"`
+- a call that carries `op="end"`
 - five minutes without a protected call
 - one hour of chain lifetime
+
+Leaving the block does not close the chain. Call
+`get_runtime().chain_end(chain_id)` to close it explicitly.
 
 For a long stream, send a heartbeat roughly every 30 seconds. See
 [Heartbeat](../how-to/streaming.md#chain-heartbeat).
