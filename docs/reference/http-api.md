@@ -58,6 +58,10 @@ signature on the four enforcement calls: `POST /api/v1/gate`,
 No other route reads the `X-Signature` header. Other routes authenticate their
 own way — the payment and chat webhooks verify a provider signature.
 
+The requirement is controlled by `NULLRUN_HMAC_REQUIRED`. The hosted
+deployment turns it on. When it is off, the gateway logs one warning and stops
+verifying signatures.
+
 ## SDK endpoints
 
 These are the endpoints the SDK calls. You do not normally call them by hand.
@@ -77,7 +81,7 @@ These are the endpoints the SDK calls. You do not normally call them by hand.
 | `GET` | `/api/v1/budget/approximate` | Returns the approximate budget view. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log` | Lists audit entries. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log/verify` | Verifies the audit trail. |
-| `GET`, `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | `GET` streams the export inline. `POST` enqueues an export job and returns a job id. |
+| `GET`, `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | `GET` lists the ten most recent export jobs. `POST` enqueues an export job and returns a job id. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/status` | Reports the export job status. |
 | `WS` | `/ws/control/{organization_id}` | Streams control-plane events: kill, pause, approval decisions, key rotation. |
 
@@ -289,7 +293,7 @@ The key is singular: the plural `tool_patterns` is also rejected with `422`.
 | `GET` | `/api/v1/orgs/{org_id}/executions/{execution_id}` | Get one execution. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log` | List audit entries. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log/verify` | Verify the audit trail. |
-| `GET` | `/api/v1/orgs/{org_id}/audit-log/export` | Stream the export inline. |
+| `GET` | `/api/v1/orgs/{org_id}/audit-log/export` | List the ten most recent export jobs. Each row carries `id`, `status`, `created_at`, `completed_at` and `record_count`. |
 | `POST` | `/api/v1/orgs/{org_id}/audit-log/export` | Enqueue an export job and return a job id. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/status` | Poll the export job. |
 | `GET` | `/api/v1/orgs/{org_id}/audit-log/export/{job_id}/download` | Download the exported file. |
@@ -425,8 +429,10 @@ body listing each dependency.
 | `built_at` | string \| null | ISO-8601 build timestamp, when the build reports one. |
 
 The SDK probes this endpoint during `init()` and logs a warning when the
-version the SDK sends falls outside the range the gateway accepts. The probe is
-advisory: `init()` does not fail on a version mismatch.
+backend is not v3-ready, or when the SDK's own version is below the minimum
+the v3 wire contract needs. The probe is advisory: `init()` does not fail. A
+protocol version outside the gateway's range is refused per request with
+`400 PROTOCOL_TOO_OLD`.
 
 ## WebSocket control plane
 

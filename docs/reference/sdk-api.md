@@ -98,6 +98,11 @@ These names import fine (`from nullrun import X`) but stay out of `dir(nullrun)`
 | Audit | `AuditEntry`, `AuditLogMeta`, `AuditLogPage`, `AuditQuery`, `AuditVerifyResult`, `AuditExportJob`, `AuditExportStatus` |
 | Messages | `get_user_message` |
 
+`TransportErrorSource` names where a transport failure came from:
+`NETWORK_ERROR`, `GATEWAY_ERROR`, `AUTH_ERROR` and `BREAKER_OPEN`. The SDK
+raises the first three. An open circuit breaker raises `BreakerTransportError`
+instead.
+
 ## Lifecycle
 
 ### `init`
