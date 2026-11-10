@@ -41,8 +41,8 @@ Open a workflow for its detail page. The page has six tabs:
 
 1. Click **Workflows** in the sidebar.
 2. Click **New workflow**.
-3. Give it a name. Names allow letters, digits, spaces and `_ . , - & ( )`,
-   up to 255 characters.
+3. Give it a name. Names allow letters, digits, spaces and
+   `_ . , - & ( ) $ % ! ? + = *`, up to 255 characters.
 4. Optionally set an **External ID** — your own identifier for the
    workflow, so your systems can look it up.
 5. Click **Create**.

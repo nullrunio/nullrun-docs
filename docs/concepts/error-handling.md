@@ -288,8 +288,10 @@ NullRun never persists:
 Tool arguments are the one case worth naming. The SDK ships the
 argument bag so the gate can evaluate a `tool_parameters` approval
 predicate and bind the approval digest to those exact arguments. The
-control center renders the tool name and the argument count, not the
-values.
+gateway stores the bag with the event, with the secret-named fields
+replaced by a marker and the size capped. The control center shows the
+argument values. The gateway strips the bag before it sends anything to
+a third-party channel.
 
 Personal data is redacted at the log boundary: email addresses, phone
 numbers, card numbers and tokens are replaced with a marker before the

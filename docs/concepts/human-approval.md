@@ -28,7 +28,7 @@ require_approval` field. They are a separate rule object:
 | `tool_patterns` | Glob patterns matching the tool name |
 | `per_call_threshold_cents` | Projected-cost threshold. A wire field; the control center sends `null`. |
 | `action_predicate` | Typed predicate over the call's impact |
-| `action_label` | Label shown in the control center. Up to 255 characters. |
+| `action_label` | Label shown in the control center. Up to 200 bytes of text. The characters are limited to letters, digits, spaces and ` _.,-&()$%!?+=*`. |
 | `priority` | Order among the rules that match. Lower wins. Range 0–1000. |
 | `expires_in_seconds` | How long the operator has to decide. 30–3600 seconds. |
 | `risk_level` | `LOW`, `MEDIUM` or `HIGH`. Defaults to `MEDIUM`. |

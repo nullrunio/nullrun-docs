@@ -29,9 +29,11 @@ The SDK opens a WebSocket to
 `wss://api.nullrun.io/ws/control/{organization_id}` on its first
 protected call. The upgrade request carries the same API key the SDK
 uses for every other request, in the `X-API-Key` and `Authorization`
-headers. It carries no body, so it carries no request signature. Every
-frame the server sends is signed, and the SDK verifies the signature
-before it reads anything out of the frame.
+headers. It carries no body, so it carries no request signature. The
+server signs every frame it sends. When the SDK holds the signing
+secret, it verifies the signature before it reads anything out of the
+frame, and refuses a frame that arrives unsigned. A key without a
+secret cannot verify, and the frame is read as it arrives.
 
 The SDK keeps a copy of the control-plane state for each workflow it
 tracks:

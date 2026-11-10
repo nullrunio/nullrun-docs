@@ -1297,9 +1297,10 @@ track/batch endpoints. `/api/v1/check` returns 410 Gone.
 
 The SDK fetches the signing secret from `POST /api/v1/auth/verify`
 during authentication and signs with the server's copy.
-`NULLRUN_SECRET_KEY` is read at start-up and replaced by the server's
-value whenever the server returns a key version. A key that has never
-had a version returns none, so the SDK keeps the value you set.
+`NULLRUN_SECRET_KEY` is read at start-up. When the server answers
+with both a key version and a signing secret, the SDK switches to the
+server's secret. A key that returns only one of the two keeps the
+value you set.
 
 `nullrun.init()` raises `NullRunAuthenticationError` when no key is
 set. It creates the runtime and authenticates it against the gateway
@@ -1645,7 +1646,7 @@ require_approval` field. They are a separate rule object:
 | `tool_patterns` | Glob patterns matching the tool name |
 | `per_call_threshold_cents` | Projected-cost threshold. A wire field; the control center sends `null`. |
 | `action_predicate` | Typed predicate over the call's impact |
-| `action_label` | Label shown in the control center. Up to 255 characters. |
+| `action_label` | Label shown in the control center. Up to 200 bytes of text. The characters are limited to letters, digits, spaces and ` _.,-&()$%!?+=*`. |
 | `priority` | Order among the rules that match. Lower wins. Range 0–1000. |
 | `expires_in_seconds` | How long the operator has to decide. 30–3600 seconds. |
 | `risk_level` | `LOW`, `MEDIUM` or `HIGH`. Defaults to `MEDIUM`. |
@@ -1857,8 +1858,8 @@ Open a workflow for its detail page. The page has six tabs:
 
 1. Click **Workflows** in the sidebar.
 2. Click **New workflow**.
-3. Give it a name. Names allow letters, digits, spaces and `_ . , - & ( )`,
-   up to 255 characters.
+3. Give it a name. Names allow letters, digits, spaces and
+   `_ . , - & ( ) $ % ! ? + = *`, up to 255 characters.
 4. Optionally set an **External ID** — your own identifier for the
    workflow, so your systems can look it up.
 5. Click **Create**.
@@ -2119,7 +2120,9 @@ execution id, not by trace id.
 
 NullRun never persists prompt content or LLM response bodies. A span
 carries the function name, the timing, the status and the verdict —
-not the text you sent or the text you got back. See
+not the text you sent or the text you got back. The arguments of a
+tool call are the exception, and they live on the event rather than
+on the span. See
 [Error handling → What is NOT stored](error-handling.md#what-is-not-stored).
 
 ## How long traces are kept
@@ -2467,8 +2470,10 @@ NullRun never persists:
 Tool arguments are the one case worth naming. The SDK ships the
 argument bag so the gate can evaluate a `tool_parameters` approval
 predicate and bind the approval digest to those exact arguments. The
-control center renders the tool name and the argument count, not the
-values.
+gateway stores the bag with the event, with the secret-named fields
+replaced by a marker and the size capped. The control center shows the
+argument values. The gateway strips the bag before it sends anything to
+a third-party channel.
 
 Personal data is redacted at the log boundary: email addresses, phone
 numbers, card numbers and tokens are replaced with a marker before the
@@ -2512,9 +2517,11 @@ The SDK opens a WebSocket to
 `wss://api.nullrun.io/ws/control/{organization_id}` on its first
 protected call. The upgrade request carries the same API key the SDK
 uses for every other request, in the `X-API-Key` and `Authorization`
-headers. It carries no body, so it carries no request signature. Every
-frame the server sends is signed, and the SDK verifies the signature
-before it reads anything out of the frame.
+headers. It carries no body, so it carries no request signature. The
+server signs every frame it sends. When the SDK holds the signing
+secret, it verifies the signature before it reads anything out of the
+frame, and refuses a frame that arrives unsigned. A key without a
+secret cannot verify, and the frame is read as it arrives.
 
 The SDK keeps a copy of the control-plane state for each workflow it
 tracks:
@@ -3880,9 +3887,9 @@ status.
 
 Every infrastructure error maps to `503`. A gateway 429 arrives as
 `RateLimitError`, which is an infrastructure error, so it lands on
-`503` and not on `429`. A decision that carries `NR-R001` — the
-legacy block path, where the SDK reads the reason text and no wire
-code was sent — is a decision, and lands on `429`.
+`503` and not on `429`. A decision that carries `NR-R001` — a
+refusal that arrives without a wire code, so the SDK reads the reason
+text — is a decision, and lands on `429`.
 
 The response carries a `Retry-After` header when the exception has a
 `retry_after` value (rate limit) or a `resume_after` value (pause).

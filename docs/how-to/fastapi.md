@@ -67,9 +67,9 @@ status.
 
 Every infrastructure error maps to `503`. A gateway 429 arrives as
 `RateLimitError`, which is an infrastructure error, so it lands on
-`503` and not on `429`. A decision that carries `NR-R001` — the
-legacy block path, where the SDK reads the reason text and no wire
-code was sent — is a decision, and lands on `429`.
+`503` and not on `429`. A decision that carries `NR-R001` — a
+refusal that arrives without a wire code, so the SDK reads the reason
+text — is a decision, and lands on `429`.
 
 The response carries a `Retry-After` header when the exception has a
 `retry_after` value (rate limit) or a `resume_after` value (pause).

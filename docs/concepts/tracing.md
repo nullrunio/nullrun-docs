@@ -116,7 +116,9 @@ execution id, not by trace id.
 
 NullRun never persists prompt content or LLM response bodies. A span
 carries the function name, the timing, the status and the verdict —
-not the text you sent or the text you got back. See
+not the text you sent or the text you got back. The arguments of a
+tool call are the exception, and they live on the event rather than
+on the span. See
 [Error handling → What is NOT stored](error-handling.md#what-is-not-stored).
 
 ## How long traces are kept
