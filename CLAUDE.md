@@ -34,7 +34,9 @@ python scripts/verify_internal_links.py         # -> /tmp/broken_links.json
 
 **Reading its output:** it reports **root-absolute** hrefs (`/assets/…`, `/stylesheets/extra.css`) as broken. They are not — the script joins them onto `SITE` as if relative, and on Windows a leading `/` makes the joined path absolute, so the existence check always misses. Expect ~55 such entries on a clean tree; ignore them and look at the relative-href entries instead.
 
-It also currently reports `print/` as broken on all 48 nested pages. That one is **real**: `overrides/partials/header.html:96` hardcodes `href="print/"` as a relative URL, so the menu-bar print button only resolves from the site root and 404s on every page below it (the inline comment there claiming the relative form "works regardless of `use_directory_urls`" is wrong — relative links resolve against the *current page's* directory). Fixing it means emitting an absolute `/print/` from the site root.
+Every `broken_files` entry on a clean tree comes from `404.html` — that page is full of root-absolute hrefs, and the script resolves them against the site root instead of the page. Read `src` before you read `href`.
+
+The menu-bar print button is emitted as `{{ 'print/' | url }}`, so the built site carries a depth-relative href (`../../print/` two levels down, `print/` from the root). A hardcoded `href="print/"` 404'd on every nested page; do not reintroduce it.
 
 ### Screenshots
 
