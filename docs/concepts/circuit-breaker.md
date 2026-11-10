@@ -62,8 +62,9 @@ The breaker does not sit on the gate path. It guards the event flush,
 not the policy decision. A protected call is never blocked by it.
 
 When the gateway cannot be reached, the gate path fails closed on its
-own. A network failure raises `NullRunBlockedException` with `NR-B001`,
-a gateway 5xx raises `NullRunBlockedException` with `NR-B002`, and a
+own. A network failure raises `NullRunTransportError` (`NR-B001`) and a
+gateway 5xx raises `NullRunBackendError` (`NR-B002`); `@protect`
+re-raises both as `NullRunBlockedException` with the same code. A
 rejected key raises `NullRunAuthError` with `NR-A003`. The protected body
 does not run in any of the three cases. See
 [Policies → Fail closed](policies.md#fail-closed).

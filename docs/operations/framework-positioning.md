@@ -42,14 +42,14 @@ and no opt-in list to maintain.
 | Path | What the SDK patches | Gate check |
 |---|---|---|
 | `httpx` | The `httpx.Client` and `httpx.AsyncClient` transports | Before the request |
-| `requests` | The `requests` session | Before the request |
+| `requests` | `requests.Session.send` | Before the request |
 | LangChain | `BaseCallbackManager` | On the model call |
 | LangChain | `BaseChatModel.invoke`, `ainvoke`, `stream`, `astream` | On the model call |
 | LangGraph | `Pregel.invoke`, `stream`, `ainvoke`, `astream` | On the model call |
 | OpenAI Agents | `Runner.run`, `Runner.run_sync` | None |
 | LlamaIndex | The `llama_index.core` dispatcher | None |
 | CrewAI | `Crew.kickoff`, `Crew.kickoff_async`, and the event bus | None |
-| AutoGen | `BaseChatAgent.on_messages` and the OpenAI model client | None |
+| AutoGen | `BaseChatAgent.on_messages` and `OpenAIChatCompletionClient.create` | None |
 
 Where there is no gate check, the SDK still records the call, so the
 cost reaches the ledger. Put `@protect` on the tools that carry policy

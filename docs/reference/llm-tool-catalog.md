@@ -138,7 +138,7 @@ they act on whatever URL the agent picks.
 
 An MCP tool's name is whatever the server exposes. The SDK sends that
 name to the gateway unchanged, so a `ToolBlock` pattern has to spell it
-the way the server does. The **MCP servers** view in the control center
+the way the server does. The **Action sources** view in the control center
 lists the servers and the tools each one registers — read the names off
 there rather than guessing them from the server's documentation.
 
@@ -152,9 +152,9 @@ blocks nothing on its own. A tool is blocked by a `ToolBlock` policy,
 and the gateway evaluates that policy on every gate call.
 
 Create the policy in the control center under **Governance → Policies → New
-policy**, and pick **Tool block** as the type. The control center renders
-the canonical tool name for every framework integration, so you can
-match against the right string.
+policy**, and pick **Tool block** as the type. The **Will match** line
+under the pattern field lists the tool names your own organization has
+already used, so you can match against the right string.
 
 The same policy as a `POST /api/v1/orgs/{org_id}/policies` body:
 

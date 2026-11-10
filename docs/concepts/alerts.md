@@ -81,13 +81,17 @@ A rule does not fire again within 15 minutes of its last firing. Each rule carri
 
 ### The budget ladder
 
-Spending against a monthly budget raises alerts at fixed points:
+Running spend raises alerts at three fixed points:
 
 | Spend | Severity |
 |---|---|
-| 80% of the budget | Warning |
-| 95% of the budget | Warning |
-| 100% of the budget | Critical |
+| 80% of the threshold | Warning |
+| 95% of the threshold | Warning |
+| 100% of the threshold | Critical |
+
+The threshold comes from your plan's limits. It is not the cap of a
+`BudgetLimit` policy, so a policy cap and the alert ladder can fire at
+different times.
 
 ### Events
 

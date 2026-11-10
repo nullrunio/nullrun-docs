@@ -106,8 +106,9 @@ track/batch endpoints. `/api/v1/check` returns 410 Gone.
 
 The SDK fetches the signing secret from `POST /api/v1/auth/verify`
 during authentication and signs with the server's copy.
-`NULLRUN_SECRET_KEY` is read at start-up and then replaced by that
-value, so setting it yourself changes nothing.
+`NULLRUN_SECRET_KEY` is read at start-up and replaced by the server's
+value whenever the server returns a key version. A key that has never
+had a version returns none, so the SDK keeps the value you set.
 
 `nullrun.init()` raises `NullRunAuthenticationError` when no key is
 set. It creates the runtime and authenticates it against the gateway

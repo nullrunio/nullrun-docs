@@ -41,7 +41,8 @@ A plan sets two things: the caps on what an organization may create, and the fea
 | API keys | 10 | 15 | 100 | 350 | Unlimited |
 | Seats | 1 | 3 | 10 | 75 | Unlimited |
 
-An approval rule counts against the policy cap. A policy that carries its own approval rule counts once, as a policy.
+An approval rule counts against the policy cap. A policy and its own approval
+rule use two slots.
 
 ### Features
 

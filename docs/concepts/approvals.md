@@ -79,6 +79,8 @@ The toolbar above the pending queue counts the low-risk pending requests that ar
 
 Medium- and high-risk requests are not eligible for a bulk approval. Each one takes its own type-to-confirm step.
 
+The toolbar is a preview feature and is off by default. The per-row approve and deny flow is the supported path.
+
 ## Programmatic approval
 
 A CI bot or an on-call rotation decides through the REST endpoints — see [HTTP API → approvals](../reference/http-api.md#approvals). An already-decided request answers `409 APPROVAL_ALREADY_DECIDED`; the codes are in [Error codes](../reference/errors.md).

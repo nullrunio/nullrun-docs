@@ -367,7 +367,8 @@ See [Use with FastAPI](../how-to/fastapi.md) for the reference integration.
 
 When the gateway is unreachable, the SDK raises `NullRunTransportError` with
 `source` set to `NETWORK_ERROR` when the request never left the process, and
-`GATEWAY_ERROR` when the gateway answered.
+`GATEWAY_ERROR` when the gateway answered. `TransportErrorSource` has four
+members: `NETWORK_ERROR`, `GATEWAY_ERROR`, `AUTH_ERROR` and `BREAKER_OPEN`.
 
 ## NR-* error code catalog
 

@@ -34,13 +34,17 @@ effective authority — the owner carries it alone.
 3. Pick the role they should have.
 4. Send the invite.
 
-The invite arrives by email and points at `https://nullrun.io/invite?token=<token>`. The link stays the same until the invite is accepted or revoked.
+The invite arrives by email and points at `https://nullrun.io/invite?token=<token>`. The link works for 7 days and stays the same until the invite is accepted or revoked.
+
+An invite that grants **Admin** needs an **Owner** to send it. An Admin can invite a Viewer or a Member. The server checks the sender's role when the invite is sent and again when it is accepted.
 
 An invite is refused when:
 
 - The address is already a member of the organization.
 - An invite to that address is still pending.
 - The seat quota is full.
+
+One person can send 10 invites an hour. Past that the server refuses with a retry delay.
 
 ## Pending invites
 
@@ -50,7 +54,9 @@ A revoked invite stops working immediately.
 
 ## Seat quota
 
-The header shows how many seats the organization uses against the plan's allowance. Members and pending invites count together, so an outstanding invite shows its cost before it is accepted.
+The header shows how many seats the organization uses against the plan's allowance. The number on screen adds the pending invites to the members, so an outstanding invite shows its cost before it is accepted.
+
+The server counts members only. It refuses a new invite when the members already fill the plan's allowance, and it refuses an invite at accept time when accepting it would fill the allowance. The two counts can disagree, so a pending invite is a reservation, not a guarantee.
 
 When the quota is full, the invite button is disabled and the page links to **Billing & Plan** to buy more seats.
 

@@ -64,7 +64,7 @@ python app.py
 - the tool rules that match the call
 - the rate limit
 
-If the gateway allows the call, the function body runs. The SDK then tracks the input tokens, the output tokens, and the cost.
+If the gateway allows the call, the function body runs. The SDK then reports the input tokens and the output tokens. The gateway prices the call and books the cost.
 
 ## What a refusal looks like
 
@@ -89,8 +89,8 @@ Call it when you want a missing key to fail at startup rather than at the first 
 ## What gets tracked
 
 - LLM tokens in and out
-- Cost per call
-- Latency
+- The cost of each call, priced by the gateway
+- Latency, when you report the call yourself
 - Tool calls made through an instrumented framework
 
 ## Next

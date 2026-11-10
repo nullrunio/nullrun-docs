@@ -173,7 +173,7 @@ transport error, whatever the budget's <code>enforcement_mode</code>.
 </div>
 <div class="nr-feature__title">Auto-instrumentation</div>
 <div class="nr-feature__body">
-The first <code>@protect</code> call activates
+<code>nullrun.init()</code> activates
 auto-instrumentation for OpenAI, Anthropic, LangGraph,
 OpenAI Agents, Mistral, Gemini, Cohere, Bedrock, LlamaIndex,
 CrewAI, and AutoGen. Vendor SDKs are patched in place —
@@ -275,8 +275,9 @@ Work through the steps below. Stop and ask me when a step is ambiguous.
    choice you made.
 
 4. HANDLE THE REFUSALS
-   Wrap the entry point in `with nullrun.guard():`. It writes the user
-   message and the developer report to stderr, then exits with code 1.
+   Wrap the entry point in `with nullrun.guard():`. It writes one report
+   to stderr — the user message as the headline, then the developer
+   detail — and exits with code 1.
    Where the app has its own error handling, catch `nullrun.NullRunError`
    and show `nullrun.format_user_message(exc)` to the user.
    Never swallow a refusal. A swallowed refusal means the call ran without

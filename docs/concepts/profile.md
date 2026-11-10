@@ -6,7 +6,8 @@ description: Your own account — name and email, password and two-factor authen
 
 # Profile settings
 
-The **Profile settings** page is about you: the person signed in. It lives under **Profile** in the sidebar and is on every plan.
+The **Profile settings** page is about you: the person signed in. It lives
+under **Account → Profile** in the sidebar and is on every plan.
 
 This is not the [Organization](organization.md) page. The organization page edits the workspace. This page edits your account.
 
@@ -14,17 +15,22 @@ This is not the [Organization](organization.md) page. The organization page edit
 
 | Field | What it does |
 |---|---|
-| **Display name** | How you appear in the control center and in audit rows. |
+| **Full name** | How you appear in the control center and in audit rows. |
 | **Email** | The address you sign in with and where notifications reach you. |
 | **Avatar** | Your initials on a colour tile, or the avatar from your identity provider when you signed in with one. |
 
-Changing the email asks for a confirmation — a password or a two-factor code — and sends a verification message to the new address. The address is not live until you click the link in it. A **Resend verification email** button appears while the address is unverified.
+The email address cannot be changed. The field is locked, and the server
+refuses a change with `400`. Use a different email to register a new
+account. A **Resend verification email** button appears while the
+address is unverified, but only on an account that has a password.
 
 ## Password
 
 The password section appears when your account has a password. Signing up with an identity provider instead gives you a **Set password** action.
 
-Changing a password asks for the current one. Every session ends, so every device has to sign in again.
+Changing a password asks for the current one. Every other session ends, so
+every other device has to sign in again. The browser you changed it in
+stays signed in.
 
 ## Two-factor authentication
 
@@ -32,28 +38,26 @@ Two-factor authentication adds a one-time code from an authenticator app to ever
 
 | State | What you can do |
 |---|---|
-| **Not configured** | **Enable 2FA** shows a secret and a QR code. The first code confirms the enrolment. |
-| **Enabled** | **Disable 2FA**, **Regenerate backup codes**, and **Regenerate secret**. Each asks for the current password and a fresh code. |
+| **Not configured** | **Enable** starts the enrolment. The server issues a secret and a QR code, and the first code from the authenticator confirms it. |
+| **Enabled** | **Manage** opens the disable dialog. It asks for the current password. A **Generate new codes** link appears when three or fewer recovery codes are left. It also asks for the current password. |
 
-Enabling it asks for the current password before it issues a secret. Backup codes are shown once, at the point the first code confirms the enrolment. Only the number of codes left and the time of the last use stay visible.
+Enabling it asks for no password. The server issues the secret to the
+signed-in session, and the first code confirms the enrolment. Recovery
+codes are shown once, at that moment. Only the number of codes left
+stays visible.
 
 If you lose the device, the recovery flow lets you disable two-factor authentication without it.
 
 ## Sessions
 
-The session section shows:
-
-- The last sign-in time and address.
-- The number of active sessions.
-
-Two actions:
+The session section holds one action:
 
 | Action | Effect |
 |---|---|
-| **Sign out of all other devices** | Ends every session except the one you are using. |
-| **Log out** | Ends the session in this browser. |
+| **Log out** | Ends the session in this browser. You can sign back in at any time. |
 
-Signing out of the other devices is recorded in the audit log.
+The page does not list the sessions on your account and cannot end them
+from another device.
 
 ## Deleting your account
 
@@ -63,7 +67,7 @@ The request asks for:
 
 | Field | When it is needed |
 |---|---|
-| **Confirmation** | Your display name, typed exactly. Your email address is accepted as a fallback. |
+| **Confirmation** | Your full name, typed exactly. |
 | **Current password** | When your account has a password. |
 | **Two-factor code** | When two-factor authentication is on. |
 | **Ownership decision** | For every organization you own that has other members. |
@@ -82,13 +86,18 @@ What deletion does:
 - Removes your account. You cannot sign in again.
 - Ends every session you hold.
 - Writes one audit row per organization you were a member of.
+- Closes every organization you own that has no other member. An organization with other members follows the decision you made for it.
 
-Organization data is untouched. Closing an organization is a separate action on the [Organization](organization.md) page.
+The account row goes first. If the session store is then unreachable, the
+request fails with `503` and the account is already gone. Sign in again
+rather than retrying the deletion.
 
-If a session cannot be ended, the whole operation stops and nothing is deleted. A half-finished deletion would leave live sessions pointing at an account that no longer exists.
+The data of an organization you did not own is untouched. Closing an
+organization on its own is a separate action on the
+[Organization](organization.md) page.
 
 ## See also
 
 - [Organization](organization.md) — the workspace, its members, and closing it
 - [Team](team.md) — other people in the organization
-- [Audit log](error-handling.md#audit-trail) — every profile change leaves a row
+- [Audit log](error-handling.md#audit-trail) — what the control center records

@@ -26,7 +26,7 @@ This page is the detailed companion to the
 | What does the backend store in Redis? | Budget counters, execution bindings, rate-limit buckets, session and chain state. The session entries hold the user and organization id. | [Data stored](#2-data-stored) |
 | Where is it hosted? | DigitalOcean, with EU regions available. Self-hosted Postgres and Redis on one VPS. | [Hosting](#3-hosting) |
 | Who can access production data? | Four role levels. Production shell access through an allowlisted wrapper. | [Access controls](#4-access-controls) |
-| How is it encrypted? | TLS at the edge, column-level encryption for Slack OAuth tokens and TOTP secrets, HMAC-SHA256 for request signing and audit exports. | [Encryption](#5-encryption) |
+| How is it encrypted? | TLS at the edge, column-level encryption for Slack OAuth tokens, TOTP secrets and MCP discovery tokens, HMAC-SHA256 for request signing and audit exports. | [Encryption](#5-encryption) |
 | Which third parties see data? | DigitalOcean, Brevo (DE), Polar (SE), Slack, GitHub, Google. | [Sub-processors](#6-sub-processors) |
 | How is data deleted? | Soft-delete with a 60-day grace, then a purge of tenant data. API key revocation is two-phase. | [Deletion](#7-deletion) |
 | Where physically is data? | Region selectable at signup. Single-region deployment. | [Residency](#8-data-residency) |
@@ -110,16 +110,16 @@ identifier. `[V]`
 
 | Table | Stored | Mutable? | Encryption at rest | Retention |
 |---|---|---|---|---|
-| `audit_events` | Organization, actor, action, event type, decision, policy id, policy version, policy hash, matched rule, reason code, `execution_id`, `action_digest`, tool name and version, metadata, content hash, previous hash, timestamp | **Immutable** | Database level | Until the organization purge, after a 60-day grace |
+| `audit_events` | Organization, actor, action, event type, decision, policy id, policy version, policy hash, matched rule, reason code, `execution_id`, `action_digest`, tool name and version, metadata, content hash, previous hash, timestamp | **Immutable** | Database level | Kept until the organization purge, after a 60-day grace. A plan without the audit log feature loses its rows on the plan's history window instead. |
 | `execution_records` | One row per execution, joined on `execution_id` | Mutable | Database level | The plan's history window |
-| `cost_events` | Cost in cents and millicents, token counts, provider-reported and authoritative cost, an integrity label, tool and model, correlation ids, agent and organization ids, receipt timestamp. Partitioned by month. | Mutable | Database level | The plan's history window |
+| `cost_events` | Cost in cents and millicents, token counts, provider-reported and authoritative cost, an integrity label, tool and model, correlation ids, agent and organization ids, receipt timestamp. Partitioned by month. | Mutable | Database level | A window set by the deployment, 90 days by default |
 | `approvals` | The decision, and who made it — a person, a system expiry, or an unknown source | Mutable: pending becomes approved, denied, expired, or revoked | Database level | Pending rows are collected by a sweep worker |
 | `organizations` | Id, name, slug, contact email, plan, deletion timestamp, purge date | Mutable, soft delete | Database level | Hard-deleted by the retention worker after the grace |
-| `users` | Id, email, display name, password hash (Argon2id), role, default organization, tombstone timestamp | Mutable | Database level | Until the organization cascade |
+| `users` | Id, email, display name, password hash (Argon2id), role, default organization | Mutable | Database level | The row is deleted outright when the account is deleted |
 | `organization_api_keys` | Id, name, key prefix and suffix, the key hash (Argon2id), the SHA-256 lookup fingerprint, the HMAC signing secret, status, version, last use, expiry, scopes | Mutable | Database level | Until the organization cascade |
 | `user_2fa` | The user id, the TOTP secret, the pending TOTP secret, and the hashed recovery codes | Mutable | Column-level encryption on the TOTP secrets | Until the user row is deleted |
-| `policies` | Id, scope, policy type, enforcement mode, budget amount, overdraft cap | Mutable, soft delete | Database level | The plan's history window |
-| `approval_rules` | The typed predicates that ask for a human, mirroring the policy quota | Mutable | Database level | The plan's history window |
+| `policies` | Id, scope, policy type, enforcement mode, budget amount, overdraft cap | Mutable, soft delete | Database level | No time-based purge. A policy goes when you delete it, or with its organization. |
+| `approval_rules` | The typed predicates that ask for a human, mirroring the policy quota | Mutable | Database level | No time-based purge. A rule goes when you delete it, or with its workflow. |
 | `workflows` | Metadata, state (normal, flagged, tripped, paused, killed), budget amount, archive and deletion timestamps | Mutable | Database level | Persistent |
 
 **Sessions are not in Postgres.** Browser sessions live in Redis under a
@@ -141,10 +141,10 @@ Four independent controls protect the audit table:
 ### 2.3 Column-level encryption
 
 Column-level encryption uses pgcrypto AES. It is applied to the Slack
-OAuth bot tokens, the TOTP secrets, and the MCP discovery bearer
-tokens. The threat model: a stolen disk image or a read-only dump
-yields ciphertext, and the plaintext needs both the database and the
-encryption key.
+OAuth bot tokens, the TOTP secrets, the MCP discovery bearer tokens, and
+the MCP discovery custom headers. The threat model: a stolen disk image
+or a read-only dump yields ciphertext, and the plaintext needs both the
+database and the encryption key.
 
 ### 2.4 Redis
 
@@ -169,7 +169,7 @@ and organization id in the session entry.
 |---|---|
 | **Cloud** | DigitalOcean LLC, US with EU regions. One VPS hosts the whole deployment. |
 | **Postgres** | Self-hosted container on the VPS, with a dedicated application role and the pgcrypto extension. |
-| **Redis** | Self-hosted container on the same VPS, with AOF and RDB backups. |
+| **Redis** | Self-hosted container on the same VPS, with AOF enabled and the default snapshot schedule. Only Postgres has a backup job. |
 | **Object storage** | S3-compatible, for audit exports and backups. Compatible with DigitalOcean Spaces. |
 | **Orchestration** | Docker Compose on one VPS. Blue-green deploys on the budget, billing, and gate paths; rolling deploys elsewhere. |
 | **Edge** | No CDN. nginx on the VPS terminates TLS and reverse-proxies. The origin is directly reachable. |
@@ -185,7 +185,7 @@ and organization id in the session entry.
 ### TLS
 
 - TLS 1.2 and 1.3 only.
-- A Mozilla "intermediate" cipher list.
+- An explicit cipher list, named in the nginx configuration.
 - HSTS with a one-year max age and subdomain inclusion.
 - Certificates managed by Certbot. `[V]`
 
@@ -206,8 +206,8 @@ owner.
 **Machine API keys carry no user role.** A mutation that the role
 model protects needs a user-bound key.
 
-**Platform admin** additionally needs two-factor enabled and the owner
-role. A lookup failure refuses the request.
+**Platform admin** additionally needs two-factor enabled and the owner or
+admin role. A lookup failure refuses the request.
 
 ### 4.2 Authentication
 
@@ -258,11 +258,11 @@ role. A lookup failure refuses the request.
 
 | Layer | Mechanism | Attestation |
 |---|---|---|
-| **In transit, server edge** | TLS 1.2 and 1.3, Mozilla intermediate ciphers, HSTS | `[V]` |
+| **In transit, server edge** | TLS 1.2 and 1.3, an explicit cipher list, HSTS | `[V]` |
 | **In transit, WebSocket** | HMAC-SHA256 over canonical JSON, 300-second replay window | `[V]` |
-| **At rest, Postgres columns** | pgcrypto AES, hex-encoded, on the Slack OAuth bot tokens, the TOTP secrets, and the MCP discovery bearer tokens | `[V]` |
+| **At rest, Postgres columns** | pgcrypto AES, hex-encoded, on the Slack OAuth bot tokens, the TOTP secrets, the MCP discovery bearer tokens, and the MCP discovery custom headers | `[V]` |
 | **At rest, Postgres disk** | **Not attested**; relies on the provider's disk encryption | `[N]` |
-| **At rest, Redis** | **Not attested**; the backup volumes rely on host disk encryption | `[N]` |
+| **At rest, Redis** | **Not attested**; the data volumes rely on host disk encryption | `[N]` |
 | **At rest, object storage** | S3-compatible storage. Bucket-side encryption settings are **not exposed** | `[D]` |
 | **Key management** | One environment-held key drives the column encryption. No managed key service is integrated. Rotation needs a manual runbook, and it breaks two-factor and Slack until every copy is replaced | `[D]` |
 | **Request signing** | HMAC-SHA256 over gate, execute, and track bodies. The signing key is at least 32 bytes and is never generated automatically | `[V]` |
@@ -301,10 +301,10 @@ encrypted before upload.
 **Soft-delete.** The organization row is marked deleted and a purge
 date is set 60 days out. Audit rows stay for the grace period because
 the audit chain must stay intact. An owner can restore the
-organization, which clears both markers. A delete request that would
-leave audit history behind is refused with a `409` that names the
-grace period and its length. Child records — keys, policies,
-workflows, invitations — are updated in the same transaction.
+organization, which clears both markers. A request for an organization
+that still has other members is refused with a `409` that names the
+member count. Child records — keys, policies, workflows, invitations —
+are updated in the same transaction.
 
 **Hard purge.** The purge runs after the purge date. It scrubs the
 audit log, the decision history, the cost events, and the billing
@@ -323,7 +323,7 @@ Three cases:
 | Co-member organization, the user chooses delete and notify | Soft delete, and every co-member session is revoked. A revocation failure refuses the request. |
 | Co-member organization, the user chooses transfer | A new owner is promoted and nothing is deleted. |
 
-The request carries an ownership-decisions map keyed by user id. A
+The request carries an ownership-decisions map keyed by organization id. A
 session-revocation failure refuses the request. `[V]`
 
 ### 7.3 API key revocation
@@ -343,7 +343,7 @@ The deny list lives for twice the authentication cache lifetime.
 
 | Right | Implementation |
 |---|---|
-| **Access** | A per-user export job. The download expires after 7 days, and each section is capped at 100 000 records. The session section reads a Postgres table that the migrations do not create, so it comes back empty and the job logs it and continues. |
+| **Access** | A per-user export job. The download expires after 7 days, and each section is capped at 100 000 records. The session section reads a Postgres table that no migration creates, so the section is left out of the export and the job logs the error and continues. |
 | **Erasure** | The tenant purge scrubs tenant-scoped data, and runs automatically 60 days after the soft delete. There is no self-serve kickoff path. |
 | **Audit retention on erasure** | Audit rows are physically deleted when the organization is purged. They are retained through the grace period on purpose. |
 | **Drift guard** | An automated check keeps personal data from accumulating in payloads where it would later need to be scrubbed. |

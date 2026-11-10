@@ -27,18 +27,18 @@ The server name is the first segment. The rest is the tool name, and it
 may contain slashes.
 
 The SDK does not build that name. `MCPAdapter.call_tool("create_issue", …)`
-sends the bare tool name, and the gateway resolves the server from your
-organization's own catalog. Exactly one catalog server declares that
-tool, so the server on that row becomes the identity. A tool no server
-declares stays a plain tool name.
+sends the bare tool name, and the gateway resolves it against your
+organization's own catalog. Every server that declares that tool takes
+part, and the strictest decision wins. A tool no server declares stays a
+plain tool name.
 
 Policy patterns are written against the canonical name. See
 [Tool policies → What a tool name looks like](tool-policies.md#what-a-tool-name-looks-like).
 
 ## Deciding which tools run
 
-The **MCP servers** page in the control center lists the servers your agents
-call and the tools they expose. Each tool carries one decision:
+The **Action sources** page in the control center lists the servers your
+agents call and the tools they expose. Each tool carries one decision:
 
 | Decision | What it means |
 |---|---|

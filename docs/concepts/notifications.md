@@ -56,7 +56,9 @@ A receiver should reject a timestamp that differs from its own clock by more tha
 
 ### Test mode
 
-A channel in test mode receives synthetic payloads only. Real alerts do not reach it. The channel card carries a **Test mode** badge.
+Event alerts skip a channel in test mode. A threshold rule that fires does
+not skip it, so a test-mode channel still receives the real alert. The
+channel card carries a **Test mode** badge.
 
 ### Test send
 
@@ -72,12 +74,12 @@ The events are:
 
 | Group | Event | Fires when |
 |---|---|---|
-| Workflow activity | `execution_quota_warning` | The organization approaches its execution limit. |
+| Workflow activity | `execution_quota_warning` | A critical alert rule fires, such as an error-rate rule. Nothing raises an execution-quota event, and the row carries the name of one. |
 | Workflow activity | `workflow_budget_warning` | A workflow exceeds its budget. |
-| Workflow activity | `loop_detected` | A workflow makes repeated identical calls. |
+| Workflow activity | `loop_detected` | A workflow makes repeated identical calls. The row also gates the daily, hourly and per-key spend rules. |
 | Workflow activity | `policy_violation` | An action is blocked by policy. |
 | Workflow activity | `workflow_killed` | A workflow is terminated. |
-| Governance & access | `approval_required` | A new approval is requested. Off by default. |
+| Governance & access | `approval_required` | A new approval is requested. The row reads off until you save the settings. An organization that has never saved them still announces approvals. |
 | Governance & access | `api_key_created` | An API key is created. |
 | Team | `member_invite` | A new member is invited. |
 | Digest | `daily_summary` | The previous day's activity digest. |

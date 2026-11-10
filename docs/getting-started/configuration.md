@@ -75,7 +75,14 @@ The default write-ahead log path carries a digest of the API key, not the key it
 
 ## Malformed values
 
-A value that is not a number is ignored. `NULLRUN_BATCH_SIZE`, `NULLRUN_FLUSH_INTERVAL_MS`, `NULLRUN_EDGE_TIMEOUT_SECONDS`, and `NULLRUN_EDGE_MAX_RETRIES` log a warning that names the variable. The other numeric variables fall back to their default silently. `NULLRUN_MAX_BATCH_ATTEMPTS` and `NULLRUN_MAX_BISECT_REQUESTS` must be whole numbers.
+A value that is not a number is ignored. `NULLRUN_BATCH_SIZE`,
+`NULLRUN_FLUSH_INTERVAL_MS`, `NULLRUN_EDGE_TIMEOUT_SECONDS`, and
+`NULLRUN_EDGE_MAX_RETRIES` log a warning that names the variable.
+
+Three variables have no fallback. `NULLRUN_MAX_RESPONSE_BYTES`,
+`NULLRUN_MAX_BATCH_ATTEMPTS`, and `NULLRUN_MAX_BISECT_REQUESTS` must be
+whole numbers. A non-numeric value raises `ValueError` and stops
+`nullrun.init()`.
 
 ## Development and test bypasses
 

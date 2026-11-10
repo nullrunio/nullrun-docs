@@ -79,10 +79,9 @@ for the maintained list with risk ratings.
 4. Under **Where does this apply?** pick the scope — the whole
    organization, or one workflow.
 
-The control center shows the canonical tool name for every framework
-integration, and the **Will match** line tells you which names the
-pattern covers. The pattern syntax is on
-[Tool policies](tool-policies.md).
+The **Will match** line under the pattern field lists the tool names your
+own organization has already used. It tells you which of them the pattern
+covers. The pattern syntax is on [Tool policies](tool-policies.md).
 
 Patterns **union** across every applicable policy — every pattern that
 matches fires. See [Policies → Aggregation](policies.md#aggregation).
@@ -90,10 +89,12 @@ matches fires. See [Policies → Aggregation](policies.md#aggregation).
 ## Audit trail
 
 A blocked sensitive tool lands in **Governance → Audit log** with the
-decision `deny`, the reason code `TOOL_BLOCKED`, the pattern that
-matched, the policy that matched and the tool name. The audit log is a
-Growth+ feature, so Lite and Starter write no rows. The log is
-hash-chained — see
+decision `deny`, the reason code, the matched rule, the policy hash, the
+tool name and the action digest. The matched rule reads `policy.block`.
+The reason code carries the refusal text the gate produced. The pattern
+that matched is not part of the row — open the policy to see the pattern.
+The audit log is a Growth+ feature, so Lite and Starter write no rows.
+The log is hash-chained — see
 [Error handling → Audit trail](error-handling.md#audit-trail).
 
 For a sensitive tool you want to allow after human review, pair the

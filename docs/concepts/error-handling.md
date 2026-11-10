@@ -151,9 +151,9 @@ if __name__ == "__main__":
 ```
 
 `guard()` catches every `NullRunError` raised inside the block,
-prints a developer report to stderr, and exits with code 1. The report
-has the catalog headline plus the code, the stage, the endpoint, the
-cause, the fix, and a link:
+prints one report to stderr, and exits with code 1. The report opens
+with the user message, then gives the developer the code, the stage,
+the endpoint, the cause, the fix, and a link:
 
 ```
 Too many requests. Please wait a moment and try again.
@@ -247,7 +247,7 @@ protected function does not run on a refused call.
 
 | Situation | Result |
 |---|---|
-| The gateway cannot be reached | The body does not run. A network failure raises `NullRunBlockedException` with `NR-B001`, a gateway 5xx raises `NullRunBlockedException` with `NR-B002`, and a rejected key raises `NullRunAuthError` with `NR-A003` |
+| The gateway cannot be reached | The body does not run. A network failure raises `NullRunTransportError` (`NR-B001`) and a gateway 5xx raises `NullRunBackendError` (`NR-B002`); `@protect` re-raises both as `NullRunBlockedException` with the same code. A rejected key raises `NullRunAuthError` with `NR-A003`. |
 | The rate-limit store cannot be reached | HTTP 503 `RATE_LIMIT_REDIS_UNAVAILABLE` |
 | The budget store cannot be reached | HTTP 402 `BUDGET_REDIS_UNAVAILABLE` |
 | A `ToolBlock` policy cannot be evaluated | HTTP 403 `TOOL_BLOCKED` |

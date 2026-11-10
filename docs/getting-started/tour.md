@@ -121,7 +121,7 @@ The audit log is a plan feature. Lite and Starter do not have it. A new workspac
 
 In the sidebar, open **Governance → Policies**. You find the `tour-agent - starting budget` policy, a **Budget Limit** on the `tour-agent` workflow.
 
-1. Edit it and set **Max cost (USD/month)** to `0.01`. That is one cent, and it is the smallest cap the server accepts.
+1. Edit it and set **Max cost (USD/month)** to `0.01`. That is one cent, and it is the smallest cap the server enforces. The server refuses a smaller amount when the policy is created. The edit box accepts `0`, which turns the cap off instead of refusing the call.
 2. Leave **Enforcement mode** on **Hard**.
 
 Run the script again:

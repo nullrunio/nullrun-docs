@@ -151,14 +151,12 @@ instead.
 | `allow` | The call may run. |
 | `block` | The call may not run. |
 | `require_approval` | The call may run after an operator approves it. The answer carries an `approval_id`. |
-| `soft_pass` | The call runs, and the event is recorded for review. |
-| `deny` | The call may not run, and the model may adapt and try something else. |
 
 ### Response
 
 | Field | Notes |
 |---|---|
-| `decision` | One of the five values above. |
+| `decision` | One of the three values above. |
 | `decision_source` | Which rule produced the decision. |
 | `explanation` | The reason, in human text. |
 | `execution_id` | The server-minted id for this execution. |

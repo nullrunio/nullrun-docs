@@ -58,22 +58,26 @@ and the per-model prices the gateway holds:
 - **Reasoning tokens**, at the reasoning rate
 
 The total is the sum across every `@protect` call for the current
-period.
+calendar month.
 
 ## Periods
 
-A **period** is the window after which the spend counter resets. The
-period comes from the server, not from your agent.
+The **spend counter** the gate enforces against resets on the **first of
+every month, UTC**. The period comes from the server, not from your
+agent, and it is the same window for every plan.
 
-| Plan | Period source | When it resets |
+The control center reports spend over a **reporting window**, which can
+be a different one:
+
+| Org | Reported window | When it resets |
 |---|---|---|
-| **Lite** | A rolling month anchored at signup | One month after signup, then every month after that |
-| **Paid** | Your billing cycle | On renewal |
-| Any org with no billing cycle | The UTC calendar month | On the first of the month |
+| Paid | The billing cycle | On renewal |
+| Lite | A rolling month anchored at signup | One month after signup, then every month after that |
+| No billing cycle and not Lite | The UTC calendar month | On the first of the month |
 
-The control center shows the period start and end dates next to the spend
-bar. When the period rolls over, the counter resets to zero and the
-budget applies fresh.
+Because the two windows can differ, the number on a report and the
+number the gate enforces against are not always the same. The gate is
+the authority.
 
 ## What happens at the boundary
 
@@ -157,8 +161,9 @@ policy.
 
 ## Getting alerts
 
-The spend alerts fire on the organization's monthly budget limit at
-80%, 95% and 100%. The ladder and the channels are in
+Spend alerts fire at three fixed points on the organization's running
+spend: 80%, 95% and 100% of the threshold your plan carries. The ladder
+and the channels are in
 [Alerts → The budget ladder](alerts.md#the-budget-ladder).
 
 ## Approximate budget endpoint
@@ -168,7 +173,7 @@ notification, the gateway exposes an approximate-spend endpoint:
 
 ```bash title="shell"
 curl -sS "https://api.nullrun.io/api/v1/budget/approximate" \
-  -H "Authorization: Bearer ${NULLRUN_API_KEY}"
+  -H "X-API-Key: ${NULLRUN_API_KEY}"
 ```
 
 The response carries:
@@ -178,7 +183,7 @@ The response carries:
 | `org_id` | The organization the key belongs to |
 | `current_spend_cents_estimate` | Estimated spend for the current period, in cents |
 | `is_approximate` | Always `true` |
-| `source` | Where the number came from: `redis_period`, `postgres_outbox`, `last_known_redis` or `ui_local_cache` |
+| `source` | Where the number came from: `redis_period`, `postgres_outbox` or `last_known_redis` |
 | `confidence` | `high`, `medium` or `low` |
 | `last_updated_at` | ISO-8601 UTC timestamp of the read |
 

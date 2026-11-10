@@ -154,7 +154,7 @@ evaluated. A refusal is a refusal, not a pass.
 
 | Situation | Result |
 |---|---|
-| The gateway cannot be reached | The protected body does not run. A network failure raises `NullRunBlockedException` with `NR-B001`, a gateway 5xx raises `NullRunBlockedException` with `NR-B002`, and a rejected key raises `NullRunAuthError` with `NR-A003`. |
+| The gateway cannot be reached | The protected body does not run. The transport raises `NullRunTransportError` (`NR-B001`) or `NullRunBackendError` (`NR-B002`), and `@protect` re-raises it as `NullRunBlockedException` with the same code. A rejected key raises `NullRunAuthError` with `NR-A003`. |
 | The rate-limit store cannot be reached | The call is refused with HTTP 503 `RATE_LIMIT_REDIS_UNAVAILABLE`. |
 | The budget store cannot be reached | The call is refused with HTTP 402 `BUDGET_REDIS_UNAVAILABLE`. |
 | A `ToolBlock` policy cannot be evaluated at the gate | The call is refused with HTTP 403 `TOOL_BLOCKED`. |
@@ -207,8 +207,8 @@ that workflow shows the merged result.
 ## What gets logged
 
 On Growth and above, every policy decision lands in **Governance →
-Audit log**. Filter by decision (`allow`, `deny`, `require_approval`),
-event type, actor and time window.
+Audit log**. Filter by decision (`allow`, `deny`, `require_approval`,
+`decided`), event type, actor and time window.
 
 Lite and Starter do not include the audit log, so no decision rows are
 written for them.

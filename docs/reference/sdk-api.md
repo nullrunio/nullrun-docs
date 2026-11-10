@@ -151,8 +151,8 @@ def call(): ...
 ```
 
 It works on sync and async functions. Every protected call routes through the
-gateway, which answers with one of five decisions: `allow`, `block`,
-`require_approval`, `soft_pass`, or `deny`.
+gateway, which answers with one of three decisions: `allow`, `block`, or
+`require_approval`.
 
 ### `shutdown`
 

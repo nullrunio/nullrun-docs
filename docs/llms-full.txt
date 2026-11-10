@@ -223,7 +223,7 @@ The audit log is a plan feature. Lite and Starter do not have it. A new workspac
 
 In the sidebar, open **Governance → Policies**. You find the `tour-agent - starting budget` policy, a **Budget Limit** on the `tour-agent` workflow.
 
-1. Edit it and set **Max cost (USD/month)** to `0.01`. That is one cent, and it is the smallest cap the server accepts.
+1. Edit it and set **Max cost (USD/month)** to `0.01`. That is one cent, and it is the smallest cap the server enforces. The server refuses a smaller amount when the policy is created. The edit box accepts `0`, which turns the cap off instead of refusing the call.
 2. Leave **Enforcement mode** on **Hard**.
 
 Run the script again:
@@ -427,7 +427,7 @@ python app.py
 - the tool rules that match the call
 - the rate limit
 
-If the gateway allows the call, the function body runs. The SDK then tracks the input tokens, the output tokens, and the cost.
+If the gateway allows the call, the function body runs. The SDK then reports the input tokens and the output tokens. The gateway prices the call and books the cost.
 
 ## What a refusal looks like
 
@@ -452,8 +452,8 @@ Call it when you want a missing key to fail at startup rather than at the first 
 ## What gets tracked
 
 - LLM tokens in and out
-- Cost per call
-- Latency
+- The cost of each call, priced by the gateway
+- Latency, when you report the call yourself
 - Tool calls made through an instrumented framework
 
 ## Next
@@ -542,7 +542,14 @@ The default write-ahead log path carries a digest of the API key, not the key it
 
 ## Malformed values
 
-A value that is not a number is ignored. `NULLRUN_BATCH_SIZE`, `NULLRUN_FLUSH_INTERVAL_MS`, `NULLRUN_EDGE_TIMEOUT_SECONDS`, and `NULLRUN_EDGE_MAX_RETRIES` log a warning that names the variable. The other numeric variables fall back to their default silently. `NULLRUN_MAX_BATCH_ATTEMPTS` and `NULLRUN_MAX_BISECT_REQUESTS` must be whole numbers.
+A value that is not a number is ignored. `NULLRUN_BATCH_SIZE`,
+`NULLRUN_FLUSH_INTERVAL_MS`, `NULLRUN_EDGE_TIMEOUT_SECONDS`, and
+`NULLRUN_EDGE_MAX_RETRIES` log a warning that names the variable.
+
+Three variables have no fallback. `NULLRUN_MAX_RESPONSE_BYTES`,
+`NULLRUN_MAX_BATCH_ATTEMPTS`, and `NULLRUN_MAX_BISECT_REQUESTS` must be
+whole numbers. A non-numeric value raises `ValueError` and stops
+`nullrun.init()`.
 
 ## Development and test bypasses
 
@@ -640,8 +647,9 @@ The breaker does not sit on the gate path. It guards the event flush,
 not the policy decision. A protected call is never blocked by it.
 
 When the gateway cannot be reached, the gate path fails closed on its
-own. A network failure raises `NullRunBlockedException` with `NR-B001`,
-a gateway 5xx raises `NullRunBlockedException` with `NR-B002`, and a
+own. A network failure raises `NullRunTransportError` (`NR-B001`) and a
+gateway 5xx raises `NullRunBackendError` (`NR-B002`); `@protect`
+re-raises both as `NullRunBlockedException` with the same code. A
 rejected key raises `NullRunAuthError` with `NR-A003`. The protected body
 does not run in any of the three cases. See
 [Policies → Fail closed](policies.md#fail-closed).
@@ -816,7 +824,7 @@ evaluated. A refusal is a refusal, not a pass.
 
 | Situation | Result |
 |---|---|
-| The gateway cannot be reached | The protected body does not run. A network failure raises `NullRunBlockedException` with `NR-B001`, a gateway 5xx raises `NullRunBlockedException` with `NR-B002`, and a rejected key raises `NullRunAuthError` with `NR-A003`. |
+| The gateway cannot be reached | The protected body does not run. The transport raises `NullRunTransportError` (`NR-B001`) or `NullRunBackendError` (`NR-B002`), and `@protect` re-raises it as `NullRunBlockedException` with the same code. A rejected key raises `NullRunAuthError` with `NR-A003`. |
 | The rate-limit store cannot be reached | The call is refused with HTTP 503 `RATE_LIMIT_REDIS_UNAVAILABLE`. |
 | The budget store cannot be reached | The call is refused with HTTP 402 `BUDGET_REDIS_UNAVAILABLE`. |
 | A `ToolBlock` policy cannot be evaluated at the gate | The call is refused with HTTP 403 `TOOL_BLOCKED`. |
@@ -869,8 +877,8 @@ that workflow shows the merged result.
 ## What gets logged
 
 On Growth and above, every policy decision lands in **Governance →
-Audit log**. Filter by decision (`allow`, `deny`, `require_approval`),
-event type, actor and time window.
+Audit log**. Filter by decision (`allow`, `deny`, `require_approval`,
+`decided`), event type, actor and time window.
 
 Lite and Starter do not include the audit log, so no decision rows are
 written for them.
@@ -1054,8 +1062,8 @@ a call you think should be allowed:
 2. Open the policy in the editor. The **Will match** line lists the
    tool names a pattern covers.
 3. Open **Governance → Audit log** and filter by `decision = deny`. The
-   event detail has a **Matched rule** field that names the pattern
-   that fired.
+   event detail has a **Matched rule** field. It reads `policy.block`
+   for a blocked tool, so the row does not name the pattern.
 4. If a pattern is too broad, narrow it in the editor.
 5. To take a rule out of service, turn the policy's **Active** toggle
    off. The policy stays in the list.
@@ -1150,10 +1158,9 @@ for the maintained list with risk ratings.
 4. Under **Where does this apply?** pick the scope — the whole
    organization, or one workflow.
 
-The control center shows the canonical tool name for every framework
-integration, and the **Will match** line tells you which names the
-pattern covers. The pattern syntax is on
-[Tool policies](tool-policies.md).
+The **Will match** line under the pattern field lists the tool names your
+own organization has already used. It tells you which of them the pattern
+covers. The pattern syntax is on [Tool policies](tool-policies.md).
 
 Patterns **union** across every applicable policy — every pattern that
 matches fires. See [Policies → Aggregation](policies.md#aggregation).
@@ -1161,10 +1168,12 @@ matches fires. See [Policies → Aggregation](policies.md#aggregation).
 ## Audit trail
 
 A blocked sensitive tool lands in **Governance → Audit log** with the
-decision `deny`, the reason code `TOOL_BLOCKED`, the pattern that
-matched, the policy that matched and the tool name. The audit log is a
-Growth+ feature, so Lite and Starter write no rows. The log is
-hash-chained — see
+decision `deny`, the reason code, the matched rule, the policy hash, the
+tool name and the action digest. The matched rule reads `policy.block`.
+The reason code carries the refusal text the gate produced. The pattern
+that matched is not part of the row — open the policy to see the pattern.
+The audit log is a Growth+ feature, so Lite and Starter write no rows.
+The log is hash-chained — see
 [Error handling → Audit trail](error-handling.md#audit-trail).
 
 For a sensitive tool you want to allow after human review, pair the
@@ -1288,8 +1297,9 @@ track/batch endpoints. `/api/v1/check` returns 410 Gone.
 
 The SDK fetches the signing secret from `POST /api/v1/auth/verify`
 during authentication and signs with the server's copy.
-`NULLRUN_SECRET_KEY` is read at start-up and then replaced by that
-value, so setting it yourself changes nothing.
+`NULLRUN_SECRET_KEY` is read at start-up and replaced by the server's
+value whenever the server returns a key version. A key that has never
+had a version returns none, so the SDK keeps the value you set.
 
 `nullrun.init()` raises `NullRunAuthenticationError` when no key is
 set. It creates the runtime and authenticates it against the gateway
@@ -1464,22 +1474,26 @@ and the per-model prices the gateway holds:
 - **Reasoning tokens**, at the reasoning rate
 
 The total is the sum across every `@protect` call for the current
-period.
+calendar month.
 
 ## Periods
 
-A **period** is the window after which the spend counter resets. The
-period comes from the server, not from your agent.
+The **spend counter** the gate enforces against resets on the **first of
+every month, UTC**. The period comes from the server, not from your
+agent, and it is the same window for every plan.
 
-| Plan | Period source | When it resets |
+The control center reports spend over a **reporting window**, which can
+be a different one:
+
+| Org | Reported window | When it resets |
 |---|---|---|
-| **Lite** | A rolling month anchored at signup | One month after signup, then every month after that |
-| **Paid** | Your billing cycle | On renewal |
-| Any org with no billing cycle | The UTC calendar month | On the first of the month |
+| Paid | The billing cycle | On renewal |
+| Lite | A rolling month anchored at signup | One month after signup, then every month after that |
+| No billing cycle and not Lite | The UTC calendar month | On the first of the month |
 
-The control center shows the period start and end dates next to the spend
-bar. When the period rolls over, the counter resets to zero and the
-budget applies fresh.
+Because the two windows can differ, the number on a report and the
+number the gate enforces against are not always the same. The gate is
+the authority.
 
 ## What happens at the boundary
 
@@ -1563,8 +1577,9 @@ policy.
 
 ## Getting alerts
 
-The spend alerts fire on the organization's monthly budget limit at
-80%, 95% and 100%. The ladder and the channels are in
+Spend alerts fire at three fixed points on the organization's running
+spend: 80%, 95% and 100% of the threshold your plan carries. The ladder
+and the channels are in
 [Alerts → The budget ladder](alerts.md#the-budget-ladder).
 
 ## Approximate budget endpoint
@@ -1574,7 +1589,7 @@ notification, the gateway exposes an approximate-spend endpoint:
 
 ```bash title="shell"
 curl -sS "https://api.nullrun.io/api/v1/budget/approximate" \
-  -H "Authorization: Bearer ${NULLRUN_API_KEY}"
+  -H "X-API-Key: ${NULLRUN_API_KEY}"
 ```
 
 The response carries:
@@ -1584,7 +1599,7 @@ The response carries:
 | `org_id` | The organization the key belongs to |
 | `current_spend_cents_estimate` | Estimated spend for the current period, in cents |
 | `is_approximate` | Always `true` |
-| `source` | Where the number came from: `redis_period`, `postgres_outbox`, `last_known_redis` or `ui_local_cache` |
+| `source` | Where the number came from: `redis_period`, `postgres_outbox` or `last_known_redis` |
 | `confidence` | `high`, `medium` or `low` |
 | `last_updated_at` | ISO-8601 UTC timestamp of the read |
 
@@ -2315,9 +2330,9 @@ if __name__ == "__main__":
 ```
 
 `guard()` catches every `NullRunError` raised inside the block,
-prints a developer report to stderr, and exits with code 1. The report
-has the catalog headline plus the code, the stage, the endpoint, the
-cause, the fix, and a link:
+prints one report to stderr, and exits with code 1. The report opens
+with the user message, then gives the developer the code, the stage,
+the endpoint, the cause, the fix, and a link:
 
 ```
 Too many requests. Please wait a moment and try again.
@@ -2411,7 +2426,7 @@ protected function does not run on a refused call.
 
 | Situation | Result |
 |---|---|
-| The gateway cannot be reached | The body does not run. A network failure raises `NullRunBlockedException` with `NR-B001`, a gateway 5xx raises `NullRunBlockedException` with `NR-B002`, and a rejected key raises `NullRunAuthError` with `NR-A003` |
+| The gateway cannot be reached | The body does not run. A network failure raises `NullRunTransportError` (`NR-B001`) and a gateway 5xx raises `NullRunBackendError` (`NR-B002`); `@protect` re-raises both as `NullRunBlockedException` with the same code. A rejected key raises `NullRunAuthError` with `NR-A003`. |
 | The rate-limit store cannot be reached | HTTP 503 `RATE_LIMIT_REDIS_UNAVAILABLE` |
 | The budget store cannot be reached | HTTP 402 `BUDGET_REDIS_UNAVAILABLE` |
 | A `ToolBlock` policy cannot be evaluated | HTTP 403 `TOOL_BLOCKED` |
@@ -2642,18 +2657,18 @@ The server name is the first segment. The rest is the tool name, and it
 may contain slashes.
 
 The SDK does not build that name. `MCPAdapter.call_tool("create_issue", …)`
-sends the bare tool name, and the gateway resolves the server from your
-organization's own catalog. Exactly one catalog server declares that
-tool, so the server on that row becomes the identity. A tool no server
-declares stays a plain tool name.
+sends the bare tool name, and the gateway resolves it against your
+organization's own catalog. Every server that declares that tool takes
+part, and the strictest decision wins. A tool no server declares stays a
+plain tool name.
 
 Policy patterns are written against the canonical name. See
 [Tool policies → What a tool name looks like](tool-policies.md#what-a-tool-name-looks-like).
 
 ## Deciding which tools run
 
-The **MCP servers** page in the control center lists the servers your agents
-call and the tools they expose. Each tool carries one decision:
+The **Action sources** page in the control center lists the servers your
+agents call and the tools they expose. Each tool carries one decision:
 
 | Decision | What it means |
 |---|---|
@@ -2869,6 +2884,8 @@ The toolbar above the pending queue counts the low-risk pending requests that ar
 
 Medium- and high-risk requests are not eligible for a bulk approval. Each one takes its own type-to-confirm step.
 
+The toolbar is a preview feature and is off by default. The per-row approve and deny flow is the supported path.
+
 ## Programmatic approval
 
 A CI bot or an on-call rotation decides through the REST endpoints — see [HTTP API → approvals](../reference/http-api.md#approvals). An already-decided request answers `409 APPROVAL_ALREADY_DECIDED`; the codes are in [Error codes](../reference/errors.md).
@@ -2940,7 +2957,9 @@ A receiver should reject a timestamp that differs from its own clock by more tha
 
 ### Test mode
 
-A channel in test mode receives synthetic payloads only. Real alerts do not reach it. The channel card carries a **Test mode** badge.
+Event alerts skip a channel in test mode. A threshold rule that fires does
+not skip it, so a test-mode channel still receives the real alert. The
+channel card carries a **Test mode** badge.
 
 ### Test send
 
@@ -2956,12 +2975,12 @@ The events are:
 
 | Group | Event | Fires when |
 |---|---|---|
-| Workflow activity | `execution_quota_warning` | The organization approaches its execution limit. |
+| Workflow activity | `execution_quota_warning` | A critical alert rule fires, such as an error-rate rule. Nothing raises an execution-quota event, and the row carries the name of one. |
 | Workflow activity | `workflow_budget_warning` | A workflow exceeds its budget. |
-| Workflow activity | `loop_detected` | A workflow makes repeated identical calls. |
+| Workflow activity | `loop_detected` | A workflow makes repeated identical calls. The row also gates the daily, hourly and per-key spend rules. |
 | Workflow activity | `policy_violation` | An action is blocked by policy. |
 | Workflow activity | `workflow_killed` | A workflow is terminated. |
-| Governance & access | `approval_required` | A new approval is requested. Off by default. |
+| Governance & access | `approval_required` | A new approval is requested. The row reads off until you save the settings. An organization that has never saved them still announces approvals. |
 | Governance & access | `api_key_created` | An API key is created. |
 | Team | `member_invite` | A new member is invited. |
 | Digest | `daily_summary` | The previous day's activity digest. |
@@ -3076,13 +3095,17 @@ A rule does not fire again within 15 minutes of its last firing. Each rule carri
 
 ### The budget ladder
 
-Spending against a monthly budget raises alerts at fixed points:
+Running spend raises alerts at three fixed points:
 
 | Spend | Severity |
 |---|---|
-| 80% of the budget | Warning |
-| 95% of the budget | Warning |
-| 100% of the budget | Critical |
+| 80% of the threshold | Warning |
+| 95% of the threshold | Warning |
+| 100% of the threshold | Critical |
+
+The threshold comes from your plan's limits. It is not the cap of a
+`BudgetLimit` policy, so a policy cap and the alert ladder can fire at
+different times.
 
 ### Events
 
@@ -3145,13 +3168,17 @@ effective authority — the owner carries it alone.
 3. Pick the role they should have.
 4. Send the invite.
 
-The invite arrives by email and points at `https://nullrun.io/invite?token=<token>`. The link stays the same until the invite is accepted or revoked.
+The invite arrives by email and points at `https://nullrun.io/invite?token=<token>`. The link works for 7 days and stays the same until the invite is accepted or revoked.
+
+An invite that grants **Admin** needs an **Owner** to send it. An Admin can invite a Viewer or a Member. The server checks the sender's role when the invite is sent and again when it is accepted.
 
 An invite is refused when:
 
 - The address is already a member of the organization.
 - An invite to that address is still pending.
 - The seat quota is full.
+
+One person can send 10 invites an hour. Past that the server refuses with a retry delay.
 
 ## Pending invites
 
@@ -3161,7 +3188,9 @@ A revoked invite stops working immediately.
 
 ## Seat quota
 
-The header shows how many seats the organization uses against the plan's allowance. Members and pending invites count together, so an outstanding invite shows its cost before it is accepted.
+The header shows how many seats the organization uses against the plan's allowance. The number on screen adds the pending invites to the members, so an outstanding invite shows its cost before it is accepted.
+
+The server counts members only. It refuses a new invite when the members already fill the plan's allowance, and it refuses an invite at accept time when accepting it would fill the allowance. The two counts can disagree, so a pending invite is a reservation, not a guarantee.
 
 When the quota is full, the invite button is disabled and the page links to **Billing & Plan** to buy more seats.
 
@@ -3228,7 +3257,8 @@ A plan sets two things: the caps on what an organization may create, and the fea
 | API keys | 10 | 15 | 100 | 350 | Unlimited |
 | Seats | 1 | 3 | 10 | 75 | Unlimited |
 
-An approval rule counts against the policy cap. A policy that carries its own approval rule counts once, as a policy.
+An approval rule counts against the policy cap. A policy and its own approval
+rule use two slots.
 
 ### Features
 
@@ -3381,7 +3411,7 @@ The plan catalog is public. It needs no authentication.
 
 # Organization
 
-An **organization** is the workspace that holds everything: workflows, policies, approval rules, API keys, members, and spend. Every plan has one. Nothing on this page is gated.
+An **organization** is the workspace that holds everything: workflows, policies, approval rules, API keys, members, and spend. Every plan has one.
 
 The **Organization** page covers the organization's identity and its legal metadata. The plan and the seats live under [Billing & Plan](billing.md), and the people live under [Team](team.md).
 
@@ -3389,11 +3419,16 @@ The **Organization** page covers the organization's identity and its legal metad
 
 | Field | What it does |
 |---|---|
-| **Name** | The display name in the control center, in email headers, and in audit rows. An owner can change it. |
+| **Name** | The display name in the control center, in email headers, and in audit rows. |
 | **Slug** | The URL-safe identifier. It is fixed for the life of the organization. |
-| **Contact email** | The address billing and security messages go to. An owner can change it. |
+| **Contact email** | The address billing and security messages go to. |
 
-Changing the contact email asks for a confirmation — a password or a two-factor code — before the change lands.
+An owner edits the identity on every plan. An admin edits it on Growth and
+above. On Lite and Starter an admin is refused, because the role check
+needs the plan's RBAC feature.
+
+The change lands in one request. The server takes the new name and the new
+contact email and applies them.
 
 ## Data Processing Agreement
 
@@ -3406,26 +3441,33 @@ Every earlier acceptance stays visible underneath, with the version, the date, a
 | Method | Meaning |
 |---|---|
 | `in_product` | Accepted by clicking through the control center. |
-| `signed_pdf` | Accepted offline and recorded by support. |
 | `signup_checkbox` | Accepted on the sign-up form. |
 | `checkout_step` | Accepted during checkout. |
 | `sdk_api` | Accepted through the API. |
+| `oauth_onboarding` | Accepted in the onboarding flow. |
+
+The first four are the canonical methods. A fifth value is stored as it
+arrives, so a row can name a surface the product does not produce.
 
 Accepting the same version twice is harmless. The organization keeps its first acceptance.
 
 ## Closing the organization
 
-At the bottom of the page, the **Danger zone** closes the organization. Only an owner sees the button, and only when nobody else is a member.
+At the bottom of the page, the **Danger zone** closes the organization. The
+server accepts the request from the owner only. A request from anyone else
+is refused.
 
-To close an organization that still has other members, transfer ownership to one of them first. The request is refused with `ORG_HAS_MEMBERS` and the member count.
+To close an organization that still has other members, transfer ownership to
+one of them first. The request is refused with `ORG_HAS_MEMBERS` and the
+member count.
 
 The confirmation asks you to type the organization name.
 
 What closing the organization does:
 
-- Marks the organization as closed. The workflows, executions, traces, policies, approval rules, alerts, API keys, memberships, and invites go with it.
-- Ends the owner's session access to the organization. Other members lose access at the same time.
+- Marks the organization as closed. The workflows, policies, API keys, memberships and pending invites go with it. Alert channels stop delivering, the notification settings are dropped, and the Slack installation is revoked. Executions, traces, approval rules and alert rows stay until the purge.
 - Leaves the audit rows in place. They are kept for the retention window so a forensic question can still be answered afterwards.
+- Leaves the sessions alone. The owner keeps the browser session. An organization with other members is refused before this point, so no other member is signed out here.
 
 ### The 60-day grace period
 
@@ -3436,18 +3478,23 @@ A closed organization can be restored. The grace period is 60 days.
 | **Restore** | Puts the organization back in front of the gate. The spend counters for the period survive, so a restored organization does not get a second allowance. |
 | **Transfer ownership** | Hands the organization to another member. The remaining members keep access. |
 
+Both actions live on the API only. The control center has no button for
+either one.
+
 When the grace period ends, the data is purged. The restore route is `POST /api/v1/orgs/{org_id}/restore`, and the ownership transfer is `POST /api/v1/orgs/{org_id}/transfer-ownership`.
 
 ## Audit trail
 
-Every name change, contact email change, and DPA acceptance is recorded in the audit log with the actor and the timestamp. Closing the organization writes one row of its own.
+The DPA acceptance is recorded in the audit log with the actor and the
+timestamp. A name change, a contact email change, and closing the
+organization write no row.
 
 ## See also
 
 - [Team](team.md) — members, roles, and seats
 - [Billing & Plan](billing.md) — the plan and the invoices
 - [Profile settings](profile.md) — your own account
-- [Audit log](error-handling.md#audit-trail) — every organization change leaves a row
+- [Audit log](error-handling.md#audit-trail) — what the control center records
 
 ---
 
@@ -3455,7 +3502,8 @@ Every name change, contact email change, and DPA acceptance is recorded in the a
 
 # Profile settings
 
-The **Profile settings** page is about you: the person signed in. It lives under **Profile** in the sidebar and is on every plan.
+The **Profile settings** page is about you: the person signed in. It lives
+under **Account → Profile** in the sidebar and is on every plan.
 
 This is not the [Organization](organization.md) page. The organization page edits the workspace. This page edits your account.
 
@@ -3463,17 +3511,22 @@ This is not the [Organization](organization.md) page. The organization page edit
 
 | Field | What it does |
 |---|---|
-| **Display name** | How you appear in the control center and in audit rows. |
+| **Full name** | How you appear in the control center and in audit rows. |
 | **Email** | The address you sign in with and where notifications reach you. |
 | **Avatar** | Your initials on a colour tile, or the avatar from your identity provider when you signed in with one. |
 
-Changing the email asks for a confirmation — a password or a two-factor code — and sends a verification message to the new address. The address is not live until you click the link in it. A **Resend verification email** button appears while the address is unverified.
+The email address cannot be changed. The field is locked, and the server
+refuses a change with `400`. Use a different email to register a new
+account. A **Resend verification email** button appears while the
+address is unverified, but only on an account that has a password.
 
 ## Password
 
 The password section appears when your account has a password. Signing up with an identity provider instead gives you a **Set password** action.
 
-Changing a password asks for the current one. Every session ends, so every device has to sign in again.
+Changing a password asks for the current one. Every other session ends, so
+every other device has to sign in again. The browser you changed it in
+stays signed in.
 
 ## Two-factor authentication
 
@@ -3481,28 +3534,26 @@ Two-factor authentication adds a one-time code from an authenticator app to ever
 
 | State | What you can do |
 |---|---|
-| **Not configured** | **Enable 2FA** shows a secret and a QR code. The first code confirms the enrolment. |
-| **Enabled** | **Disable 2FA**, **Regenerate backup codes**, and **Regenerate secret**. Each asks for the current password and a fresh code. |
+| **Not configured** | **Enable** starts the enrolment. The server issues a secret and a QR code, and the first code from the authenticator confirms it. |
+| **Enabled** | **Manage** opens the disable dialog. It asks for the current password. A **Generate new codes** link appears when three or fewer recovery codes are left. It also asks for the current password. |
 
-Enabling it asks for the current password before it issues a secret. Backup codes are shown once, at the point the first code confirms the enrolment. Only the number of codes left and the time of the last use stay visible.
+Enabling it asks for no password. The server issues the secret to the
+signed-in session, and the first code confirms the enrolment. Recovery
+codes are shown once, at that moment. Only the number of codes left
+stays visible.
 
 If you lose the device, the recovery flow lets you disable two-factor authentication without it.
 
 ## Sessions
 
-The session section shows:
-
-- The last sign-in time and address.
-- The number of active sessions.
-
-Two actions:
+The session section holds one action:
 
 | Action | Effect |
 |---|---|
-| **Sign out of all other devices** | Ends every session except the one you are using. |
-| **Log out** | Ends the session in this browser. |
+| **Log out** | Ends the session in this browser. You can sign back in at any time. |
 
-Signing out of the other devices is recorded in the audit log.
+The page does not list the sessions on your account and cannot end them
+from another device.
 
 ## Deleting your account
 
@@ -3512,7 +3563,7 @@ The request asks for:
 
 | Field | When it is needed |
 |---|---|
-| **Confirmation** | Your display name, typed exactly. Your email address is accepted as a fallback. |
+| **Confirmation** | Your full name, typed exactly. |
 | **Current password** | When your account has a password. |
 | **Two-factor code** | When two-factor authentication is on. |
 | **Ownership decision** | For every organization you own that has other members. |
@@ -3531,16 +3582,21 @@ What deletion does:
 - Removes your account. You cannot sign in again.
 - Ends every session you hold.
 - Writes one audit row per organization you were a member of.
+- Closes every organization you own that has no other member. An organization with other members follows the decision you made for it.
 
-Organization data is untouched. Closing an organization is a separate action on the [Organization](organization.md) page.
+The account row goes first. If the session store is then unreachable, the
+request fails with `503` and the account is already gone. Sign in again
+rather than retrying the deletion.
 
-If a session cannot be ended, the whole operation stops and nothing is deleted. A half-finished deletion would leave live sessions pointing at an account that no longer exists.
+The data of an organization you did not own is untouched. Closing an
+organization on its own is a separate action on the
+[Organization](organization.md) page.
 
 ## See also
 
 - [Organization](organization.md) — the workspace, its members, and closing it
 - [Team](team.md) — other people in the organization
-- [Audit log](error-handling.md#audit-trail) — every profile change leaves a row
+- [Audit log](error-handling.md#audit-trail) — what the control center records
 
 ---
 
@@ -5089,8 +5145,8 @@ def call(): ...
 ```
 
 It works on sync and async functions. Every protected call routes through the
-gateway, which answers with one of five decisions: `allow`, `block`,
-`require_approval`, `soft_pass`, or `deny`.
+gateway, which answers with one of three decisions: `allow`, `block`, or
+`require_approval`.
 
 ### `shutdown`
 
@@ -5839,14 +5895,12 @@ instead.
 | `allow` | The call may run. |
 | `block` | The call may not run. |
 | `require_approval` | The call may run after an operator approves it. The answer carries an `approval_id`. |
-| `soft_pass` | The call runs, and the event is recorded for review. |
-| `deny` | The call may not run, and the model may adapt and try something else. |
 
 ### Response
 
 | Field | Notes |
 |---|---|
-| `decision` | One of the five values above. |
+| `decision` | One of the three values above. |
 | `decision_source` | Which rule produced the decision. |
 | `explanation` | The reason, in human text. |
 | `execution_id` | The server-minted id for this execution. |
@@ -6572,7 +6626,8 @@ See [Use with FastAPI](../how-to/fastapi.md) for the reference integration.
 
 When the gateway is unreachable, the SDK raises `NullRunTransportError` with
 `source` set to `NETWORK_ERROR` when the request never left the process, and
-`GATEWAY_ERROR` when the gateway answered.
+`GATEWAY_ERROR` when the gateway answered. `TransportErrorSource` has four
+members: `NETWORK_ERROR`, `GATEWAY_ERROR`, `AUTH_ERROR` and `BREAKER_OPEN`.
 
 ## NR-* error code catalog
 
@@ -6793,7 +6848,7 @@ they act on whatever URL the agent picks.
 
 An MCP tool's name is whatever the server exposes. The SDK sends that
 name to the gateway unchanged, so a `ToolBlock` pattern has to spell it
-the way the server does. The **MCP servers** view in the control center
+the way the server does. The **Action sources** view in the control center
 lists the servers and the tools each one registers — read the names off
 there rather than guessing them from the server's documentation.
 
@@ -6807,9 +6862,9 @@ blocks nothing on its own. A tool is blocked by a `ToolBlock` policy,
 and the gateway evaluates that policy on every gate call.
 
 Create the policy in the control center under **Governance → Policies → New
-policy**, and pick **Tool block** as the type. The control center renders
-the canonical tool name for every framework integration, so you can
-match against the right string.
+policy**, and pick **Tool block** as the type. The **Will match** line
+under the pattern field lists the tool names your own organization has
+already used, so you can match against the right string.
 
 The same policy as a `POST /api/v1/orgs/{org_id}/policies` body:
 
@@ -7113,10 +7168,10 @@ happens when it is deleted.
 
     The gate is a **decision** layer, not a content scanner. It
     evaluates structured metadata about a call — tool name, model,
-    declared sensitivity, cost, scope — and returns `allow`,
-    `soft_pass`, `require_approval`, `block`, or `deny` before the call
-    executes. `soft_pass` lets the call run and books the overspend as
-    an overdraft.
+    declared sensitivity, cost, scope — and returns `allow`, `block`,
+    or `require_approval` before the call executes. A call that runs
+    with a bounded overdraft still returns `allow`, and the overspend
+    is booked as an overdraft.
 
     It does not read the free-text arguments of a tool call to decide
     whether the *content* is acceptable. A payload that passes the
@@ -7163,7 +7218,7 @@ This page is the detailed companion to the
 | What does the backend store in Redis? | Budget counters, execution bindings, rate-limit buckets, session and chain state. The session entries hold the user and organization id. | [Data stored](#2-data-stored) |
 | Where is it hosted? | DigitalOcean, with EU regions available. Self-hosted Postgres and Redis on one VPS. | [Hosting](#3-hosting) |
 | Who can access production data? | Four role levels. Production shell access through an allowlisted wrapper. | [Access controls](#4-access-controls) |
-| How is it encrypted? | TLS at the edge, column-level encryption for Slack OAuth tokens and TOTP secrets, HMAC-SHA256 for request signing and audit exports. | [Encryption](#5-encryption) |
+| How is it encrypted? | TLS at the edge, column-level encryption for Slack OAuth tokens, TOTP secrets and MCP discovery tokens, HMAC-SHA256 for request signing and audit exports. | [Encryption](#5-encryption) |
 | Which third parties see data? | DigitalOcean, Brevo (DE), Polar (SE), Slack, GitHub, Google. | [Sub-processors](#6-sub-processors) |
 | How is data deleted? | Soft-delete with a 60-day grace, then a purge of tenant data. API key revocation is two-phase. | [Deletion](#7-deletion) |
 | Where physically is data? | Region selectable at signup. Single-region deployment. | [Residency](#8-data-residency) |
@@ -7247,16 +7302,16 @@ identifier. `[V]`
 
 | Table | Stored | Mutable? | Encryption at rest | Retention |
 |---|---|---|---|---|
-| `audit_events` | Organization, actor, action, event type, decision, policy id, policy version, policy hash, matched rule, reason code, `execution_id`, `action_digest`, tool name and version, metadata, content hash, previous hash, timestamp | **Immutable** | Database level | Until the organization purge, after a 60-day grace |
+| `audit_events` | Organization, actor, action, event type, decision, policy id, policy version, policy hash, matched rule, reason code, `execution_id`, `action_digest`, tool name and version, metadata, content hash, previous hash, timestamp | **Immutable** | Database level | Kept until the organization purge, after a 60-day grace. A plan without the audit log feature loses its rows on the plan's history window instead. |
 | `execution_records` | One row per execution, joined on `execution_id` | Mutable | Database level | The plan's history window |
-| `cost_events` | Cost in cents and millicents, token counts, provider-reported and authoritative cost, an integrity label, tool and model, correlation ids, agent and organization ids, receipt timestamp. Partitioned by month. | Mutable | Database level | The plan's history window |
+| `cost_events` | Cost in cents and millicents, token counts, provider-reported and authoritative cost, an integrity label, tool and model, correlation ids, agent and organization ids, receipt timestamp. Partitioned by month. | Mutable | Database level | A window set by the deployment, 90 days by default |
 | `approvals` | The decision, and who made it — a person, a system expiry, or an unknown source | Mutable: pending becomes approved, denied, expired, or revoked | Database level | Pending rows are collected by a sweep worker |
 | `organizations` | Id, name, slug, contact email, plan, deletion timestamp, purge date | Mutable, soft delete | Database level | Hard-deleted by the retention worker after the grace |
-| `users` | Id, email, display name, password hash (Argon2id), role, default organization, tombstone timestamp | Mutable | Database level | Until the organization cascade |
+| `users` | Id, email, display name, password hash (Argon2id), role, default organization | Mutable | Database level | The row is deleted outright when the account is deleted |
 | `organization_api_keys` | Id, name, key prefix and suffix, the key hash (Argon2id), the SHA-256 lookup fingerprint, the HMAC signing secret, status, version, last use, expiry, scopes | Mutable | Database level | Until the organization cascade |
 | `user_2fa` | The user id, the TOTP secret, the pending TOTP secret, and the hashed recovery codes | Mutable | Column-level encryption on the TOTP secrets | Until the user row is deleted |
-| `policies` | Id, scope, policy type, enforcement mode, budget amount, overdraft cap | Mutable, soft delete | Database level | The plan's history window |
-| `approval_rules` | The typed predicates that ask for a human, mirroring the policy quota | Mutable | Database level | The plan's history window |
+| `policies` | Id, scope, policy type, enforcement mode, budget amount, overdraft cap | Mutable, soft delete | Database level | No time-based purge. A policy goes when you delete it, or with its organization. |
+| `approval_rules` | The typed predicates that ask for a human, mirroring the policy quota | Mutable | Database level | No time-based purge. A rule goes when you delete it, or with its workflow. |
 | `workflows` | Metadata, state (normal, flagged, tripped, paused, killed), budget amount, archive and deletion timestamps | Mutable | Database level | Persistent |
 
 **Sessions are not in Postgres.** Browser sessions live in Redis under a
@@ -7278,10 +7333,10 @@ Four independent controls protect the audit table:
 ### 2.3 Column-level encryption
 
 Column-level encryption uses pgcrypto AES. It is applied to the Slack
-OAuth bot tokens, the TOTP secrets, and the MCP discovery bearer
-tokens. The threat model: a stolen disk image or a read-only dump
-yields ciphertext, and the plaintext needs both the database and the
-encryption key.
+OAuth bot tokens, the TOTP secrets, the MCP discovery bearer tokens, and
+the MCP discovery custom headers. The threat model: a stolen disk image
+or a read-only dump yields ciphertext, and the plaintext needs both the
+database and the encryption key.
 
 ### 2.4 Redis
 
@@ -7306,7 +7361,7 @@ and organization id in the session entry.
 |---|---|
 | **Cloud** | DigitalOcean LLC, US with EU regions. One VPS hosts the whole deployment. |
 | **Postgres** | Self-hosted container on the VPS, with a dedicated application role and the pgcrypto extension. |
-| **Redis** | Self-hosted container on the same VPS, with AOF and RDB backups. |
+| **Redis** | Self-hosted container on the same VPS, with AOF enabled and the default snapshot schedule. Only Postgres has a backup job. |
 | **Object storage** | S3-compatible, for audit exports and backups. Compatible with DigitalOcean Spaces. |
 | **Orchestration** | Docker Compose on one VPS. Blue-green deploys on the budget, billing, and gate paths; rolling deploys elsewhere. |
 | **Edge** | No CDN. nginx on the VPS terminates TLS and reverse-proxies. The origin is directly reachable. |
@@ -7322,7 +7377,7 @@ and organization id in the session entry.
 ### TLS
 
 - TLS 1.2 and 1.3 only.
-- A Mozilla "intermediate" cipher list.
+- An explicit cipher list, named in the nginx configuration.
 - HSTS with a one-year max age and subdomain inclusion.
 - Certificates managed by Certbot. `[V]`
 
@@ -7343,8 +7398,8 @@ owner.
 **Machine API keys carry no user role.** A mutation that the role
 model protects needs a user-bound key.
 
-**Platform admin** additionally needs two-factor enabled and the owner
-role. A lookup failure refuses the request.
+**Platform admin** additionally needs two-factor enabled and the owner or
+admin role. A lookup failure refuses the request.
 
 ### 4.2 Authentication
 
@@ -7395,11 +7450,11 @@ role. A lookup failure refuses the request.
 
 | Layer | Mechanism | Attestation |
 |---|---|---|
-| **In transit, server edge** | TLS 1.2 and 1.3, Mozilla intermediate ciphers, HSTS | `[V]` |
+| **In transit, server edge** | TLS 1.2 and 1.3, an explicit cipher list, HSTS | `[V]` |
 | **In transit, WebSocket** | HMAC-SHA256 over canonical JSON, 300-second replay window | `[V]` |
-| **At rest, Postgres columns** | pgcrypto AES, hex-encoded, on the Slack OAuth bot tokens, the TOTP secrets, and the MCP discovery bearer tokens | `[V]` |
+| **At rest, Postgres columns** | pgcrypto AES, hex-encoded, on the Slack OAuth bot tokens, the TOTP secrets, the MCP discovery bearer tokens, and the MCP discovery custom headers | `[V]` |
 | **At rest, Postgres disk** | **Not attested**; relies on the provider's disk encryption | `[N]` |
-| **At rest, Redis** | **Not attested**; the backup volumes rely on host disk encryption | `[N]` |
+| **At rest, Redis** | **Not attested**; the data volumes rely on host disk encryption | `[N]` |
 | **At rest, object storage** | S3-compatible storage. Bucket-side encryption settings are **not exposed** | `[D]` |
 | **Key management** | One environment-held key drives the column encryption. No managed key service is integrated. Rotation needs a manual runbook, and it breaks two-factor and Slack until every copy is replaced | `[D]` |
 | **Request signing** | HMAC-SHA256 over gate, execute, and track bodies. The signing key is at least 32 bytes and is never generated automatically | `[V]` |
@@ -7438,10 +7493,10 @@ encrypted before upload.
 **Soft-delete.** The organization row is marked deleted and a purge
 date is set 60 days out. Audit rows stay for the grace period because
 the audit chain must stay intact. An owner can restore the
-organization, which clears both markers. A delete request that would
-leave audit history behind is refused with a `409` that names the
-grace period and its length. Child records — keys, policies,
-workflows, invitations — are updated in the same transaction.
+organization, which clears both markers. A request for an organization
+that still has other members is refused with a `409` that names the
+member count. Child records — keys, policies, workflows, invitations —
+are updated in the same transaction.
 
 **Hard purge.** The purge runs after the purge date. It scrubs the
 audit log, the decision history, the cost events, and the billing
@@ -7460,7 +7515,7 @@ Three cases:
 | Co-member organization, the user chooses delete and notify | Soft delete, and every co-member session is revoked. A revocation failure refuses the request. |
 | Co-member organization, the user chooses transfer | A new owner is promoted and nothing is deleted. |
 
-The request carries an ownership-decisions map keyed by user id. A
+The request carries an ownership-decisions map keyed by organization id. A
 session-revocation failure refuses the request. `[V]`
 
 ### 7.3 API key revocation
@@ -7480,7 +7535,7 @@ The deny list lives for twice the authentication cache lifetime.
 
 | Right | Implementation |
 |---|---|
-| **Access** | A per-user export job. The download expires after 7 days, and each section is capped at 100 000 records. The session section reads a Postgres table that the migrations do not create, so it comes back empty and the job logs it and continues. |
+| **Access** | A per-user export job. The download expires after 7 days, and each section is capped at 100 000 records. The session section reads a Postgres table that no migration creates, so the section is left out of the export and the job logs the error and continues. |
 | **Erasure** | The tenant purge scrubs tenant-scoped data, and runs automatically 60 days after the soft delete. There is no self-serve kickoff path. |
 | **Audit retention on erasure** | Audit rows are physically deleted when the organization is purged. They are retained through the grace period on purpose. |
 | **Drift guard** | An automated check keeps personal data from accumulating in payloads where it would later need to be scrubbed. |
@@ -8013,14 +8068,14 @@ and no opt-in list to maintain.
 | Path | What the SDK patches | Gate check |
 |---|---|---|
 | `httpx` | The `httpx.Client` and `httpx.AsyncClient` transports | Before the request |
-| `requests` | The `requests` session | Before the request |
+| `requests` | `requests.Session.send` | Before the request |
 | LangChain | `BaseCallbackManager` | On the model call |
 | LangChain | `BaseChatModel.invoke`, `ainvoke`, `stream`, `astream` | On the model call |
 | LangGraph | `Pregel.invoke`, `stream`, `ainvoke`, `astream` | On the model call |
 | OpenAI Agents | `Runner.run`, `Runner.run_sync` | None |
 | LlamaIndex | The `llama_index.core` dispatcher | None |
 | CrewAI | `Crew.kickoff`, `Crew.kickoff_async`, and the event bus | None |
-| AutoGen | `BaseChatAgent.on_messages` and the OpenAI model client | None |
+| AutoGen | `BaseChatAgent.on_messages` and `OpenAIChatCompletionClient.create` | None |
 
 Where there is no gate check, the SDK still records the call, so the
 cost reaches the ledger. Put `@protect` on the tools that carry policy

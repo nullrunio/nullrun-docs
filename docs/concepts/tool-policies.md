@@ -164,8 +164,8 @@ a call you think should be allowed:
 2. Open the policy in the editor. The **Will match** line lists the
    tool names a pattern covers.
 3. Open **Governance → Audit log** and filter by `decision = deny`. The
-   event detail has a **Matched rule** field that names the pattern
-   that fired.
+   event detail has a **Matched rule** field. It reads `policy.block`
+   for a blocked tool, so the row does not name the pattern.
 4. If a pattern is too broad, narrow it in the editor.
 5. To take a rule out of service, turn the policy's **Active** toggle
    off. The policy stays in the list.
